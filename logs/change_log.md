@@ -1,0 +1,104 @@
+# 变更日志
+
+## 2026-11-03（会话 01）
+- 新建目录：`registry/`、`notes/`、`evidence/`、`taxonomy/`、`analysis/`、`decisions/`、`logs/`、`scripts/`、`work/text/`、`work/pages/`。
+- 新增 `scripts/build_manifest.js`：解析交接文档附录 A，建立 124 ID ↔ PDF 映射，计算 SHA-256/页数。
+- 新增 `registry/paper_manifest.csv`、`registry/paper_status.csv`、`registry/mapping_issues.md`、`registry/manifest_summary.json`。
+- 新增 `scripts/extract_text.js`：按页抽取全文并插入 `PAGE n` 标记。
+- 新增 `scripts/update_status.js`、`scripts/build_reading_queue.js`。
+- 新增 `registry/batch01_status.json`、`registry/reading_queue.csv`、`registry/papers.jsonl`。
+- 新增 5 份精读笔记：`notes/R1-01.md`、`notes/R2-07.md`、`notes/R3-01.md`、`notes/R3-10.md`、`notes/R3-80.md`。
+- 状态变更：R1-01、R2-07、R3-01、R3-10、R3-80 从 `NOT_STARTED` → `QUALITY_CHECKED`。
+- 复制 `AGENT_SECURITY_TAXONOMY_124.md` → `taxonomy/taxonomy_v1_0_original.md`（只读保留，未修改原文）。
+- 新增 `logs/progress.md`、`logs/session_log.md`、`logs/ambiguities.md`、本文件。
+- 未修改 `papers/` 中任何 PDF；未重新做论文检索/书目核验/去重；未纳入六篇排除论文。
+
+## 2026-11-03（续）
+- 修正 `paper_status.csv` 统计口径：新增 `deep_read_pages`、`read_scope`；不再把 `total_pages` 当精读页数。
+- 第一批回填：R1-01 16p、R2-07 17p、R3-01 17p、R3-10 22p、R3-80 54p（补读 Appendix B/C.2–C.6/D）。
+- 新增脚本：`scripts/audit_coverage.js`、`scripts/check_note.js`、`scripts/apply_batch.js`、`scripts/migrate_status_schema.js`。
+- 修改 `scripts/extract_text.js`：逐物理页调用 `pdftotext`，修复 R1-11 的 18→36 页错位。
+- 批次 2 完成：R1-02—R1-06 五份笔记、`registry/batch02_status.json`、`registry/batch02_papers.jsonl`；`paper_manifest.csv` 回填 venue/year；`papers.jsonl` 增至 10 条。
+- `logs/progress.md`、`logs/session_log.md`、`logs/quality_checklist.md` 更新。
+- 批次 3 完成：R1-07—R1-11 五份笔记、`registry/batch03_status.json`、`registry/batch03_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 15 条。
+- 批次 3 质量备注：R1-08 笔记引用了恶意 skill 的 `--dangerously-skip-permissions` 文本（作为研究数据，未执行）；R1-10/R1-11 原文存在少量内部数值不一致，已在笔记中标注。
+- 批次 4 完成：R1-12、R1-13、R1-14、R1-15、R2-01 五份笔记、`registry/batch04_status.json`、`registry/batch04_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 20 条。
+- 批次 4 质量备注：R1-13、R1-15、R2-01 原文存在内部数值/表列不一致，已在笔记中标注，未作为证据使用。
+- 批次 5 完成：R2-02、R2-03、R2-04、R2-05、R2-06 五份笔记、`registry/batch05_status.json`、`registry/batch05_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 25 条。
+- 批次 5 质量备注：R2-02 初稿状态为 FULLY_READ，经审计补升 QUALITY_CHECKED；check_note 的 TODO 误报已修正。
+- 批次 6 完成：R2-08、R2-09、R2-10、R2-11、R2-12 五份笔记、`registry/batch06_status.json`、`registry/batch06_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 30 条。
+- 批次 7 完成：R2-13、R2-14、R2-15、R2-16、R2-17 五份笔记、`registry/batch07_status.json`、`registry/batch07_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 35 条。
+- 新增 `logs/checkpoint_2026-11-03.md`：记录 35/124、740/2,945 页及下一批 R2-18—R2-22。
+- 页数核算修正：新增 `browsed_pages`、`uncovered_pages`；恒等式 740 深读 + 103 仅浏览 + 0 未覆盖 + 2,102 未开始 = 2,945。
+- 新增 `research/crypto_intersection_observations.md`：17 条密码学交叉观察（R3-80、R1-03、R2-07 等），均带证据位置、推断依据、置信度与待验证问题。
+- 批次 8 完成：R2-18、R2-19、R2-20、R2-21、R2-22 五份笔记、`registry/batch08_status.json`、`registry/batch08_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 40 条。
+- `scripts/apply_batch.js` 增加 `browsed_pages`/`uncovered_pages` 自动核算；审计恒等式恢复为 864 + 116 + 0 + 1,965 = 2,945。
+- `research/crypto_intersection_observations.md` 增至 21 条（新增 R2-18/19/21/22）。
+- 批次 9 完成：R2-23、R2-24、R2-25、R3-02、R3-03 五份笔记、`registry/batch09_status.json`、`registry/batch09_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 45 条。
+- R2-25 因引用的 Appendix A.1/C/D/E–G/H/I 与 Table 16 不在 9 页 PDF 中，标 `FULLY_READ` + blocking issue，未冒充 `QUALITY_CHECKED`。
+- `research/crypto_intersection_observations.md` 增至 24 条（新增 R2-23/R3-02/R3-03）。
+- 批次 10 完成：R3-04、R3-05、R3-06、R3-07、R3-08 五份笔记、`registry/batch10_status.json`、`registry/batch10_papers.jsonl`；manifest 回填 venue/year；papers.jsonl 增至 50 条。
+- `research/crypto_intersection_observations.md` 增至 27 条（新增 R3-06/R3-07/R3-04）。
+- 检查点更新为 50/124、1,026/2,945 页；下一批 R3-09、R3-11、R3-12、R3-13、R3-14。
+- 批次 11 完成：R3-09、R3-11、R3-12、R3-13、R3-14 五份笔记、`registry/batch11_status.json`、`registry/batch11_papers.jsonl`；manifest 回填 venue/year（均为 ICML 2026）；papers.jsonl 增至 55 条。
+- `research/crypto_intersection_observations.md` 增至 29 条（新增 C28 R3-13、C29 R3-11）。
+- 检查点更新为 55/124、1,106/2,945 页；下一批 R3-15、R3-16、R3-17、R3-18、R3-19。
+- 批次 12 完成：R3-15、R3-16、R3-17、R3-18、R3-19 五份笔记、`registry/batch12_status.json`、`registry/batch12_papers.jsonl`；manifest 回填 venue/year（均为 ICML 2026）；papers.jsonl 增至 60 条。
+- `research/crypto_intersection_observations.md` 增至 30 条（新增 C30 R3-17）。
+- 检查点更新为 60/124、1,236/2,945 页；下一批 R3-20、R3-21、R3-22、R3-23、R3-24。
+- 批次 13 完成：R3-20、R3-21、R3-22、R3-23、R3-24 五份笔记、`registry/batch13_status.json`、`registry/batch13_papers.jsonl`；manifest 回填 venue/year（均为 ICML 2026）；papers.jsonl 增至 65 条。
+- `research/crypto_intersection_observations.md` 增至 32 条（新增 C31 R3-23、C32 R3-22）。
+- 检查点更新为 65/124、1,329/2,945 页；下一批 R3-25、R3-26、R3-27、R3-28、R3-29。
+- 批次 14 完成：R3-25、R3-26、R3-27、R3-28、R3-29 五份笔记、`registry/batch14_status.json`、`registry/batch14_papers.jsonl`；manifest 回填 venue/year（均为 ICML 2026）；papers.jsonl 增至 70 条。
+- `research/crypto_intersection_observations.md` 增至 33 条（新增 C33 R3-29）。
+- 检查点更新为 70/124、1,437/2,945 页；下一批 R3-30、R3-31、R3-32、R3-33、R3-34。
+- 批次 15 完成：R3-30、R3-31、R3-32、R3-33、R3-34 五份笔记、`registry/batch15_status.json`、`registry/batch15_papers.jsonl`；manifest 回填 venue/year（ICLR 2024/2025/2025/2025/2026）；papers.jsonl 增至 75 条。
+- `research/crypto_intersection_observations.md` 增至 35 条（新增 C34 R3-33、C35 R3-34）。
+- 检查点更新为 75/124、1,583/2,945 页；下一批 R3-35、R3-36、R3-37、R3-38、R3-39。
+- 批次 16 完成：R3-35、R3-36、R3-37、R3-38、R3-39 五份笔记、`registry/batch16_status.json`、`registry/batch16_papers.jsonl`；manifest 回填 venue/year（均为 ICLR 2026）；papers.jsonl 增至 80 条。
+- `research/crypto_intersection_observations.md` 增至 36 条（新增 C36 R3-35）。
+- 检查点更新为 80/124、1,711/2,945 页；下一批 R3-40、R3-41、R3-42、R3-43、R3-44。
+- 批次 17 完成：R3-40、R3-41、R3-42、R3-43、R3-44 五份笔记、`registry/batch17_status.json`、`registry/batch17_papers.jsonl`；manifest 回填 venue/year（ICLR 2026 ×2、NeurIPS 2024 ×2、NeurIPS 2025 ×1）；papers.jsonl 增至 85 条。
+- `research/crypto_intersection_observations.md` 增至 37 条（新增 C37 R3-43）。
+- 检查点更新为 85/124、1,858/2,945 页；下一批 R3-45、R3-46、R3-47、R3-48、R3-49。
+- 批次 18 完成：R3-45、R3-46、R3-47、R3-48、R3-49 五份笔记、`registry/batch18_status.json`、`registry/batch18_papers.jsonl`；manifest 回填 venue/year（NeurIPS 2025 ×3；R3-48/R3-49 未标注 venue，保持空）；papers.jsonl 增至 90 条。
+- `research/crypto_intersection_observations.md` 增至 38 条（新增 C38 R3-48）。
+- 检查点更新为 90/124、1,992/2,945 页；下一批 R3-50、R3-52、R3-53、R3-54、R3-55。
+- 批次 19 完成：R3-50、R3-52、R3-53、R3-54、R3-55 五份笔记、`registry/batch19_status.json`、`registry/batch19_papers.jsonl`；manifest 回填 venue/year（NeurIPS 2026 投稿/NeurIPS 2026/ICML Workshop 在投/ICML Workshop 2026；R3-52 未标注 venue）；papers.jsonl 增至 95 条。
+- 本批未新增密码学交叉观察（维持 38 条）；R3-52 的 TLS 降级归入 C38 模式。
+- 检查点更新为 95/124、2,140/2,945 页；下一批 R3-56、R3-57、R3-58、R3-59、R3-60。
+- 批次 20 完成：R3-56、R3-57、R3-58、R3-59、R3-60 五份笔记、`registry/batch20_status.json`、`registry/batch20_papers.jsonl`；manifest 回填 venue/year（R3-56/R3-57 未标注 venue 的 arXiv preprint、2026；R3-58 ACL 2024；R3-59/R3-60 ACL 2026）；papers.jsonl 增至 100 条。
+- `research/crypto_intersection_observations.md` 增至 39 条（新增 C39 R3-59；头部由 90/124 修正为 95/124，再更新为 100/124）。
+- 检查点更新为 100/124、2,255/2,945 页；下一批 R3-61、R3-62、R3-63、R3-64、R3-65。
+- 批次 21 完成：R3-61、R3-62、R3-63、R3-64、R3-65 五份笔记、`registry/batch21_status.json`、`registry/batch21_papers.jsonl`；manifest 回填 venue/year（ACL 2026 ×1；AAAI 2025 ×1；AAAI 2026 ×3）；papers.jsonl 增至 105 条。
+- R3-62/R3-63/R3-64 因正文引用的方法/实验附录不在 9 页 PDF 中，状态标 `FULLY_READ` 而非 `QUALITY_CHECKED`（与 R2-25 同口径）；R3-61/R3-65 为 `QUALITY_CHECKED`。
+- 本批未新增密码学交叉观察（维持 39 条）；R3-65 作为 C28 的补充证据。
+- 检查点更新为 105/124、2,303/2,945 页；下一批 R3-66、R3-67、R3-68、R3-69、R3-70。
+- 批次 22 完成：R3-66、R3-67、R3-68、R3-69、R3-70 五份笔记、`registry/batch22_status.json`、`registry/batch22_papers.jsonl`；manifest 回填 venue/year（AAAI 2026 ×3；USENIX Security 2025 ×1；USENIX Security 2026 ×1）；papers.jsonl 增至 110 条。
+- R3-66 因补充材料外置到未纳入语料的 full arXiv version，状态标 `FULLY_READ`；R3-67/68/69/70 为 `QUALITY_CHECKED`。
+- `research/crypto_intersection_observations.md` 增至 40 条（新增 C40 R3-68：消息认证/完整性可阻断仅链路攻击者的在途篡改）。
+- 检查点更新为 110/124、2,362/2,945 页；下一批 R3-71、R3-72、R3-73、R3-74、R3-75。
+- 批次 23 完成：R3-71、R3-72、R3-73、R3-74、R3-75 五份笔记、`registry/batch23_status.json`、`registry/batch23_papers.jsonl`；manifest 回填 venue/year（USENIX Security 2026 ×1；IEEE S&P 2026 ×3；ACM CCS 2025 ×1）；papers.jsonl 增至 115 条。
+- R3-71 因正文引用的 Appendix A.2.1/A.3/B/C 与定理证明不在 21 页 PDF 中，状态标 `FULLY_READ`；R3-72/73/74/75 为 `QUALITY_CHECKED`。
+- 本批未新增密码学交叉观察（维持 40 条）；R3-75 的 A2M 无密码认证与未签名日志作为 C40/C38 补充证据。
+- 检查点更新为 115/124、2,447/2,945 页；下一批 R3-76、R3-77、R3-79、R3-81、R3-82。
+- 批次 24 完成：R3-76、R3-77、R3-79、R3-81、R3-82 五份笔记、`registry/batch24_status.json`、`registry/batch24_papers.jsonl`；manifest 回填 venue/year（ACM CCS 2025 ×2；ACM CCS 2026 ×2；R3-81 未标注 venue 的 arXiv preprint、2026）；papers.jsonl 增至 120 条。
+- `research/crypto_intersection_observations.md` 增至 41 条（新增 C41 R3-79：语义最小权限缺少 artifact 完整性绑定与不可伪造 capability）。
+- 检查点更新为 120/124、2,540/2,945 页；下一批（最后一批）R3-83、R3-84、R3-85、R3-86。
+- 批次 25（最后一批）完成：R3-83、R3-84、R3-85、R3-86 四份笔记、`registry/batch25_status.json`、`registry/batch25_papers.jsonl`；manifest 回填 venue/year（ACM CCS 2026 ×3；R3-85 未标注 venue 的 arXiv preprint、2026）；papers.jsonl 增至 124 条。
+- R3-84 因 §5.4/§6.4/§7.2/§10 把 Table 10、Figures 4/5/6/8 与 §10.3 委托给未纳入语料的伴随论文 [58]，状态标 `FULLY_READ`；其余三篇为 `QUALITY_CHECKED`。
+- `research/crypto_intersection_observations.md` 增至 42 条（新增 C42 R3-84：first-party 注入使内容来源签名失效，需 instruction provenance/authorization）。
+- 阶段一阅读完成：124/124 篇、124 份笔记、124 条 papers.jsonl；状态 117 QUALITY_CHECKED + 7 FULLY_READ；页数 2,599 深读 + 346 仅浏览 + 0 未覆盖 + 0 未开始 = 2,945。
+- 检查点更新为阶段一阅读完成；下一步执行阶段一验收，不提前进入阶段二。
+- 阶段二完成：新增 `taxonomy/taxonomy_v1_1_reviewed.md`、`taxonomy/taxonomy_v1_1.json`、`taxonomy/taxonomy_change_log.md`、`taxonomy/taxonomy_v1_1_draft.md`；新增 `registry/paper_topics_v1_1.csv`、`registry/paper_topics_v1_1.json`；新增 `scripts/audit_taxonomy.js`、`work/phase2/merge_audits.js`、`work/phase2/audit_batch1-6.jsonl`；新增 `logs/phase2_report.md`、`logs/phase2_consistency_check.md`。
+- Taxonomy v1.1：9 个一级、31 个二级（不增不减）；7 篇迁移；13 项重命名/边界澄清；124 篇全部映射。
+- 一致性检查 `AUDIT OK`；未修改原 `taxonomy_v1_0_original.md`，未修改 Phase 1 的 `papers.jsonl` 分类字段（保留历史）。
+- 阶段二状态：等待用户验收；未进入阶段三。
+- 阶段三完成：新增 `research/phase3/`：metadata_audit.md、scoring_rubric.md、paper_crypto_evidence.csv/.json、paper_metadata.csv/.json、research_activity.md、theoretical_crypto_ranking.md、applied_crypto_ranking.md、master_feasibility_ranking.md、sensitivity_analysis.md、phase3_report.md、taxonomy_count_correction.md、direction_scores_full.csv/.json、README.md。
+- 新增脚本 `scripts/audit_phase3.js`、`work/phase3/build_metadata.js`、`merge_evidence.js`、`aggregate_scores.js`、`add_f.js`；六组证据评分 `work/phase3/evidence_batch1-6.jsonl`。
+- 修正文档计数口径：13 项二级方向重命名/边界澄清、13 篇 v1.0→v1.1 主类差异、7 篇 Phase1→v1.1 迁移，见 `research/phase3/taxonomy_count_correction.md`。
+- 阶段三状态：完成；未进入阶段四。
+- 阶段三勘误（2026-11-06）：A2 V/M/B 4/5/3→5/5/3（仅展示，H 不变）；D3 年份-ID 重写，新增 `direction_year_matrix.csv`；R1-01 A=2→1，A 分布 91/29/1/2/1/0，A1 A_ceiling 2→1；F 一级改 null + 31 叶四子项（31/31 求和，F 总分不变）；30 篇 medium 全量敏感性（68 单点 + 联合边界 + 10,000 随机，`sensitivity_full.json`/`sensitivity_rank_stability.csv`）；R3-01/22/24 证据页码补全。新增 `phase3_errata_report.md`、`work/phase3/apply_errata.js`、`build_year_matrix.js`、`sensitivity_full.js`。审计 `AUDIT OK`。
+- 附加文档修正：`phase3_report.md`/`theoretical_crypto_ranking.md`/`applied_crypto_ranking.md` 的 T_ceiling/A_ceiling 排行榜补全 1 分叶列表（此前漏列，分数未变）。
+- 阶段四（2026-11-06）：新增 `research/phase4/`：phase4_research_plan、candidate_problem_pool（12 个问题）、prior_art_review、candidate_evaluation、top_candidates、final_recommendation、research_roadmap、phase4_report、candidate_index.csv/.json；4 份 A–H 方案（C1/C2/C4/C5）；`external_prior_art/`（README + 52 条 sources.json）。
+- 阶段四结论：C1 FV-Delegation 第一优先、C2 AuthTrace 第二、C4 低风险备选、C5 备选；C6–C12 淘汰，C3 reserve。未实现原型、未跑实验。
