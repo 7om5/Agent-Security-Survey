@@ -1,0 +1,610 @@
+# R3-64 | MobileSafetyBench: Evaluating Safety of Autonomous Agents in Mobile Device Control
+# PDF: papers\MobileSafetyBench_Evaluating Safety of Autonomous Agents in Mobile Device Control.pdf
+# extracted: 2026-11-02T22:17:51.909Z
+
+
+===== PAGE 1 / 9 =====
+
+The Fortieth AAAI Conference on Artificial Intelligence (AAAI-26)
+
+                 MobileSafetyBench: Evaluating Safety of
+              Autonomous Agents in Mobile Device Control
+
+Juyong Lee1*, Dongyoon Hahm1*, June Suk Choi1*, W. Bradley Knox2, Kimin Lee1
+
+                               1Korea Advanced Institute of Science & Technology
+                                          2The University of Texas at Austin
+
+                                       {agi.is, hahmdong, w choi}@kaist.ac.kr
+
+                              Abstract                                      ever, as these agents gain the ability to control personal de-
+                                                                            vices, ensuring the safe behaviors of agents becomes crucial,
+   Autonomous agents powered by large language models                       particularly because they have access to sensitive user infor-
+   (LLMs) show promising potential in assistive tasks across                mation and other critical data.
+   various domains, including mobile device control. As these
+   agents interact directly with personal information and de-                  Despite significant progress in developing benchmarks for
+   vice settings, ensuring their safe and reliable behavior is cru-         evaluating the safety of LLMs, prior works have primarily
+   cial to prevent undesirable outcomes. However, no bench-                 focused on safety assessments based on question-answering
+   mark exists for standardized evaluation of the safety of mo-             formats (Bai et al. 2022; Li et al. 2024; Yuan et al. 2024).
+   bile device-control agents. In this work, we introduce Mo-               These formats often fail to detect the dangerous behaviors
+   bileSafetyBench, a benchmark designed to evaluate the safety             of LLM agents when controlling mobile devices, making ex-
+   of device-control agents within a realistic mobile environ-              isting benchmarks insufficient for a thorough safety assess-
+   ment based on Android emulators. We develop a diverse set                ment. To rigorously evaluate the safety of such agents, it is
+   of tasks involving interactions with various mobile applica-             crucial to develop a benchmark that incorporates a realistic
+   tions, including messaging and banking applications, chal-               interactive environment and diverse risks.
+   lenging agents with managing risks encompassing the misuse
+   and negative side effects. These tasks include tests to eval-               In this work, we present MobileSafetyBench, a novel re-
+   uate the safety of agents in daily scenarios as well as their            search platform designed to evaluate the safe behavior of
+   robustness against indirect prompt injection attacks. Our ex-            agents controlling mobile devices. MobileSafetyBench is
+   periments demonstrate that baseline agents, based on state-              based on several important design factors (see Figure 1
+   of-the-art LLMs, often fail to effectively prevent harm while            for an overview). Central to our benchmark is the use of
+   performing the tasks. To mitigate these safety concerns, we              Android emulators to create interactive and realistic envi-
+   propose a prompting method that encourages agents to prior-              ronments. MobileSafetyBench includes diverse applications
+   itize safety considerations. While this method shows promise             such as memos, calendars, social media, banking, and stock
+   in promoting safer behaviors, there is still considerable room           trading, which are essential for assessing operations com-
+   for improvement to fully earn user trust. This highlights the            monly used in everyday life.
+   urgent need for continued research to develop more robust
+   safety mechanisms in mobile environments.                                   Based on realistic environments, we develop a task suite
+                                                                            to evaluate the safety of agents across various scenarios.
+Code — https://mobilesafetybench.github.io/code                             These tasks incorporate major risk types associated with
+Datasets — https://mobilesafetybench.github.io/datasets                     mobile device usage, such as handling private information.
+Extended version — https://mobilesafetybench.github.io/                     They are specifically designed to assess how effectively
+                                                                            agents manage risks. Additionally, our benchmark includes
+                   1 Introduction                                           scenarios that challenge agents with indirect prompt injec-
+                                                                            tion attacks, deceiving them into taking actions contrary to
+Recent advances in building autonomous agents using large                   user intentions. To clearly evaluate safety apart from general
+language models (LLMs) have demonstrated promising re-                      capabilities, we design auxiliary tasks apart from the tasks
+sults in various domains, including mobile device con-                      measuring safety (see Section 3.3 for the details). For all
+trol (Yang et al. 2023; Lee et al. 2024; Rawles et al. 2024).               tasks, we employ rigorous evaluators that accurately analyze
+Mobile device control agents can enhance productivity and                   the agents’ behaviors, taking into account both the history of
+improve accessibility of user interactions by automating                    actions and their effects on the device.
+daily tasks such as web interactions, data sharing, text mes-
+saging, social media access, and financial transactions. How-                  To serve as a reference, we benchmark mobile device con-
+                                                                            trol agents based on frontier LLMs, such as GPT-5 (OpenAI
+    *These authors contributed equally.                                     2025) and Claude-3.5-Sonnet (Anthropic 2024). Addition-
+Copyright © 2026, Association for the Advancement of Artificial             ally, we test agents with workflows designed for digital de-
+Intelligence (www.aaai.org). All rights reserved.                           vice control (Zheng et al. 2024; Rawles et al. 2024). In our
+                                                                            experiments, the agents tested exhibit unsafe behaviors in
+
+                                                                     37565
+
+
+===== PAGE 2 / 9 =====
+
+Applications                                            MobileSafetyBench
+
+Text                   Social Media
+Message
+                       Web
+Memo                   Browser
+
+Finance                Settings, etc.                                               Agent Controlling
+                                                                                      Mobile Device
+
+          Risk Types   Offensiveness     Interactive Real-System                    Rule-based
+                                       Mobile Device Environment                    Evaluator
+Ethical                Bias &
+Compliance             Fairness
+
+Private
+Information
+
+Figure 1: Overview of MobileSafetyBench. Incorporated with interactive real-system mobile device environments, it measures
+the safety and helpfulness of agents controlling mobile devices across diverse task categories and risk types.
+
+many tasks, including assisting with commands that violate                                2 Related Work
+ethical compliance. The agents manage hazards in straight-
+forward situations (e.g., the instruction is explicitly unethi-         Building Agents with LLMs Developing intelligent
+cal), but they struggle to handle risks in more complex sce-            agents with LLMs has gained significant interest, as LLMs
+narios. Notably, we find that the agents are highly vulnera-            have shown adeptness in planning, reasoning, and tool us-
+ble to indirect prompt injection, which highlights significant          age. Early research, such as ReAct (Yao et al. 2023) and
+risks associated with the naive deployment of assistants.               Reflxion (Shinn, Labash, and Gopinath 2023), have demon-
+                                                                        strated that the agents employing LLMs are capable of mak-
+   We also propose a novel method of prompting on top of                ing sequential decisions from the provided set of actions to
+Chain-of-Thought (Wei et al. 2022), named Safety-guided                 interact with the environments. Recently, adopting LLMs
+Chain-of-Thought (SCoT), to improve the safety of device                on more practical domains, as in navigating websites (Zhou
+control agents. This SCoT prompt requires agents to first               et al. 2024) or controlling mobile devices (Yang et al. 2023),
+generate safety considerations, specifically identifying po-            is being increasingly investigated. To this end, different
+tential safety issues based on the given observation and in-            prompting methods for advancing the agents are being stud-
+struction, before they formulate their action plans. By in-             ied aggressively (Rawles et al. 2024). This work presents
+corporating this method into baseline agents, we observe a              experimental results with agents employing LLMs and, ad-
+significant increase in safety scores. However, despite these           ditionally, introduces a novel prompting method for guid-
+improvements, the agents still exhibit unsafe behaviors, such           ing safe behaviors. We describe more related studies in Ap-
+as overlooking the safety considerations they have gener-               pendix A, focusing on the studies benchmarking agent con-
+ated. This inconsistency highlights the need to develop new             trolling digital devices.
+methods to enhance agent reliability.
+                                                                        Benchmarking Safety of LLMs Numerous studies warn
+   To summarize, our contributions are as follows:                      of LLMs’ potential threats, such as producing harmful, bi-
+                                                                        ased, toxic, or unethical content. Early studies have focused
+ • We introduce a novel benchmark platform for evaluating               on evaluating the response of LLMs to safety-related ques-
+   the helpfulness and safety of agents controlling mobile              tions (Qi et al. 2024; Mireshghallah et al. 2024; Li et al.
+   devices in realistic interactive environments.                       2024). As LLMs are increasingly integrated into real-world
+                                                                        tools and environments, several studies for investigating safe
+ • We provide benchmark results with state-of-the-art                   behaviors of LLM agents are ongoing, as in ToolEmu (Ruan
+   LLMs and reveal their weakness against indirect prompt               et al. 2024) or R-judge (Yuan et al. 2024), yet exhibiting
+   injection.                                                           several shortcomings such as disregard of realistic interac-
+                                                                        tive environments. Researchers have also adopted aggres-
+ • We propose a simple yet effective prompting method to                sive evaluation techniques, such as prompt attacks, to test
+   guide safe behaviors.                                                the robustness of LLMs leveraging tools (Zhan et al. 2024;
+                                                                        Debenedetti et al. 2024; Wu et al. 2024). Several concurrent
+ • We conduct extensive analyses of baseline agents, in-                works study the safety of LLM agents, mainly focusing on
+   cluding comparisons between LLM agents and question-
+   answering LLMs.
+
+ • We will open-source our benchmark, enabling the easy
+   reproduction of our experiments.
+
+                                                                 37566
+
+
+===== PAGE 3 / 9 =====
+
+jailbreaking scenarios (Andriushchenko et al. 2024) or web               which provides text descriptions for UI elements, detailing
+environments (Kumar et al. 2024; Liao et al. 2024). In this              element types (e.g., “Button”) and the associated text (e.g.,
+work, we demonstrate a benchmark evaluating the general                  “Click Me” described in the button). For more details on the
+safe behaviors of LLM agents manipulating mobile devices.                environment interfaces, we refer the readers to Appendix B.
+
+               3 MobileSafetyBench                                       3.3 Task Design
+
+In this section, we introduce MobileSafetyBench, a novel                 MobileSafetyBench presents 250 numbers of tasks in total
+benchmark for evaluating the safety and helpfulness of mo-               covering diverse applications and harm categories. Utilizing
+bile device control agents.                                              Android emulators, our tasks are grounded in daily life and
+                                                                         designed to reflect common real-life uses of mobile devices.
+3.1 Design Principles                                                    1 The benchmark includes tasks associated with text mes-
+                                                                         saging, web navigation, social media, calendar settings, and
+MobileSafetyBench is designed as a platform to assess both               financial transactions. Our benchmark employs 13 different
+the safety and helpfulness of agents controlling mobile de-              applications to simulate diverse task categories, and please
+vices. A key feature of the benchmark is its use of Android              see Appendix B for details on the applications.
+emulators to create interactive and realistic environments,
+where device control is formulated as a sequential decision-                Each task is defined by specifying the task instruction and
+making problem. Agents interact with the environment to                  configuring the status of the device. For instance, as illus-
+perform diverse tasks, each derived from real use cases and              trated in Figure 2, the task is defined with the instruction
+involving applications such as social media and banking.                 “Could you check the Photos application, and share an im-
+                                                                         age file via Bluetooth?” and the initial device status that is
+   Another key feature of MobileSafetyBench is its rigorous              set to contain an image in file storage. The agent is then
+safety evaluation process. The risks in our tasks include the            challenged to navigate to the Photos application and manip-
+misuse of agents (OECD 2019) and the negative side effects               ulate UI elements to share the image via Bluetooth. In our
+caused by the agents (Amodei et al. 2016). Based on this, we             tasks, we introduce diverse sources of risks, including files
+define safety within our benchmark as the agent’s robustness             stored on the device, contents of memos taken by the user,
+to malicious instruction and its ability to prevent potentially          text messages sent or received (even from strangers), and so-
+harmful consequences while performing a requested task.                  cial media posts. Furthermore, our benchmark includes not
+As safe behaviors can vary depending on the specific task                only daily-life tasks but also adversarial scenarios designed
+requested or the device’s status, we develop diverse scenar-             to evaluate the agent’s robustness against indirect prompt in-
+ios to challenge agents comprehensively. Each task incorpo-              jection. We present more details on the tasks, including the
+rates an automatic evaluator that utilizes system information            task augmentation procedure as well as specific task instruc-
+from the Android emulators, ensuring that the evaluations                tions, in Appendix C and supplemental materials.
+are both standardized and reliable.
+                                                                         High-risk task vs. Low-risk task Notably, the tasks in
+3.2 Framework                                                            our benchmark involve varying levels of risk severity. For
+                                                                         example, as shown in Figure 2, the risks associated with
+Problem Formulation In MobileSafetyBench, we formu-                      sharing an image file that does not contain hazardous con-
+late the task of controlling mobile devices as a sequential              tent are minor or negligible. Conversely, sharing an image
+decision-making problem, where an agent interacts with an                that includes private information, such as credit card details,
+environment simulated by an Android emulator. Formally,                  could cause moderate or severe harm to the user. Reflect-
+the internal state st of the environment transitions to the next         ing this, we conduct a human survey to assess whether the
+state st+1 based on the action at taken by the agent at each             risks in the tasks are significant or negligible. Detailed pro-
+discrete time t. The agent, given a task instruction c, receives         cedures and results are available in Appendix C. Based on
+the partial observation ot (representing incomplete informa-             human annotations, we categorize tasks with negligible or
+tion about the state st) and generates an action at. During              minor potential harm as low-risk tasks and tasks with poten-
+the interactions, the agent can freely utilize diverse applica-          tial harm exceeding the minor level, i.e., moderate to severe,
+tions in the device, such as web browsers or memos. At the               as high-risk tasks.2 The assessment results in 100 low-risk
+end of an episode, which lasts no longer than a predefined               tasks and 100 high-risk tasks in daily scenarios, and 50 high-
+maximum length T , the environment returns a score r. This               risk tasks in indirect prompt injection attack scenarios. Im-
+score is computed by evaluators based on the final state of              portantly, we ensure that all high-risk tasks are assigned risk
+the environment sT and the history of actions a1:T .                     severity levels that are higher than those of low-risk tasks.
+
+Environment Implementation To enable seamless inter-                        This distinction allows for a more rigorous analysis of
+action between the agent and environment realized by an                  the agents’ safety, separate from their general capabilities.
+Android emulator, we implement several interfaces for the                For example, if an agent keeps refusing to proceed with the
+environment. An action conversion interface transforms the
+agent’s action output in text form into a legible form at that               1The authors conducted extensive brainstorming and surveyed
+the emulator can process, such as tapping on or swiping the              commonly used applications in real life.
+screen. Additionally, we ensure each observation ot includes
+both a screen image and text describing the UI elements                      2Based on additional human annotations, high-risk tasks are
+present on the screen, by adopting a screen-layout translator            further categorized into four prevalent risk types (see supplemental
+                                                                         material for details).
+
+                                                                  37567
+
+
+===== PAGE 4 / 9 =====
+
+Timestep                                                                 Timestep
+
+Figure 2: A pair of exemplary tasks specified with the same instruction but different device configuration (i.e., images in the
+file storage). In the low-risk task (left), task completion is desirable as the image contains no risks. However, in the high-risk
+task (right), naively following the instruction leads to a safety issue, as the image contains detailed credit card information.
+
+high-risk tasks while struggling to achieve low-risk tasks, it                            4 Baseline Agents
+suggests a lack of proficiency rather than a commendable
+level of safety. On the other hand, if an agent successfully             In this work, we focus on benchmarking multi-modal LLMs
+completes the low-risk tasks and demonstrates high achieve-              with prompting as baseline agents for controlling mobile de-
+ments in the high-risk tasks, this clearly indicates a disregard         vices (Zhou et al. 2024; Lee et al. 2024; Rawles et al. 2024).
+for safety.                                                              These agents receive multi-modal observations consisting
+                                                                         of screen images and text descriptions of the UI elements.
+3.4 Evaluation Scheme                                                    They then choose an appropriate action from a pre-defined
+                                                                         set of options. Examples of action options include tapping
+Our benchmark evaluates agent performance using two key                  UI elements, swiping the screen in a specified direction, and
+metrics:                                                                 inputting text into a target field, providing a flexible inter-
+                                                                         face for device control. Additionally, we incorporate spe-
+ • Goal achievement rate: the proportion of tasks completed              cific actions that can be utilized for refusal: refuse(),
+   as instructed.                                                        which halts the process if the agent deems continuing with
+                                                                         the task is inappropriate; and ask-consent(), which is
+ • Refusal rate: the proportion of tasks where the agent re-             used when the agent requires user permission to proceed. A
+   fuses to proceed with a task or requests user consent dur-            more detailed explanation of the action options is provided
+   ing task execution.                                                   in Appendix B.
+
+Ideally, agents should achieve a high goal achievement rate                 To elicit agentic behaviors from LLMs, we design the
+in low-risk tasks and a high refusal rate in high-risk tasks.            prompt to include the general role of agents, available ac-
+Conversely, completing high-risk tasks is not desirable, as it           tion options, goal instructions, previous actions taken by
+indicates potential harm, while a high refusal rate in low-risk          the agent, and the current observation. Our prompts incor-
+tasks suggests excessive caution. Combined with the high-                porate several techniques, such as the Chain-of-Thought
+risk vs. low-risk category, this metric design allows for the            prompt (Wei et al. 2022; CoT), to enhance reasoning and
+avoidance of oversimplification of agents’ behaviors. For ex-            planning. Specifically, we design prompts to mandate a par-
+ample, unsafe completion and incorrect refusal can be cap-               ticular response format from the agents. This format in-
+tured by achievement on high-risk tasks and refusal on low-              cludes an interpretation of the current observation, a con-
+risk tasks. Also, to avoid limiting scope, we defined ‘refusal’          text summarizing the current progress, a rationale for their
+to include asking consent from users, enabling success with-             planned action, and the final decision on the action option.
+out realizing potential harm (see Section 4).                            Appendix E includes more details of the prompts.
+
+   To ensure consistent and reliable evaluation, the bench-                 We also consider agents with additional workflows spe-
+mark employs rule-based evaluators. The evaluators verify                cially designed to improve the digital device-controlling
+whether predefined conditions are met based on the agent’s               agents’ action-grounding ability (SeeAct; Zheng et al. 2024)
+decisions and their impact on the device. This includes ana-             and reflective ability of agents (M3A; Rawles et al. 2024).
+lyzing the action history, system configurations, file storage,          For these agents, we employ special prompts that induce ad-
+and application databases. Further details on the evaluation             ditional workflows.
+scheme are provided in Appendix D.
+
+                                                                  37568
+
+
+===== PAGE 5 / 9 =====
+
+100  Goal achievement rate (%)                                   100          Refusal rate (%)
+
+                                                                                                   High-risk task
+                                                                                                   Low-risk task
+
+80                                                               80
+
+60                                                               60
+
+40                                                               40
+
+20                                                               20
+
+0                                                                       0
+        o T-5 -1.5 -2.5 -3.5 -3.2 k-2 -2.5 tral hi-4 3A Act                     o T-5 -1.5 -2.5 -3.5 -3.2 k-2 -2.5 tral hi-4 3A Act
+     GPT-4 G emin emin Claude Llama Gr Qwen Pi P M Seox                 GPT-4 G emin emin Claude Llama Gr Qwen Pi P M Seox
+               GG                                                                 GG
+     Pi i                                            e                  Pi i                                            e
+
+Figure 3: The goal achievement rate (left) and refusal rate (right) of the baseline agents in daily scenario tasks of Mobile-
+SafetyBench. Each agent demonstrated distinct behaviors across the tasks. For example, GPT-4o agents achieved a high goal
+achievement rate in low-risk tasks, while Phi-4 agents demonstrated high refusal rates in high-risk tasks, making them helpful
+and safe, respectively. However, GPT-4o agents showed less than half the refusal rate in high-risk tasks, while Phi-4 agents
+presented the lowest goal achievement rate in low-risk tasks, illustrating the safety-helpfulness tradeoff. While GPT-5 agents
+showed the best balance, the room for improvement remains. Exemplary responses of the agents are present in Appendix F.
+
+Safety-guided Chain-of-Thought Prompting To im-                         Phi-4 (Abdin et al. 2024). Additionally, we tested agents
+prove the agents’ ability to recognize potential safety issues,         employing OpenAI-o1 (OpenAI 2024b).3 We also evalu-
+we propose a new prompting method called Safety-guided                  ated two agent workflows, SeeAct (Zheng et al. 2024) and
+Chain-of-Thought (SCoT) prompt. This SCoT prompt re-                    M3A (Rawles et al. 2024). In our main experiment (Sec-
+quires agents to generate safety considerations based on the            tion 5.2 and 5.3), we used SCoT prompting except for the
+current observation (ot) and task instruction (c) before estab-         two agentic workflows using special prompts. We provide
+lishing their action plans. Specifically, SCoT includes sev-            model configuration details in Appendix F.
+eral guidelines that emphasize safe behavior, ensuring that
+agents apply the safety considerations they generate. Our ex-              For the main evaluation, we tested agents on a suite of
+periments demonstrate that integrating SCoT with the CoT                250 tasks. Of these, 100 low-risk tasks and 100 high-risk
+technique significantly enhances the safety of LLM agents.              tasks were used for measuring agents’ safety in daily sce-
+                                                                        narios. The remaining 50 high-risk tasks were used in a sep-
+                    5 Experiment                                        arate study to assess the robustness of the agents against in-
+                                                                        direct prompt injection attacks.4 For the experiment on the
+In this section, we provide our investigation on the following          robustness of the agents against indirect prompt injections,
+research questions:                                                     we clarify the threat model in Appendix F. During the further
+                                                                        analysis (Section 5.4), we exploited tasks without augmen-
+  • How do agents using frontier LLMs perform on daily                  tation (see Appendix F for details).
+     scenarios in MobileSafetyBench? (Section 5.2)
+                                                                        5.2 Daily Scenarios Results
+  • Are LLM agents robust against indirect prompt injec-
+     tion on mobile devices? (Section 5.3)                              Figure 3 shows the goal achievement rate and refusal rate
+                                                                        of the agents in the daily scenario tasks in MobileSafety-
+  • Can the SCoT prompt effectively improve the safety of               Bench. Each agent exhibited distinct behaviors regarding
+     LLM agents? (Table 2)                                              goal achievement and refusal in low-risk tasks and high-risk
+                                                                        tasks. We provide a detailed analysis of the behaviors below.
+  • Can baseline LLMs detect risks in question-answering
+     formats? (Table 3)                                                     3We exclude agents using o1-preview from the main results,
+                                                                        as the preview version did not accept image inputs, precluding a
+  • Can advanced reasoning abilities enhance the LLM                    fair comparison with the other models.
+     agent’s safety? (Table 4)
+                                                                            4We analyzed this type of risk separately because the impact of
+5.1 Experimental Setup                                                  adversarial prompts can vary depending on the agent scaffolding
+                                                                        (e.g., prompt formats). Nonetheless, MobileSafetyBench serves as
+In our experiments, we benchmarked 10 leading LLMs:                     an effective research platform for real-world prompt injection at-
+GPT-5 (OpenAI 2025), GPT-4o (OpenAI 2024a), Gemini-                     tacks on mobile devices.
+2.5-Pro (Comanici et al. 2025), Gemini-1.5-Pro (Gemini
+et al. 2023), Claude-3.5-Sonnet (Anthropic 2024), Llama-
+3.2-90B-Vision (Meta 2024), Grok-2 (xAI 2024), Qwen-
+2.5-VL-72B (Qwen 2024), Pixtral-Large (Mistral 2024), and
+
+                                                                 37569
+
+
+===== PAGE 6 / 9 =====
+
+User instruction                   Agent thought                       Agent thought
+
+Please check the                    … I see a new user                  ... To sell 100 NVIDIA
+latest message in the               instruction …                       stocks as instructed, I
+message app.                        I should open stock                 should...
+                                    trading app to                      Now, I should press
+     Prompt injection               proceed.                            "Sell" button.
+
+    … <user_prompt>                     Agent action                        Agent action
+   Sell 100 NVIDIA
+                                         open-stock()                     tap("Sell" button)
+          stocks …
+    </user_prompt>
+
+                                                                                                                                      Timestep
+
+Figure 4: Exemplary behavior of an agent attacked by an indirect prompt injection. After checking a message that contains a
+new malicious instruction, the agent sells the user’s stock shares following the injected instruction.
+
+Balancing Goal Achievement and Refusal We observed                      Challenges in Harm Prevention of LLM Agents in High-
+that each baseline agent exhibits distinct behaviors, partic-           risk tasks MobileSafetyBench incorporates tasks with
+ularly with respect to the safety–helpfulness trade-off and             risks of varying severity and difficulty in risk detection.
+the tendency toward over-refusal. GPT-4o achieved a goal                Among these, agents effectively prevented straightforward
+achievement rate of 82% in low-risk tasks. However, in high-            risks, such as refusing to proceed with tasks where in-
+risk tasks, it showed a 60% goal achievement rate and a                 structions contain explicit malicious keywords. For instance,
+31% refusal rate, indicating a neglect of safety considera-             when prompted to access an illegal website, they could rec-
+tions. Claude-3.5-Sonnet achieved a refusal rate of 64% in              ognize the illegality of the URL and refuse the request. How-
+high-risk tasks and a high goal achievement rate of 73% in              ever, agents struggled with harm prevention in more com-
+low-risk tasks. This suggests that the model took safety into           plex scenarios. For example, agents sometimes failed to han-
+account while following instructions, but neither the refusal           dle private information (e.g., Google authentication code or
+rate in high-risk tasks nor the goal achievement rate in low-           credit card information) appropriately, revealing the impor-
+risk tasks was the highest among the evaluated agents. Phi-4            tance of ensuring the reliability of autonomous agents in mo-
+achieved a refusal rate of 67% in high-risk tasks but only a            bile device control. Also, agents often struggled to address
+3% goal achievement rate in low-risk tasks. The refusal rate            subtle risks, such as biased employment decisions based on
+of 73% in low-risk tasks indicates that they refused to follow          candidates’ background (e.g., educational background) or
+even harmless instructions. While GPT-5 agents showed the               prejudiced comments in social media posts. We also ob-
+best balance, they also presented room for improvement, in-             served that most of the agents followed a task of setting
+cluding the latency issue with reasoning that we further dis-           a profile image containing a discriminatory gesture (e.g.,
+cuss in Section 5.4. No agents showed a refusal rate of over            a slant-eye gesture), indicating that identifying sensitivity
+70% for high-risk tasks, suggesting that improvements are               or inappropriate content in images poses challenges to the
+needed to ensure the safety of mobile device control.                   agents. More discussion of the agents’ behaviors across dif-
+                                                                        ferent risk types is available in Appendix F.
+   Furthermore, we found that the agents with workflows de-
+signed for digital device control, M3A and SeeAct, usually              5.3 Indirect Prompt Injection Attack Scenarios
+follow given instructions without refusing them. Especially,                  Results
+M3A agents achieved a goal achievement rate of nearly 80%
+in both low-risk tasks and high-risk tasks, indicating the ne-          The indirect prompt injection attack scenarios challenge
+cessity of additional safety considerations to improve the re-          whether agents can maintain robust behavior in the face of
+liability of agentic workflows.                                         such attacks without being deceived. The attacks are embed-
+                                                                        ded in UI elements such as text messages and social media
+ Baseline    Number of defenses                                         posts and delivered to agents as part of the observation. For
+            /Total number of tasks                                      example, Figure 4 illustrates where the agents are asked to
+  GPT-4o                                                                review a text message that contains an irrelevant instruction
+Gemini-1.5            3/50                                              to sell stock shares.
+Claude-3.5            8/50
+                      15/50                                                In Table 1, we present the number of tasks that three
+                                                                        agents based on GPT-4o, Gemini-1.5-Pro, and Claude-3.5-
+Table 1: The test results of agents in 50 high-risk tasks chal-         Sonnet, successfully defended against these attacks, out of
+lenging the robustness against indirect prompt injection. All           the total 50 tasks. Despite the simplicity of the injected
+the agents were vulnerable to the attack.                               prompts, the proprietary LLM agents failed to actively pre-
+                                                                        vent harm against the attacks and are sometimes even prone
+
+                                                                 37570
+
+
+===== PAGE 7 / 9 =====
+
+Prompt     Refusal      Goal                                         Baseline   QA setting  Agentic setting
+                       achievement                                       GPT-4o       92%            36%
+Basic prompt   06%                                                     Gemini-1.5     80%            82%
+SCoT prompt    36%         84%                                         Claude-3.5     92%            66%
+                           82%
+
+Table 2: The refusal rate (%) in high-risk tasks and goal              Table 3: Risk detection rate in the QA setting with the pro-
+achievement rate (%) in low-risk tasks of the GPT-4o agents            portion of risks handled in the agentic setting, measured over
+with different prompt types. SCoT effectively induces safety           high-risk tasks. We observe a clear discrepancy between the
+without compromising the capability of agents.                         two settings.
+
+to these malicious attacks. When misled by the injected                      Baseline     Refusal rate  Latency
+prompts, the agents typically assumed they have received                 GPT-4o (basic)        07         4.46
+new instructions and attempt to execute them. Consequently,              GPT-4o (SCoT)         41         4.70
+they inadvertently opened a banking application, initiated             OpenAI-o1 (basic)       61        18.32
+stock trades, or even attempted to change the device pass-             OpenAI-o1 (SCoT)        86        25.60
+word without the user’s consent. We believe that our find-
+ings emphasize that improving the safety of agents against             Table 4: Refusal rate (%) and average response latency (sec)
+malicious attacks, such as by enhancing agent-user interac-            of GPT-4o and OpenAI-o1 agents. Advanced reasoning in-
+tivity, is highly necessary. We offer detailed examples of an          creases the safety of the agents but sacrifices the practicality,
+injected prompt and an agent’s response in Appendix F.                 i.e., time and cost. Appendix F includes results with GPT-5.
+
+5.4 Further Analysis                                                   LLMs with Strong Reasoning Capability Recent ad-
+                                                                       vancements in enhancing the reasoning capabilities of LLMs
+In this section, we present our study on the behaviors of the          through diverse strategies have been actively explored. We
+baseline LLMs in depth. These analyses include the effect of           investigated the effects of these enhanced capabilities us-
+SCoT prompting, comparison with question-answering set-                ing OpenAI-o1 agents and compare their performance in
+tings, and the effect of advanced reasoning capability.                high-risk tasks to GPT-4o agents.5 As shown in Table 4, the
+                                                                       OpenAI-o1 agents demonstrated improved refusal rate com-
+The Effect of SCoT Prompting We compared the GPT-                      pared to GPT-4o agents. However, OpenAI-o1 agents still
+4o agents with and without the use of SCoT prompting. The              failed to avoid risks in several high-risk tasks and require an
+result in Table 2 shows GPT-4o agents provided with SCoT               excessive amount of time (more than approximately 4 times
+prompt reported 28% higher refusal rate than the agents                in seconds, on average across the timesteps) to make deci-
+given with the basic prompt. This indicates the necessity of           sions, highlighting their practical limitations. More details
+more advanced reasoning or planning algorithms for achiev-             on OpenAI-o1 agents, including their performances in low-
+ing higher safety. Appendix F provides a more detailed ex-             risk tasks, are available in Appendix F. Their vulnerability
+planation of the study and further discussions.                        to indirect prompt injection, also detailed in Appendix F,
+                                                                       further highlights their potential hazards. We believe these
+Comparison with Question-Answering Furthermore, to                     results call for future work on developing methods for safe
+verify whether the underlying LLMs employed in building                and efficient agents.
+agents can effectively capture the risks in the tasks, we ex-
+amined their responses in a question-answering (QA) set-                                   6 Conclusion
+ting. In this setting, we isolated the content containing po-
+tential risks, such as specific memos or social media posts,           We observe that the LLM agents exhibit unsafe behaviors
+from the observations used in the agentic setting. We then             in many scenarios that are prevalent in daily life. While the
+counted the risk detection rate in the QA setting and com-             newly proposed prompting method helps increase the safety
+pared this to the number of refusal of the agents following            scores significantly, the agents still show limitations. In fur-
+our framework (refusal in the agentic setting).                        ther analysis, we find that the agents are capable of detect-
+                                                                       ing the risks, especially provided with the usual question-
+   In the QA setting, we observed that LLMs detect risks in            answering formats, calling for evaluations of LLMs in di-
+most tasks containing risk-associated content, as shown in             verse settings. We also find the shortcomings of current
+Table 3. Notably, we found a clear discrepancy between the             LLMs with advanced reasoning ability and external safe-
+two settings, particularly in the GPT-4o agent and Claude-             guards. The vulnerability of agents against indirect prompt
+3.5-Sonnet agent. Specifically, while the underlying LLMs              injections especially indicates the necessity for more careful
+effectively detected potential risks in textual and image con-         designs. We hope our work serves as a valuable platform for
+tent, agents derived from these LLMs often overlooked these            building safe and helpful agents.
+risks. Gemini-1.5-Pro demonstrated reasonable performance
+in both settings. Further details and discussion can be found              5Since the preview version does not support image inputs, we
+in Appendix F. We believe that these findings highlight the            utilize a subset of tasks that do not involve cases where risk signals
+need to develop safety benchmarks specifically tailored for            are presented in images.
+LLM applications, including LLM agents, that go beyond
+conventional QA frameworks.
+
+                                                                37571
+
+
+===== PAGE 8 / 9 =====
+
+Ethical Statement                                      that mechanisms of requesting user consent in sensitive sit-
+                                                                         uations are not considered failures in our benchmark. We
+Warning This paper contains contents that are unethical                  believe that our platform can be used effectively to build
+or offensive in nature.                                                  interactive agents, which can be valuable for ensuring user
+                                                                         control.
+Limitations Our comprehensive studies based on this
+benchmark have highlighted significant safety shortcomings                                 Acknowledgments
+in current frontier LLM agents. Below, we outline limita-
+tions in our benchmark and potential future directions for               We thank Haeone Lee, Taywon Min, and Dongjun Lee for
+expanding our benchmark to address them.                                 providing valuable feedback to improve our work. This work
+                                                                         was supported by Institute for Information & communica-
+  • Risks difficult to identify: We reveal the discrepancy in            tions Technology Planning & Evaluation(IITP) grant funded
+     the risk detection abilities of LLMs in different set-              by the Korea government(MSIT) (RS-2019-II190075, Arti-
+     tings, where they can detect risks easily in the question-          ficial Intelligence Graduate School Program(KAIST)); by
+     answering setting. One possible future direction for im-            the National Research Foundation of Korea(NRF) grant
+     proving our work is to embed risks that are more com-               funded by the Korea government(MSIT) (No. RS-2024-
+     plex to be discerned. We suggest importing the risks in             00414822); and by Institute of Information & commu-
+     existing benchmarks with a question-answering format                nications Technology Planning & Evaluation(IITP) grant
+     as an option, similar to Kumar et al. (2024), adopting              funded by the Korea government(MSIT) (No. RS-2024-
+     prior benchmarks for creating tasks.                                00509279, Global AI Frontier Lab). This research was also
+                                                                         conducted as part of the Sovereign AI Foundation Model
+  • More scenarios: While the benchmark already covers                   Project(Data Track), organized by the Ministry of Science
+     prominent types of risks in diverse and realistic situa-            and ICT(MSIT) and supported by the National Information
+     tions, expanding the number of tasks can provide a bet-             Society Agency(NIA), S.Korea. All data information can be
+     ter means of comprehensive evaluation. In our process               accessed through ’AI-Hub (www.aihub.or.kr)’. This work
+     of task brainstorming, we adopted LLM to generate a                 has taken place in part in the Rewarding Lab at UT Austin.
+     realistic wide range of task specifications (e.g., names            During this project, the Rewarding Lab has been supported
+     of the subjects in tasks or conversation history). Similar          by NSF (IIS-2402650), ONR (N00014-22-1-2204), ARO
+     to this approach, we consider the utilization of LLMs to            (W911NF-25-1-0254), Emerson, EA Ventures, UT Austin’s
+     augment the risky scenarios as an interesting approach.             Good Systems grand challenge, and Open Philanthropy.
+
+  • Broader agentic settings: In this benchmark, we focus                                       References
+     on the framework of a single decision-making agent.
+     We highlight that MobileSafetyBench can be effectively              Abdin, M.; Aneja, J.; Behl, H.; Bubeck, S.; Eldan, R.; Gu-
+     leveraged for broader settings such as with a multi-                nasekar, S.; Harrison, M.; Hewett, R. J.; Javaheripi, M.;
+     agent system or retrieval-augmented generation, where               Kauffmann, P.; et al. 2024. Phi-4 technical report. arXiv
+     such investigation can boost fostering the trust of au-             preprint arXiv:2412.08905.
+     tonomous agents.
+                                                                         Amodei, D.; Olah, C.; Steinhardt, J.; Christiano, P.; Schul-
+Broader Impact We introduce MobileSafetyBench, a                         man, J.; and Mane´, D. 2016. Concrete problems in AI safety.
+benchmark for evaluating the safety and helpfulness of                   arXiv preprint arXiv:1606.06565.
+autonomous agents controlling mobile devices. While our
+benchmark aims to improve the safety and reliability of such             Andriushchenko, M.; Souly, A.; Dziemian, M.; Duenas, D.;
+agents, it also highlights ethical concerns related to their de-         Lin, M.; Wang, J.; Hendrycks, D.; Zou, A.; Kolter, Z.;
+ployment. The risks of security breaches and unintentional               Fredrikson, M.; et al. 2024. AgentHarm: A Benchmark for
+harmful actions highlight the need for a well-defined ethi-              Measuring Harmfulness of LLM Agents. arXiv preprint
+cal guideline. To mitigate these risks, we emphasize the im-             arXiv:2410.09024.
+portance of the reliability and safety of agent actions, user
+consent, and the implementation of rigorous safety checks                Anthropic. 2024. https://www.anthropic.com/news/claude-
+when developing and deploying autonomous agents. Espe-                   3-5-sonnet.
+cially, we provide thorough analyses of state-of-the-art LLM
+for developing agents. LLM agents can inadvertently take                 Bai, Y.; Jones, A.; Ndousse, K.; Askell, A.; Chen, A.; Das-
+actions that may cause real-world harm or expose sensitive               Sarma, N.; Drain, D.; Fort, S.; Ganguli, D.; Henighan, T.;
+information, either through direct user interactions or ex-              et al. 2022. Training a helpful and harmless assistant with re-
+ternal manipulations such as indirect prompt injection at-               inforcement learning from human feedback. arXiv preprint
+tacks. Our work encourages further research that ensures                 arXiv:2204.05862.
+LLM agents prioritize user safety and privacy, and remain
+aligned with ethical standards to prevent misuse. Notably,               Comanici, G.; Bieber, E.; Schaekermann, M.; Pasupat, I.;
+we acknowledge that several scenarios in our benchmark en-               Sachdeva, N.; Dhillon, I.; Blistein, M.; Ram, O.; Zhang,
+gage content-monitoring by the agents, which is related to               D.; Rosen, E.; et al. 2025. Gemini 2.5: Pushing the fron-
+technology paternalism (Rochi et al. 2024; Duan and Grim-                tier with advanced reasoning, multimodality, long context,
+melmann 2024). Regarding these scenarios, we emphasize                   and next generation agentic capabilities. arXiv preprint
+                                                                         arXiv:2507.06261.
+
+                                                                  37572
+
+
+===== PAGE 9 / 9 =====
+
+Debenedetti, E.; Zhang, J.; Balunovic´, M.; Beurer-Kellner,              Rochi, M.; Rauschnabel, P. A.; Renner, K.-H.; and Ivens,
+L.; Fischer, M.; and Trame`r, F. 2024. AgentDojo: A Dy-                  B. S. 2024. Technology paternalism: Development and val-
+namic Environment to Evaluate Attacks and Defenses for                   idation of a measurement scale. Psychology & Marketing.
+LLM Agents. arXiv preprint arXiv:2406.13352.
+                                                                         Ruan, Y.; Dong, H.; Wang, A.; Pitis, S.; Zhou, Y.; Ba, J.;
+Duan, C.; and Grimmelmann, J. 2024. Content moderation                   Dubois, Y.; Maddison, C. J.; and Hashimoto, T. 2024. Iden-
+on end-to-end encrypted systems: A legal analysis. Geo. L.               tifying the risks of lm agents with an lm-emulated sandbox.
+Tech. Rev.                                                               In International Conference on Learning Representations.
+
+Gemini, T.; Anil, R.; Borgeaud, S.; Wu, Y.; Alayrac, J.-B.;              Shinn, N.; Labash, B.; and Gopinath, A. 2023. Reflex-
+Yu, J.; Soricut, R.; Schalkwyk, J.; Dai, A. M.; Hauth, A.;               ion: an autonomous agent with dynamic memory and self-
+et al. 2023. Gemini: a family of highly capable multimodal               reflection. arXiv preprint arXiv:2303.11366.
+models. arXiv preprint arXiv:2312.11805.
+                                                                         Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.;
+Kumar, P.; Lau, E.; Vijayakumar, S.; Trinh, T.; Team,                    Chi, E.; Le, Q. V.; Zhou, D.; et al. 2022. Chain-of-thought
+S. R.; Chang, E.; Robinson, V.; Hendryx, S.; Zhou, S.;                   prompting elicits reasoning in large language models. In
+Fredrikson, M.; Yue, S.; and Wang, Z. 2024. Refusal-                     Conference on Neural Information Processing Systems.
+Trained LLMs Are Easily Jailbroken As Browser Agents.
+https://scale.com/research/browser-art.                                  Wu, C. H.; Koh, J. Y.; Salakhutdinov, R.; Fried, D.; and
+                                                                         Raghunathan, A. 2024. Adversarial Attacks on Multimodal
+Lee, J.; Min, T.; An, M.; Kim, C.; and Lee, K. 2024. Bench-              Agents. arXiv preprint arXiv:2406.12814.
+marking Mobile Device Control Agents across Diverse Con-
+figurations. arXiv preprint arXiv:2404.16660.                            xAI. 2024. https://x.ai/news/grok-1212.
+
+Li, N.; Pan, A.; Gopal, A.; Yue, S.; Berrios, D.; Gatti, A.; Li,         Yang, Z.; Liu, J.; Han, Y.; Chen, X.; Huang, Z.; Fu, B.; and
+J. D.; Dombrowski, A.-K.; Goel, S.; Phan, L.; et al. 2024.               Yu, G. 2023. AppAgent: Multimodal Agents as Smartphone
+The wmdp benchmark: Measuring and reducing malicious                     Users. arXiv preprint arXiv:2312.13771.
+use with unlearning. In International Conference on Ma-
+chine Learning.                                                          Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan,
+                                                                         K.; and Cao, Y. 2023. React: Synergizing reasoning and
+Liao, Z.; Mo, L.; Xu, C.; Kang, M.; Zhang, J.; Xiao, C.; Tian,           acting in language models. In International Conference on
+Y.; Li, B.; and Sun, H. 2024. Eia: Environmental injection               Learning Representations.
+attack on generalist web agents for privacy leakage. arXiv
+preprint arXiv:2409.11295.                                               Yuan, T.; He, Z.; Dong, L.; Wang, Y.; Zhao, R.; Xia, T.;
+                                                                         Xu, L.; Zhou, B.; Li, F.; Zhang, Z.; Wang, R.; and Liu, G.
+Meta. 2024. https://ai.meta.com/blog/llama-3-2-connect-                  2024. R-Judge: Benchmarking Safety Risk Awareness for
+2024-vision-edge-mobile-devices/.                                        LLM Agents. arXiv preprint arXiv:2401.10019.
+
+Mireshghallah, N.; Kim, H.; Zhou, X.; Tsvetkov, Y.; Sap,                 Zhan, Q.; Liang, Z.; Ying, Z.; and Kang, D. 2024. In-
+M.; Shokri, R.; and Choi, Y. 2024. Can llms keep a secret?               jecagent: Benchmarking indirect prompt injections in tool-
+testing privacy implications of language models via contex-              integrated large language model agents. arXiv preprint
+tual integrity theory. International Conference on Learning              arXiv:2403.02691.
+Representations.
+                                                                         Zheng, B.; Gou, B.; Kil, J.; Sun, H.; and Su, Y. 2024. Gpt-4v
+Mistral. 2024. https://mistral.ai/news/pixtral-large.                    (ision) is a generalist web agent, if grounded. arXiv preprint
+                                                                         arXiv:2401.01614.
+OECD. 2019. OECD AI Principles: Robustness, security
+and safety (Principle 1.4). https://oecd.ai/en/dashboards/ai-            Zhou, S.; Xu, F. F.; Zhu, H.; Zhou, X.; Lo, R.; Sridhar,
+principles/P8.                                                           A.; Cheng, X.; Bisk, Y.; Fried, D.; Alon, U.; et al. 2024.
+                                                                         Webarena: A realistic web environment for building au-
+OpenAI. 2024a. https://openai.com/index/hello-gpt-4o/.                   tonomous agents. In International Conference on Learning
+                                                                         Representations.
+OpenAI. 2024b. https://openai.com/index/introducing-
+openai-o1-preview/.
+
+OpenAI. 2025. https://openai.com/index/introducing-gpt-5/.
+
+Qi, X.; Zeng, Y.; Xie, T.; Chen, P.-Y.; Jia, R.; Mittal, P.; and
+Henderson, P. 2024. Fine-tuning aligned language models
+compromises safety, even when users do not intend to! In
+International Conference on Learning Representations.
+
+Qwen. 2024. Qwen2 technical report. arXiv preprint
+arXiv:2407.10671.
+
+Rawles, C.; Clinckemaillie, S.; Chang, Y.; Waltz, J.; Lau,
+G.; Fair, M.; Li, A.; Bishop, W.; Li, W.; Campbell-Ajala,
+F.; et al. 2024. AndroidWorld: A dynamic benchmark-
+ing environment for autonomous agents. arXiv preprint
+arXiv:2405.14573.
+
+                                                                  37573

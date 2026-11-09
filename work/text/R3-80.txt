@@ -1,0 +1,3682 @@
+# R3-80 | zkAgent: Verifiable LLM Agent Execution via One-Shot Transcript Proofs
+# PDF: papers\zkAgent_Verifiable LLM Agent Execution via One-Shot Transcript Proofs.pdf
+# extracted: 2026-11-02T19:15:58.879Z
+
+
+===== PAGE 1 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution via
+                One-Shot Transcript Proofs
+
+     Lizheng Wang, Hancheng Lou, Chongrong Li, Yu Yu, and Yuncong Hu⋆
+
+                         Shanghai Jiao Tong University, Shanghai, China
+       {lizhengwang,louhancheng,chongrongli,yyuu,huyuncong}@sjtu.edu.cn
+
+         Abstract. LLM-based agents, which interleave large language model
+         inference with external tool calls, are increasingly deployed in high-stakes
+         settings. In real-world deployments, both model inference and provider-
+         hosted tool execution occur behind provider APIs and are therefore opaque
+         to users. This opacity creates an execution-integrity gap: a malicious
+         provider may substitute the advertised model or fabricate tool observa-
+         tions to steer subsequent agent behavior. Existing zero-knowledge proof
+         systems for LLMs prove only the Transformer computation of a single
+         token, leaving the rest of the inference pipeline, long-form autoregressive
+         generation, and external tool interactions outside the proof.
+         We present zkAgent, the first SNARK system for verifiable agent execution.
+         zkAgent proves the complete inference pipeline, from token-to-embedding
+         lookup and positional encoding to Transformer computation and decoding.
+         It further binds each tool observation to an authenticated execution via
+         zkTLS or zkVM subproofs, yielding a single end-to-end proof. To scale
+         beyond per-token proving, we introduce one-shot transcript proving: by
+         exploiting the Transformer’s causal attention mask, zkAgent proves an
+         entire multi-step agent transcript in a single forward pass, avoiding the
+         substantial overhead incurred by one-proof-per-token generation. We
+         make this batched proof sound with a weight-dependent quantization
+         scheme that is both input-independent and unconditionally complete.
+         On GPT-2 with a 512-token transcript, zkAgent achieves a 1,047.4×
+         prover speedup over the state of the art (zkGPT, USENIX Security ’25),
+         amortizing to 0.30 s/token. On a real-world coding-assistant execution,
+         zkAgent completes end-to-end proving in 93.18 s with 1.63 s verification,
+         making verifiable agent execution practical.
+
+1 Introduction
+
+Large language model (LLM)-based agents [41] interleave model inference with
+external tool use to act on users’ behalf. In production, such agents have rapidly
+moved beyond conversational interfaces: coding assistants can modify software
+repositories [3], while general-purpose agents browse and act on the open web [52].
+Emerging standards now address cross-organizational agent discovery and trust
+(e.g., ERC-8004 [19]), and agent-mediated purchases (e.g., the Agentic Commerce
+
+ ⋆ Corresponding author.
+
+
+===== PAGE 2 / 59 =====
+
+2  L. Wang et al.
+
+   Model Provider (Prover)                                          zkAgent Proof Bundle
+                                                                         One-shot Inference Proof
+   untrusted                             untrusted          prove
+                                                            verify   GKR with zkEmbed / zkPosEnc / zkDecode
+      LLM             invocation         Server Tools
+                                                                                  Schema Proof
+                      observation web search · code exec
+                                                                                  Coral (tool-call parsing)
+                      Trust boundary
+                                                                                 Tool Subproofs
+   Client (Verifier)
+                                                                            zkTLS (APIs) · zkVM (sandbox)
+   response  prompt                           trusted
+                                                                            shared transcript commitment ctr
+                             invocation  Local Tools
+                                                                                             on tr = (t0, . . . , tT −1)
+   Agent Loop                             file ops · shell
+
+                      observation
+
+   user query output
+
+Fig. 1: zkAgent architecture and proof bundle. The model provider (prover) hosts
+the LLM and server-side tools (web search, code execution), both above the trust
+boundary and requiring cryptographic proof; the client (verifier) runs the agent
+loop, which calls the provider for model inference and may additionally invoke
+trusted local tools (e.g., file or shell operations).
+
+Protocol [56]). As agent outputs increasingly trigger changes to external systems
+and assets, verifying the integrity of the underlying model inference and tool
+execution becomes a security-critical requirement.
+
+    In modern agent deployments, each LLM invocation executes behind the
+provider’s API, along with an increasingly rich set of server-hosted tools (e.g., web
+search and code execution in managed sandboxes [6]) bundled into that API. Even
+when the agent loop runs entirely on the user’s device, these provider-executed
+steps remain opaque to the user, as illustrated in Fig. 1. This opacity creates
+an end-to-end execution-integrity gap [43]: an untrusted provider may deviate
+arbitrarily from the prescribed agent procedure: (i) by silently substituting the
+advertised model with a cheaper or backdoored alternative; or (ii) by fabricating
+tool observations, such as forging web-search results or misreporting sandbox
+outputs.
+
+    Recent works on zero-knowledge proofs for large language models [69,60,13,63]
+(zkLLM) have demonstrated the feasibility of verifiable outsourced LLM inference.
+These systems encode core LLM computations as an arithmetic circuit and
+leverage SNARK techniques [16,29,9,7,30] to generate succinct proofs that the
+committed model was faithfully executed on a given input. Despite recent progress,
+existing zkLLM approaches remain insufficient for verifiable agent execution. In
+particular, they focus primarily on computations within Transformer blocks, and
+therefore do not capture the full inference pipeline from input tokens to decoded
+output tokens. Moreover, they do not support multi-round agent executions that
+interleave model inference with external tool use. Closing these gaps poses several
+fundamental challenges.
+
+Challenge 1: Proving complete inference beyond Transformer blocks.
+Completing the full inference pipeline requires proving three components generally
+omitted by prior zkLLM systems: token-to-embedding lookup [73,48], positional
+encoding [67], and logit-to-token decoding [34]. Each poses a distinct proving
+challenge. First, embedding lookup maps each input token to a high-dimensional
+
+
+===== PAGE 3 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  3
+
+vector via a vocabulary-sized table, which can contain tens of millions of entries
+even for GPT-2 [61]. Direct applications of generic lookup arguments [28,32]
+and offline memory-checking techniques [66,65] incur proving overhead linear
+in the table size, making online proving impractical at this scale. Second, posi-
+tional encoding injects position information through a position-dependent linear
+transformation. RoPE [67] and its extensions [59,23] are widely used in modern
+LLMs [71,80,20], but a direct arithmetization [69] compiles each rotation into a
+per-token dh ×dh matrix–vector multiplication, incurring Θ(T d2h) overhead per
+head even with time-optimal matmul protocols [70]. Finally, decoding maps a
+logit vector to the next output token according to a public rule such as top-
+k sampling [34]. Beyond proving correct candidate-set extraction and correct
+Softmax-distribution computation, the prover must additionally show that the
+output token was drawn from this distribution at the correct probability. No
+existing proof system provides a construction for this complex random sampling.
+
+Challenge 2: Proving long-form generation efficiently. Even for a single
+query, LLM may generate a multi-token continuation over many autoregressive
+steps, each requiring a forward pass conditioned on all preceding tokens. Thus,
+a proof of LLM inference must ensure the correctness of each autoregressive
+step. For a 482-token continuation on GPT-2, stepwise proving with zkGPT [60]
+requires over 41 hours and produces proofs totaling ∼934 MiB. Recursive proof
+composition [72,17,9] can compress the resulting proof size but does not reduce the
+dominant stepwise prover work, and folding-based batching [39,38] still requires
+prover work proportional to the total cost of all forward passes. Although it
+may seem natural to evaluate the model once on the full transcript and prove
+all token predictions in a single pass, doing so without additional constraints
+may allow future tokens to influence earlier predictions, violating the causal
+structure of autoregressive generation. Enforcing causal dependence within a
+single batched proof while guaranteeing equivalence to stepwise autoregressive
+generation remains an open problem in prior zkLLM work [69,60,77,13]. In
+quantized inference, such equivalence further requires input-independent per-
+layer scales so that corresponding prefix computations in the batched and stepwise
+executions are quantized identically. Prior zkML quantization schemes do not
+simultaneously ensure input independence and completeness: data-dependent
+dynamic schemes [44] use input-specific scales, whereas fixed calibration-based
+schemes [77] may reject valid executions whose activations exceed the calibrated
+range.
+
+Challenge 3: Proving external tool interactions. Unlike standalone LLM
+inference, an agent execution interleaves model-generated content with externally
+injected tool observations (e.g., web search results, APIs responses, or sandbox
+outputs). Once incorporated into the model context, these observations can
+directly influence subsequent model outputs and agent actions. Existing zkLLM
+systems [69,60,13,77] do not model these tool interactions and therefore establish
+neither the integrity of the observations nor their binding to subsequent model
+inference. This leaves a critical gap: a malicious provider could tamper with tool
+results or fabricate plausible-looking tool traces while still producing a seemingly
+
+
+===== PAGE 4 / 59 =====
+
+4  L. Wang et al.
+
+coherent final response [43]. Closing this gap requires binding tool observations
+into the proof—authenticating responses against the claimed endpoints, proving
+the correctness of deterministic sandbox computations, and composing these
+guarantees with LLM-generation correctness into a single end-to-end statement.
+
+1.1 Our Contributions
+
+To address these challenges, we present zkAgent, a zero-knowledge proof system for
+end-to-end agent executions with tool use. We give an overview of its architecture
+in Fig. 1.
+Complete inference proof. We design dedicated protocols for each component
+omitted by prior zkLLM systems, thereby providing a complete inference proof
+from input tokens to decoded output. For token-to-embedding lookup, we present
+zkEmbed, a preprocessing-based matrix-lookup protocol that exploits the highly
+rectangular structure of embedding tables in modern LLMs [61,80,71]. After
+one-time preprocessing on the fixed table, it achieves the online proving cost in-
+dependent of the vocabulary size. zkPosEnc provides efficient positional-encoding
+proofs; for RoPE [67], it exploits the structural sparsity of the rotation matrix
+to reduce overhead from O(T d2h) to O(T dh) over prior method [69]. zkDecode
+provides efficient decoding proofs; for top-k sampling, it introduces a verifiable
+random sampling subprotocol based on inverse-CDF selection with a coin deter-
+ministically derived from the committed prefix, achieving asymptotically optimal
+proving cost.
+One-shot transcript proving via causal masking. We introduce one-shot
+transcript proving, which verifies all model-generated tokens with a single proof of
+a causally masked forward pass rather than one proof per token. The construction
+relies on the fact that, in a decoder-only LLM, self-attention is the only sublayer
+that mixes information across positions. By applying a lower-triangular causal
+attention mask [73] at every attention layer, we enforce autoregressive causality
+within a single batched forward pass: each position t attends only to positions
+≤ t, so its logits depend only on preceding tokens and all logits can be computed
+in parallel in one full-transcript pass. We also formally prove that this one-shot
+causally-masked forward pass yields the same per-position logits as stepwise
+autoregressive generation—a property we call prefix equivalence (Appendix E).
+To preserve prefix equivalence in quantized arithmetic, we design weight-dependent
+quantization, deriving each layer’s scale from a worst-case bound determined solely
+by the committed model parameters rather than the input (§4.1). The resulting
+scales are input-independent and ensure completeness for honest executions. For
+tool-interleaved transcripts, we further introduce a transcript-derived generation
+mask that restricts next-token consistency checks to model-generated positions.
+To our knowledge, zkAgent is the first work to formally establish prefix equivalence
+and to design a protocol that avoids the one-proof-per-token structure, enabling
+long, multi-round agent traces to be proved via a single forward-pass proof.
+Verifiable tool observations and execution. We design tool-specific protocols
+that bind each tool invocation and observation into the transcript proof, covering
+the two dominant categories of provider-hosted tools: remote API calls and
+
+
+===== PAGE 5 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  5
+
+sandboxed code execution. For remote API calls, we incorporate zkTLS-style
+attestations [79], which cryptographically bind each recorded response to its
+corresponding request and the identity of the target server. For code execution, we
+support the widely adopted Python sandbox [54,4] by building on existing zkVM
+techniques [68] to prove execution correctness. Beyond binding tool outputs, we
+also enforce the well-formedness of tool invocations: we prove that any purported
+tool call conforms to a public invocation schema [55,5,76] via provable parsing
+techniques such as Coral [2], and link each observation back to its invocation.
+Prototype and evaluation. We implement zkAgent in C++ and evaluate it on
+GPT-2 with two interchangeable lookup backends, Shout [65] and LogUp [32,58].
+Given a 30-token prompt and a final transcript length of T = 512 (482 generated
+tokens), zkAgent(Shout) proves the entire transcript in a single shot in 142.45 s,
+amortizing to 0.30 s per generated token, while the succinct verifier takes only
+2.63 s for the entire transcript. This yields a 1,047.4× prover-time and 1,657.5×
+verifier-time reduction over the state-of-the-art zkGPT baseline [60](149,192.60 s
+and 4,361.09 s, respectively). zkAgent(LogUp) offers a complementary tradeoff,
+shrinking the proof to 3.84 MiB and verification to 1.50 s at 1.4× slower proving
+against zkAgent(Shout), still much faster than zkGPT.
+
+    Microbenchmarks further validate the efficiency of the additional components
+needed for complete inference beyond Transformer blocks: After a one-time prepro-
+cessing step taking 942.43 s and requiring 4.52 GiB of auxiliary storage,zkEmbed
+proves a batch of 1,024 embedding queries online in 0.27 s; zkPosEnc reduces
+proving time by 15.7×–30.1× versus the naive matmul arithmetization used in
+zkLLM [69]; zkDecode amortizes greedy decoding to 0.033 s/token and top-k to
+0.15 s/token of prover overhead.
+
+    Finally, we evaluate zkAgent on two representative tool-using agent traces: a
+152-token weather-agent trace (zkTLS-attested API call) and a 143-token coding-
+assistant trace (zkVM-attested sandbox execution). With the Shout backend,
+zkAgent generates the corresponding end-to-end proof bundles in 95.23 s and
+93.18 s, respectively, while verification takes 1.45 s and 1.63 s. In both cases,
+the inference proof dominates the proving cost; the schema and tool subproofs
+together add only 7.62 s and 6.18 s, respectively.
+
+2 Preliminaries
+
+2.1 Notations
+
+We use κ to denote the security parameter. Let F be a prime field of order p such
+that log p = Ω(κ), and let F<D[X] denote the set of univariate polynomials over F
+of degree strictly less than D. For integers a ≤ b, we write [a, b] := {a, . . . , b} and
+[a, b) := {a, . . . , b − 1} for the closed and half-open integer ranges, respectively.
+In particular, [n] := [0, n) = {0, . . . , n − 1} for n ∈ N, and all indices start
+from 0. We write {0, 1}n for the boolean hypercube, use standard asymptotic
+
+                                                               $
+
+notation, and write x ← S when x is sampled uniformly from a finite set S.
+We use bold lowercase letters for vectors (e.g., x ∈ Fn), bold uppercase letters
+
+
+===== PAGE 6 / 59 =====
+
+6  L. Wang et al.
+
+for matrices (e.g., W ∈ Fm×n), and plain letters for scalars. For x ∈ Fn, xi
+denotes its i-th entry, (xi)i∈[n] the indexed tuple of entries, and {xi}i∈S the
+multiset of entries indexed by S ⊆ [n]; we omit the index set when it is clear from
+
+context. For matrices, we use bracket indexing: W [i, j] denotes the (i, j)-entry,
+W [i, :] ∈ Fn its∑︁i-th row, and W [:, j] ∈ Fm its j-th column. For x, y ∈ Fn, we
+write ⟨x, y⟩ := i∈[n] xiyi for the inner product and x ◦ y := (xiyi)i∈[n] for the
+Hadamard product. We use tr = (ti)i∈[T ] ∈ [N ]T for a token sequence of length T
+over a vocabulary of size N , with tr≤k and tr<k denoting its prefixes (t0, . . . , tk)
+and (t0, . . . , tk−1), and Hℓ ∈ FT ×d for the hidden-state tensor at the output of
+layer ℓ.
+
+2.2 Lookup Arguments
+
+Lookup arguments [32] are a cryptographic primitive for proving that a committed
+vector of query values is drawn from a committed table. Formally, given a
+committed table b ∈ FN and a committed query vector a ∈ Fℓ, a lookup
+argument proves the multiset inclusion {ai}i∈[ℓ] ⊆ {bj}j∈[N]. This primitive is
+widely used in zkML [69,60,33] to prove non-arithmetic operations (e.g., exp(·)).
+
+    The appropriate lookup strategy depends on the size and structure of the
+table. For small tables, direct protocols such as LogUp [32] and Shout [65]
+remain practical even though their online prover costs scale with N . Papini et
+al. [58] further use GKR to verify the LogUp identity without committing to the
+reciprocal polynomial. For large structured tables, Lasso-style decomposition [66]
+reduces a lookup over the full table to lookups over smaller subtables derived
+from the original query, making the prover cost depend on the decomposed
+representation rather than the full table size. For large unstructured tables,
+preprocessing-based lookup arguments such as cached quotients (cq) [24] and
+Baloo [82] shift the N -dependent work to a one-time preprocessing phase, so that
+the online prover cost scales with ℓ rather than N . zkAgent combines all three
+strategies: for large structured tables, we first applies Lasso-style decomposition
+to reduce each lookup to lookups over smaller subtables, and then proves the
+resulting lookup relations using GKR-optimized LogUp and Shout (§5.1). For
+the large unstructured vocabulary-sized embedding table, our zkEmbed protocol
+instead uses preprocessing based on cq (Appendix D).
+
+2.3 GKR Protocol for ML
+
+The GKR protocol [30] is an interactive proof for layered arithmetic-circuit
+evaluation. Unlike SNARKs such as HyperPlonk [14] and Spartan [64], which
+commit to the full execution trace, GKR iteratively reduces a claim at one layer
+to a claim at the preceding layer via the sumcheck protocol [46], continuing
+until it reaches the input layer. The prover therefore commits only to the input
+layer and uses a polynomial commitment scheme (PCS) to answer the verifier’s
+resulting random evaluation queries. This feature is particularly valuable in
+zkML [44,69,60], where the forward-pass trace is too large to commit to directly.
+
+
+===== PAGE 7 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution                                          7
+
+    In zkAgent, we likewise adopt GKR, handling arithmetic operations directly
+
+inside GKR [44] and non-arithmetic operations via lookup arguments [66,69].
+
+Multilinear extension. A polynomial p ∈ F[X0, . . . , Xn−1] is multilinear if it
+has degree at most 1 in each variable. For any f : {0, 1}n → F, there is a unique
+multilinear polynomial f˜ : Fn → F such that f˜(x) = f (x) for all x ∈ {0, 1}n;
+this f˜ is the multilinear extension (MLE) of f , and can be written as f˜(X) =
+∑︁  ∏︁n−1
+  x∈{0,1}n f (x) · e˜q︁ (x, X), where e˜q︁ (x, X) := i=0 (xiXi + (1 − xi)(1 − Xi)).
+Sumcheck protocol. For an n-variate polynomial f : Fn → F of bounded
+
+individual degree∑,︁the sumcheck protocol [46] allows the prover to convince a claim
+of the form v = x∈{0,1}n f (x). It reduces this sum claim to an evaluation claim
+
+about f at a random point. A formal description is provided in Appendix C.2.
+
+GKR variant adopted in zkAgent. Classical GKR restricts each gate to
+
+reading only from the immediately preceding layer, forcing model weights and
+
+residual inputs to be relayed through every intervening layer. We instead adopt
+
+the variant of Zhang et al. [84], which permits each gate also read from any
+
+earlier layer, so that computation layers directly access committed weights and
+
+earlier hidden states. To prove non-arithmetic operations within this backend, we
+
+additionally use the advice pattern [44,60]. For each such operation y = f (x), the
+
+prover places both x and y in the committed input layer as advice values. GKR
+
+verifies that x matches the value produced by the preceding computation and
+
+that y is consumed by the subsequent computation, while a lookup argument
+
+verifies that (x, y) is valid for f . The shared input-layer commitment binds the
+
+values checked by the lookup argument to those consumed by GKR. For clarity of
+
+presentation, we present our construction without the zero-knowledge property;
+
+however, this property can be added with only minor overhead using the standard
+
+paradigm [78,84]. Formal constructions are given in Appendices C.3 and C.4.
+
+2.4 Quantization for zkML
+
+Since the GKR backend operates over a finite field F, every real-valued acti-
+vation and weight must first be encoded as a field element. Prior zkML sys-
+tems [44,13,69,60] follow the fixed-point quantization of Jacob et al. [35]: a real
+value x is approximated as x ≈ q · s, where q ∈ [−2Q, 2Q] is a signed integer with
+magnitude bounded by 2Q and s is a scale. We embed q into F via the natural
+modular map: q ≥ 0 is represented by q, and q < 0 by p+q. Since |q| ≪ |F|/2, this
+representation preserves signed arithmetic as long as all intermediate magnitudes
+stay below |F|/2. Matrix multiplications and additions accumulate into wider
+integers, so after every layer a rescale step that maps the accumulator back to
+magnitude ≤ 2Q under a layer-specific output scale Sout (l) . Appendix F gives the
+full protocol.
+
+2.5 LLM Inference Pipeline
+
+A decoder-only LLM first applies a public tokenizer to the input prompt to
+obtain a sequence of token IDs. Each autoregressive step then comprises four
+
+
+===== PAGE 8 / 59 =====
+
+8  L. Wang et al.
+
+stages: (i) token-to-embedding lookup, (ii) positional encoding, (iii) a stack of
+Transformer blocks, and (iv) an output head plus a public decoding rule to select
+the next token, which is appended to the context for the next step. On an input
+sequence of length T , the forward pass produces a logit matrix in FT ×N with
+one row per position, but sequential generation decodes only the last row to
+obtain the next token. Since tokenization is public, we exclude it from the proved
+computation and start from the token IDs. Prior zkLLM proof systems [69,60,77]
+cover only stage (iii), leaving stages (i), (ii), and (iv) unproved. In contrast,
+zkAgent proves the complete post-tokenization pipeline comprising stages (i)–(iv).
+Appendix B gives the detailed inference pipeline.
+
+2.6 System and Threat Model
+
+An LLM agent couples a language model with external tools and coordinates
+their interaction in a loop. Starting from the user input, the agent repeatedly
+(i) invokes the LLM on the current context, (ii) executes any tools requested
+by the model, and (iii) appends the resulting tool observations to the context.
+The loop terminates when the model produces a final response. We represent the
+resulting execution as a growing transcript tr, namely the concatenation of the
+user input, model outputs, and tool observations.
+
+Threat model. We consider LLM agents operated by a model provider that
+performs LLM inference and hosts server-side tools such as web search and code
+execution [6,53], as illustrated in Fig. 1. Our model covers two deployment classes.
+(i) Fully hosted chat products (e.g., ChatGPT, Claude.ai [54,6]) execute the entire
+agent loop on provider-controlled infrastructure. (ii) API-driven agents (e.g.,
+Claude Code, Codex CLI [3,51]) execute the orchestration loop on the client,
+but LLM inference and server-side tools remain hidden behind the provider’s
+API. Tools executed on the client machine (e.g., file or shell operations) are
+inherently trusted and excluded from the proof. In both cases, the provider
+holds private model parameters W and publishes a binding commitment cW .
+For each query, the client submits an input and receives an execution transcript
+tr together with a proof bundle. We model the provider as the sole adversary:
+it may deviate arbitrarily from the prescribed agent procedure, e.g., replacing
+the committed model with a cheaper or backdoored alternative, or fabricating
+server-tool observations, such as forged web-search results or misreported sandbox
+outputs, to steer the subsequent agent behavior.
+
+Out-of-scope attacks. zkAgent targets execution integrity; several orthogonal
+threats are deliberately excluded. (i) Prompt injection. Attacks that steer the
+model through valid-looking inputs [1] are orthogonal to execution integrity: the
+injected content appears in the transcript and is auditable by the client, but
+identifying and filtering it is an alignment/policy task rather than a cryptographic
+one. (ii) Network-tool semantics. For network tools, we prove provenance rather
+than the correctness of the server’s business logic. Further discussion is deferred
+to Appendix A.
+
+
+===== PAGE 9 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution      9
+
+3 Complete Inference Proof for LLM
+
+As described in Section 2.5, prior zkLLM proof systems cover only the compu-
+tations within Transformer blocks, leaving three components of the inference
+pipeline unverified. We close this gap with three dedicated sub-protocols: zkEmbed
+for token-to-embedding lookup, zkPosEnc for positional encoding, and zkDecode
+for logit-to-token decoding.
+
+3.1 zkEmbed: Token-to-Embedding Lookup
+
+Let N and d denote the vocabulary size and embedding dimension, respectively.
+Given a tokenized transcript tr = (ti)i∈[T ] ∈ [N ]T and the model’s private
+embedding table WE ∈ FN×d, the prover must show that each row of the
+embedding output H0 ∈ FT ×d equals the embedding vector indexed by the
+corresponding token:
+
+                              ∀i ∈ [T ], H0[i, :] = WE[ti, :].                      (1)
+
+    For the polynomial encoding below, let N¯ := 2⌈log2(N+1)⌉ denote the padded
+table size. We append N¯ − N fixed zero rows to WE, obtaining WEpad ∈ FN¯×d.
+Since every transcript token satisfies ti ∈ [N ], this padding leaves the target
+
+relation in Eq. (1) unchanged.
+
+    The lookup arguments used in prior zkLLM schemes [69,60] can in principle
+
+be extended to matrix lookup, but they incur prover overhead linear in the
+
+embedding table size N d (about 225 entries for GPT-2), rather than the number
+
+of queries T . In light of this inefficiency, zkEmbed instead builds on the cq
+
+preprocessing-based lookup argument [24], shifting all table-size-dependent work
+
+to a one-time preprocessing phase and reducing the online prover cost to O(T d),
+independent of N and N¯ . At a high level, we reduce the matrix lookup to a scalar
+
+lookup via a random linear combination of the d columns. Then, we keep the
+
+table side univariate to preserve preprocessing, while expressing the query side
+
+over multilinear extensions to enable composition with the downstream GKR
+
+proof.
+Recap of cq. For a table b ∈ FN¯ and queries a ∈ FT , cq reduces the multiset
+inclusion {ai}i∈[T ] ⊆ {bu}u∈[N¯] to a logarithmic-derivative identity [32]. Let mu
+
+denote the multiplicity of bu in the query multiset. Then the inclusion holds if
+
+and only if                   ∑︂ 1                  ∑︂ mu
+                              i∈[T ] ai + X    =
+
+                                                       ¯ bu + X
+
+                                                    u∈[N ]
+
+holds as an identity of rational functions in X. After the prover fixes this
+
+multiplicity witness with a binding commitment, the verifier samples a uniformly
+
+random β ∈ F; by Schwartz–Zippel, except with negligible probability, it suffices
+                                               = ⟨ω⟩ ⊆ F∗ be
+to  check  the  identity  at  X  = β.  Let  V                ∏︁  a  multiplicative  subgroup
+of order N¯ , with vanishing polynomial ZV (X) := x∈V (X − x) = XN¯ − 1. Let
+
+T , M, A ∈ F<N¯ [X] be the polynomials interpolating (bu), (mu), and (fu) over V ,
+
+
+===== PAGE 10 / 59 =====
+
+10  L. Wang et al.
+
+respectively, where fu := mu/(bu + β) denotes the table-side reciprocal witness.
+
+The pointwise identities fu(bu + β) = mu hold if and only if A(X)(T (X) + β) −
+
+M (X) vanishes on V , or equivalently, if there exists a quotient polynomial Q(X)
+
+such that           (︁  )︁
+
+           A(X) · T (X) + β − M (X) = Q(X) · ZV (X).  (2)
+
+A KZG pairing check succinctly verifies this divisibility relation [37]. Let Preproc(·)
+
+denote the cq preprocessing procedure. It outputs the table commitment cT and,
+for each u ∈ [N¯ ], the commitments Commit(Lu), Commit(∆Lu), and cQ,u. Here
+Lu is the u-th Lagrange basis polynomial on V and ∆Lu(X) := (Lu(X) −
+Lu(0))/X; Appendix D gives the full construction. By the sparsity of m, the
+online commitments to A and Q are assembled from only those preprocessed
+
+components indexed by supp(m), yielding online cost O(| supp(m)|) ≤ O(T )
+independent of N¯ .
+
+One-time preprocessing of the embedding table. Since cq operates on a
+
+scalar table while WE has d columns, we fold the columns by random linear
+combination with random challenge ρ ∈ F, reducing the matrix lookup to a
+scalar one. However, by Fiat-Shamir [27], ρ must be sampled only after the
+
+prover commits to H0, foreclosing direct preprocessing of the folded table. We
+instead preprocess each column of WE independently; by the F-linearity of KZG
+commitments [37], the per-column preprocessed commitments can be aggregated
+
+online into those of the folded table once ρ is fixed.
+    Define the j-th padded embedding column wj := WEpad[:, j] ∈ FN¯ and the
+
+public index vector idx := (0, 1, . . . , N¯ − 1) ∈ FN¯ . In a one-time setup for a fixed
+WE, compute all instances below using the same KZG SRS and the same domain
+V:
+
+                    ppidx ← Preproc(idx),             (3)
+
+                    ppwj ← Preproc(wj), for j ∈ [d].  (4)
+
+Online batching: from matrix lookup to scalar lookup. During the online
+phase, once the prover has committed to H0, the verifier samples the batching
+challenge ρ ∈ F. For each table index u ∈ [N¯ ] and each query position i ∈ [T ],
+define the folded scalars
+
+                            bu := u + j∈[d] ∑︁ ρj+1 · WEpad[u, j], (5)
+                            ai := ti + j∈[d] ∑︁ ρj+1 · H0[i, j]. (6)
+
+The constant terms u and ti bind the claimed row index, and the ρj+1-weighted
+
+sum binds all d entries of the row. It then suffices to prove the scalar multiset
+
+inclusion
+
+                        {ai}i∈[T ] ⊆ {bu}u∈[N¯ ].     (7)
+
+For soundness, note that if H0[i, :]̸ = WE[ti, :] for any i, then ai = bti would
+require a nonzero degree-≤ d polynomial to vanish at ρ, which happens with
+
+probability at most d/|F|.
+
+
+===== PAGE 11 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution               11
+
+The Lagrange-basis and auxiliary commitments depend only on V and are
+
+reused as-is. Let cT ,idx denote the table commitment in ppidx, and for each
+u ∈ [N¯ ], let cQ,idx,u denote its cached-quotient commitment associated with table
+
+position u. Define cT ,wj and cQ,wj,u analogously. By F-linearity, the corresponding
+
+commitments for the folded table are
+
+cTρ := cT ,idx +                      ∑︂     ρj+1cT ,wj ,
+
+                                                            (8)
+
+                                      j∈[d]
+                                      ∑︂
+cQρ,u := cQ,idx,u +                          ρj+1cQ,wj ,u.
+                                                            (9)
+
+                                      j∈[d]
+
+Here cQρ,u denotes the cached-quotient commitment for the folded table at
+position u ∈ [N¯ ]. The prover aggregates cached-quotient commitments only for
+
+indices in supp(m), so this online step costs O(T d) group operations and never
+
+materializes the folded preprocessing data in full.
+
+Online proving: table side. We prove the scalar inclusion Eq. (7) via the cq
+
+machinery recapped above. The prover computes the multiplicity vector m and
+
+commits to its interpolant M (X). The verifier then derives β via Fiat–Shamir,
+
+after which the prover commits to the reciprocal polynomial A(X) and proves
+
+Eq. (2) via a pairing check using the folded commitments above. By sparsity
+
+of m, the commitments to A and Q use only components indexed by supp(m).
+
+Once these components have been folded, their assembly costs O(T ); including
+
+the online folding across d columns, the table-side cost is O(T d) and independent
+of N and N¯ .
+
+The table side also outputs the sumcheck claim
+
+z :=  ∑︂                                     ∑︂
+
+                                      fu = A(x).            (10)
+
+      u∈[N¯ ]                                x∈V
+
+Because V is a multiplicative subgroup and deg(A) < N¯ , we have x∈V ∑︁ A(x) =
+N¯ · A(0) [8]. The verifier therefore obtains z from a single opening of A at
+X = 0 and sets z ← N¯ · A(0). The prover assembles this opening in O(T ) group
+
+operations: by the sparsity of A’s evaluations over V , the KZG quotient at X = 0
+
+is a linear combination of only the preprocessed Commit(∆Lu) for u ∈ supp(m).
+
+Online proving: query side. Preprocessing-based lookup arguments [24,81]
+
+are typically univariate, whereas the downstream GKR proof operates over
+
+multilinear extensions. Following [12], we keep the table side univariate to retain
+
+preprocessing and prove the query side using multilinear extensions, reusing the
+
+multilinear commitment to H0.
+    Let kT := ⌈log T ⌉, kd := ⌈log d⌉, T¯ := 2kT , and d¯ := 2kd . Zero-pad H0 to
+
+shape T¯ × d¯, and interpret c0 := Commit(H0) as a commitment to its MLE
+H˜︁0 : FkT +kd → F, defined on valid indices by
+
+H˜︁0(ιT (i), ιd(j)) = H0[i, j], (i, j) ∈ [T ] × [d],
+
+where ιT : [T¯] → {0, 1}kT and ιd : [d¯] → {0, 1}kd are the standard boolean
+encodings. From the transcript, the verifier also derives the MLE ˜t︁ : FkT → F,
+
+
+===== PAGE 12 / 59 =====
+
+12      L. Wang et al.
+
+taking ˜t︁(ιT (i)) = ti for i < T and N on padded indices, and defines w˜︁ρ : Fkd → F
+by w˜︁ρ(ιd(j)) = ρj+1 for j < d and 0 otherwise. Define the folded query MLE
+
+             ˜a︁ρ(x) := ˜t︁(x) +         ∑︂     w˜︁ρ(y) · H˜︁0(x, y), x ∈ FkT .
+
+                                                                                                (11)
+
+                                     y∈{0,1}kd
+
+Then                                         {︄
+                              ˜a︁ρ(ιT (i)) = ai,
+                                                    i < T,
+                                                N,  T ≤ i < T¯.
+
+The T¯ − T padded positions therefore contribute T¯ − T additional occurrences
+of the dummy table value bN = N , so the padded multiplicity vector satisfies
+mN = T¯ − T . Accordingly, the table-side claim z from Eq. (10) is
+
+                                 z=  ∑︂ 1           +  T¯ − T   .
+
+                                     i∈[T ] ai + β N + β
+
+It remains to establish this same value from the query side. For every i ∈ [T¯],
+
+define                                              1
+                                                             ,
+                                  ui :=  ˜a︁ρ(ιT (i)) + β
+
+and let U˜︁ : FkT → F be the MLE satisfying U˜︁(ιT (i)) = ui; the prover commits
+to U˜︁. We verify the query side via two constraints:
+
+        z = U ∑︂ ˜︁(x),              ˜︁ (︁ )︁                                       kT
+                                     U (x) · ˜a︁ρ(x) + β = 1, ∀x ∈ {0, 1} .
+
+             x∈{0,1}kT
+
+These   are  combined   into  a  single  batched    sumcheck:      given  α   $  F  and  γ   $  FkT  ,
+
+                                                                             ←              ←
+
+the prover proves
+
+             α · U ∑︂ (︂ ˜︁(x) + e˜q︁ (γ, x)(︁U˜︁(x)(˜a︁ρ(x) + β) − 1)︁ = α · z. (12) )︂
+
+             x∈{0,1}kT
+
+The sumcheck reduces the claim to evaluating U˜︁(r) and ˜a︁ρ(r) at a random point
+r ∈ FkT . The value U˜︁(r) is obtained by opening the prover’s commitment. For
+the latter, recall that
+
+                                                  ∑︂
+                               ˜a︁ρ(r) = ˜t︁(r) + w˜︁ρ(y)H˜︁0(r, y).
+
+                                                                          y
+
+The verifier computes ˜t︁(r) directly and obtains the inner sum via a new sumcheck
+that reduces to an opening of H˜︁0 at a random point.
+Cost analysis. The one-time preprocessing cost is O(dN log N ) field/group
+
+operations via the optimizations of [25,85] and is amortized across inferences
+for a fixed model. Online, the prover incurs O(T¯d¯) work for both the table-side
+
+check and the query-side sumcheck. The verifier performs O(1) KZG pairings for
+
+the table-side cq check and O(log T + log d) field operations for the query-side
+
+sumchecks.
+
+
+===== PAGE 13 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution                            13
+
+3.2 zkPosEnc: Efficient Proof for Positional Encoding
+
+Positional encodings inject token-order information into decoder-only Transform-
+
+ers. We consider the two widely used variants: absolute positional embeddings
+
+and rotary positional embeddings.
+
+Absolute positional embeddings (APE). For APE-style models (e.g., GPT-
+2 [61]), the model contains a learned positional matrix P ∈ FTmax×d, committed
+as part of the private weights. Given the token embeddings H0 ∈ FT ×d, the
+positional-augmented activations are
+
+                       H0pe := H0 + P [0:T, :].
+
+Since this relation is linear, our proof system handles it natively.
+
+Rotary positional embeddings (RoPE). RoPE-style models (e.g., Llama [71]
+
+and Qwen [80]) inject position information by rotating the per-head Query/Key
+
+vectors inside each attention block. Fix one attention head with head dimension dh.
+Let Q, K ∈ FT ×dh denote its query and key matrices after the linear projections,
+and write qm := Q[m, :] and km := K[m, :] for their rows at position m ∈ [T ].
+
+    RoPE rotates each consecutive coordinate pair of qm by angle mθi, where
+{θi}i∈[dh/2] are public frequencies fixed by the architecture (e.g., θi = 10000−2i/dh ).
+Concretely,
+
+qmrot = Rm qm,             (︁ (0)                                          (dh/2−1))︁     (13)
+                       Rm = diag Rm , . . . , Rm                                       ,
+
+where diag(·) denotes the block-diagonal matrix with the given blocks, and each
+
+2×2 rotation block is
+
+                       (︃                        )︃
+                       Rm (i) := cos(mθi) − sin(mθi) sin(mθ . i) cos(mθi)
+
+and km is rotated analogously (formal definition in Appendix B). zkLLM [69]
+treats these rotations as generic dh×dh matrix–vector multiplications and applies
+a time-optimal matmul protocol [70], incurring O(T d2h) prover work per head.
+While this protocol is optimal for generic dense matrices, it does not exploit
+the structure of Rm: only 2dh of its d2h entries are non-zero, so all but O(dh)
+multiplications are against zeros.
+
+    We exploit the 2×2-block-diagonal structure by rewriting each rotation as
+
+two Hadamard products. Define the permutation
+
+π(u) := (−u1, u0, −u3, u2, . . . , −udh−1, udh−2),
+
+which, on each consecutive pair (u2i, u2i+1), swaps and sign-flips to produce
+(−u2i+1, u2i). Let cm, sm ∈ Fdh be the cosine/sine vectors that repeat each
+frequency twice:
+
+cm = (cos(mθ0), cos(mθ0), . . . , cos(mθdh/2−1), cos(mθdh/2−1)),
+sm = (sin(mθ0), sin(mθ0), . . . , sin(mθdh/2−1), sin(mθdh/2−1)).
+
+
+===== PAGE 14 / 59 =====
+
+14  L. Wang et al.
+
+A direct expansion of each 2×2 block then collapses Eq. (13) into two Hadamard
+products:
+
+      qmrot = qm ◦ cm + π(qm) ◦ sm, kmrot = km ◦ cm + π(km) ◦ sm. (14)
+
+Stacking positions gives the batched form
+
+             Qrot = Q ◦ C + π(Q) ◦ S, Krot = K ◦ C + π(K) ◦ S,
+
+where C, S ∈ FT ×dh stack {cm} and {sm} row-wise, and π(·) is applied row-wise.
+To bind the signed permutation π, we write the terminal sumcheck point as (r, ρ),
+where ρ selects the even or odd coordinate within each adjacent pair. Given
+two openings q0 = Q˜︁(r, 0) and q1 = Q˜︁(r, 1) of the same commitment to Q, the
+verifier derives
+
+           Q˜︁(r, ρ) = (1 − ρ)q0 + ρq1, π˜(Q︁)(r, ρ) = −(1 − ρ)q1 + ρq0.
+
+Cost analysis. We verify the resulting Hadamard identity using the dedicated
+quadratic sumcheck rather than compiling it into generic GKR gates. Since C, S
+depend only on public positions and frequencies, so we treat them as public
+constants. The resulting proof system therefore incurs O(T dh) field operations per
+head, improving upon the O(T d2h) cost of the generic matrix–vector formulation.
+
+3.3 zkDecode: Efficient Proof for the Decoding Procedure
+
+Fix one autoregressive step. Let ℓ = (ℓ0, . . . , ℓN−1) ∈ FN be the quantized logits,
+with each ℓi ∈ [−B, B) under the quantization of §4.1 (B ≪ |F|), and let y ∈ [N ]
+denote the output token.
+Greedy decoding. For greedy decoding, correctness means ℓy ≥ ℓi for all
+i ∈ [N ]. Taking λ := ℓy and the differences δi := ℓi − λ, the prover proves
+
+                           δy = 0, −δi ∈ [0, 2B) ∀i ∈ [N ].
+
+The constraint δy = 0 fixes λ = ℓy, and the range check forces ℓi ≤ ℓy for all i,
+i.e., y ∈ arg maxi ℓi.
+Top-k decoding. For sampling-based decoding, we separately prove the validity
+of the candidate set, the correctness of the Softmax computation and subsequent
+sampling over that set. We present the construction for top-k here. The top-p
+variant follows the same overall structure but selects candidates according to
+cumulative probability mass; we defer it to Appendix C.6.
+
+    The prover fixes a candidate set S ⊆ [N ] with |S| = k and a separator µ ∈ F
+witnessing the top-k property, together with the differences δi := ℓi − µ. Unlike
+greedy’s λ = ℓy, the separator µ carries no semantic role: any value satisfying
+ℓi ≥ µ for i ∈ S and ℓi ≤ µ for i ∈/ S suffices, and the honest prover can take,
+e.g., µ = minu∈S ℓu. To express “in S” vs “out of S” without explicitly iterating
+
+
+===== PAGE 15 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution           15
+
+over [N ] \ S, we use a boolean selector χ ∈ {0, 1}N with χi = 1 ⇐⇒ i ∈ S. The
+structural constraints are
+
+                           ∑︂
+                                 χi = k, χi(χi − 1) = 0 ∀i ∈ [N ],
+
+                                     i∈[N ]
+
+together with the masked range checks
+
+χi · δi ∈ [0, 2B), (1 − χi) · (−δi) ∈ [0, 2B) ∀i ∈ [N ].
+
+The two masked checks force ℓi ≥ µ for i ∈ S and ℓi ≤ µ for i ∈/ S, which is
+exactly the separator property defining µ; equivalently, S is a valid top-k set.
+
+Linkage to the sampled token y is deferred to the subsequent sampling proof.
+
+Softmax with fused masking. ∑T︁he standard top-k sampling specification com-
+putes the full softmax pi = ezi / m∈[N] ezm (with zi := ℓi/τ and temperature
+
+                                                                      ∑︁
+τ > 0), truncates to S, and renormalize∑s︁ to qi = pi/ j∈S pj for i ∈ S. Substi-
+tuting and canceling the shared factor m ezm in numerator and denominator
+yields the equivalent restricted form
+
+                                 ezi           (i ∈ S).                (15)
+                     qi = ∑︁ z
+
+                                j∈S e j
+
+Thus, the full-softmax normalization and the subsequent renormalization over
+S collapse into a single normalization over S. However, the arithmetic circuit is
+fixed across proofs and cannot be reshaped per S. It must therefore produce an
+output at every index i ∈ [N ], with the output at i ∈/ S forced to 0. We handle
+this below via a χ-masked expression.
+
+    We prove Eq. (15) from the committed δ and χ together with a private
+auxiliary normalization shift. Since δ = ℓ − µ, shift invariance gives
+
+                     qi = ∑︁ exp(δi/τ ) ,      i ∈ S.
+                              j∈S exp(δj /τ )
+
+Following zkLLM [69], we avoid explicitly forming the denominator and proving
+
+the resulting division. Instead, the prover supplies an auxiliary shift ζ, whose
+
+ideal real value is              ⎛             ⎞
+
+                                    ∑︂
+                     ζ := τ log ⎝ exp(δj/τ )⎠ .
+
+                                    j∈S
+
+For this shift,      (︃                  )︃
+
+                     qi = exp δi − ζ ,         i ∈ S.
+                                    τ
+
+For the quantized proof, define
+
+xi := χi(δi − ζ),           ⌊︂ (︂ xi )︂⌉︂      pi′ := χie¯i,  θ = 2Q.
+                     e¯i := θ exp τ ,
+
+Thus, the inner mask fixes the lookup inputs outside S to zero, while the outer
+mask forces the corresponding probabilities to zero. The masked relations are
+
+
+===== PAGE 16 / 59 =====
+
+16  L. Wang et al.
+
+enforced by sumcheck, and the relation between xi and e¯i is proved using exp
+
+lookups.
+
+    As in zkLLM, we do not directly verify the non-arithmetic log-sum-exp
+
+expression defining ζ. Instead, letting
+
+                                       Θ :=      ∑︂      p′i,
+
+                                                 i∈[N ]
+
+we verify
+
+                             θ − εsm ≤ Θ ≤ θ + εsm,
+
+where, following the error analysis methodology of zkLLM [69], the tolerance εsm
+accounts for the fixed-point representation of ζ, the exp-lookup approximation,
+and output rounding.
+Verifiable random sampling. We prove that the output token y was correctly
+sampled from p′ via the inverse CDF method: given a random coin r, select the
+token whose cumulative probability interval contains r.
+
+    At inference time, the sampler derives the randomness deterministically from
+the committed prefix as r = H(tr<t) mod Θ, where H is a public hash modeled
+as a random oracle. Because r is a function of the prefix alone, the prover cannot
+re-roll it after observing the logit and thus cannot bias the sampled token.
+
+    Given the public output token y ∈ [N ] and randomness r, correct sampling
+under the inverse CDF method requires
+
+                                  Cy ≤ r < Cy+1,                                             (16)
+
+where Cj := i=0 ∑︁j−1 pi′ is the cumulative sum up to position j under the canonical
+                                                               p′
+ordering  by  token  index.  For  any  y  ∈/  S  we     have        =  0  and  hence  Cy  =  Cy+1,  so
+                                                                 y
+
+the interval is empty; Eq. (16) therefore implicitly enforces y ∈ S.
+
+Computing Cy and Cy+1 via sumcheck. Let n := ⌈log2 N ⌉, and let p˜︁′ : Fn → F
+be the MLE of p′ zero-padded to length 2n. For each public j ∈ {y, y + 1}, define
+
+the public prefix indicator
+
+                                     {︄       i < j,           i ∈ [2n],
+                                        1,    i ≥ j,
+
+                           sj(i) :=
+                                        0,
+
+and let s˜︁j denote its MLE. Then
+
+                             ∑︂      s˜︁j (x)p˜︁′ (x),
+
+                     Cj =                                      j ∈ {y, y + 1}.
+
+                           x∈{0,1}n
+
+Although the prefix {0, . . . , j − 1} is not itself a Boolean subcube, the sums above
+
+range over the full hypercube and encode the prefix through the public indicator
+s˜︁j .
+
+                                                                                                                                                                $
+
+    The two claims are batched using a random challenge η ← F:
+                     Cy + ηCy+1 = s ∑︂ (︁˜︁y(x) + ηs˜︁y+1(x))︁p˜︁′(x).
+
+                                                          x∈{0,1}n
+
+
+===== PAGE 17 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution                                            17
+
+                     (a) Stepwise                                         (b) One-shot via causal masking
+
+"I have a"                  "I have a cute"        "I have a cute cat"     Causal attention (per layer) √
+
+                                                            zkEmbed        attention score sij = ⟨qi, kj ⟩/ dh
+                                                           zkPosEnc                                   Mijcau = 0 (j ≤ i), −∞ (j > i)
+ours (§3.1) zkEmbed                zkEmbed            Transformer ×L       causal mask
+
+                                                          w/ causal mask   softmax weights α = softmax(S + M cau), lower-tri.
+
+ours (§3.2) zkPosEnc        zkPosEnc                                                   key j
+
+prior zkLLM Transformer ×L  Transformer ×L                                α=  query i  ××××           ⇒ logit at position
+                                                                                           ×××        i uses only tokens
+                                                                                               ××     j ≤ i.
+                                                                                                   ×
+
+ours (§3.3) zkDecode        zkDecode
+
+"cute"                             "cat"                  zkDecode         tr: I have a cute cat
+                                                   "have a cute cat"
+proof πk                               proof πk+1
+                                                                                                 tˆ︁r: have a cute cat
+                            ···                    single proof π
+                                                                   shift consistency on generated positions: tˆ︁ri = ti+1, i ≥ T0−1
+T −T0 proofs total
+
+Fig. 2: Stepwise vs. one-shot transcript proving. Stepwise produces one forward-
+pass proof per generated token; even after recursive aggregation, the prover cost
+remains super-linear in transcript length since step t conditions on the entire
+prefix. One-shot proof replaces stepwise proofs for T − T0 tokens with a single
+causally-masked forward pass.
+
+The verifier evaluates both public prefix-indicator MLEs jointly from the binary
+
+representation of y in O(n) time (Appendix C.5). The sumcheck then reduces
+the two prefix-sum claims to a single opening of p˜︁′.
+
+    Finally, Eq. (16) is equivalent to the non-negativity of two residuals,
+
+                                                   r − Cy ∈ [0, θ + εsm),                                                  (17)
+
+                                   Cy+1 − r − 1 ∈ [0, θ + εsm).                                                            (18)
+
+The upper bound follows from 0 ≤ Cy ≤ Cy+1 ≤ Θ ≤ θ + εsm.
+Cost analysis. Greedy decoding requires (N) logical range checks on logit
+differences, together with sumcheck proofs that bind these differences to the
+logits and enforce a zero difference at the selected index. For top-k decoding, the
+prover work comprises:
+
+– Candidate set. 2N masked range checks f∑o︁r χiδi, (1 − χi)(−δi) ∈ [0, 2B), and
+   sumchecks for the structural constraints i χi = k and χi(χi−1) = 0.
+
+– Softmax. O(N ) exp lookups, O(N )-work sumchecks that bind xi = χi(δi − ζ)
+   and p′i = χie¯i.
+
+– Sampling. O(N )-work batched sumcheck for Cy and Cy+1.
+
+4 zkAgent: One-Shot Verifiable Agent Execution
+
+This section lifts the next-token proof of §3 to agent executions: transcripts
+that interleave model-generated tokens with externally injected tool observations.
+Whereas prior zkLLM work [69,60] would prove each generation step indepen-
+dently, we prove the entire transcript with a single forward pass, avoiding the
+per-step proof overhead (Figure 2). Three contributions support this: a new input-
+independent quantization scheme (§4.1), the causal-mask construction (§4.2), and
+tool binding for externally injected tokens (§4.3).
+
+
+===== PAGE 18 / 59 =====
+
+18  L. Wang et al.
+
+4.1 Weight-Dependent Quantization
+
+Our one-shot transcript proof batches all generation step into a single forward
+pass. For the batched pass to be equivalent to the stepwise autoregressive one it
+replaces, the quantized arithmetic circuit must produce identical traces under
+both evaluation modes, imposing two requirements on the quantization scheme:
+
+– Input-independence: per-layer output scales Sout (l) must be fixed independently
+   of the input and prefix length, so the batched and stepwise passes produce
+   identical quantized traces.
+
+– Completeness: all honest rescaled values stay inside the fixed lookup range, so
+   lookups never reject on honest executions.
+
+    Prior zkML quantization schemes fail to satisfy at least one of these properties.
+
+Calibration-based schemes [77] choose the smallest scale fitting a calibration set;
+
+they can violate completeness when benign activations exceed the calibration
+
+range, a common phenomenon in LLMs with activation outliers [21]. Data-
+
+dependent dynamic schemes [44] derive Sout (l) for each inference, avoiding such
+failures but breaking input-independence. A third option—a purely dimension-
+only bound d · 22Q—satisfies both properties mechanically but assumes every
+coordinate’s input and weight simultaneously saturate at 2Q, a configuration
+
+real LLM weights never approach. On GPT-2 this may collapses perplexity at
+
+practical bit-widths (Appendix F).
+
+    We introduce weight-dependent quantization, the first zkML quantization
+
+that attains input-independence and unconditional completeness without severe
+
+precision loss.
+
+Weight-dependent worst-case bound. At commitment time, each layer’s real
+
+weights W (l),real are quantized to signed integers W (l) with magnitude bounded
+
+by 2Q via per-tensor symmetric quantization, i.e. |Wkj(l)| ≤ 2Q, and a public scale⌊︂⌉︂
+
+(l) (l) : (l),real (l)                      (l),real             is pre-scaled into
+SW such that Wkj = Wkj /SW . The real bias b
+
+the accumulator domain of scale Sa(l) := Sin(l) · SW(l). Let H(l) denote the integer
+input to layer l with |H(l)[t, k]| ≤ 2Q. The integer accumulator
+
+                 Y (l)[t, j] = k ∑︁ H(l)[t, k] · Wkj(l) + bj(l)
+
+represents the real value Y (l)[t, j] · Sa(l). The triangle inequality gives
+
+    |Y (l)[t, j]| ≤ 2Q · ∥W (l)[:, j]∥1 + |bj(l)|, (t, j) ∈ [T ] × [d],       (19)
+
+where ∥W (l)[:, j]∥1 := k ∑︁ |Wkj(l)| is the ℓ1 norm of column j. We therefore define
+
+the input-independent layer bound
+
+                           (︂           )︂
+                    Bl := max 2Q∥W (l)[:, j]∥1 + |bj(l)| ,
+                        j                                                     (20)
+
+which guarantees |Y (l)[t, j]| ≤ Bl for every input position t and output coordinate
+j. Since Bl depends only on the committed layer parameters, it is fixed at model-
+commitment time and reused across all inputs and prefix lengths. To requantize
+
+
+===== PAGE 19 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution                  19
+
+back to magnitude ≤ 2Q we set
+
+            Sout (l) := Sa(l) · Bl/2Q = Sin(l) · SW(l) · Bl/2Q,                                    (21)
+
+so  the  requantization  H (l+1) [t,  j]  :=  round(︁2Q·Y  (l)[t,        )︁  yields  |H (l+1) [t,  k]|  ≤
+                                                                   j]/Bl
+
+2Q, thereby preserving the magnitude bound |q| ≤ 2Q (full construction in Ap-
+
+pendix F).
+
+    Input-independence follows because (Bl, Sa(l), Sout (l) ) are determined entirely
+by the committed (W (l), b(l), S(l) W ); a given prefix is quantized identically in
+the batched and stepwise executions. Completeness follows inductively: given
+
+|H(l)[t, k]| ≤ 2Q, Eq. (20) forces |Y (l)| ≤ Bl, and Eq. (21) ensures |H(l+1)[t, k]| ≤
+2Q. The base case is enforced at the embedding layer, so the lookup cannot reject
+
+on honest execution at any layer.
+
+LayerNorm bound. Fixed-point quantized inference can gradually lose effective
+
+precision across depth even though every layer is requantized to the same magni-
+tude bound 2Q. Each output scale Sout (l) is determined from the input-independent
+bound Bl; when the real accumulator magnitudes are smaller than Bl, the re-
+
+quantized activations occupy only a fraction of the available integer range. Since
+
+these activations become the inputs to subsequent layers, the unused dynamic
+
+range can propagate and accumulate across depth, making a fixed Q increasingly
+
+coarse. LayerNorm interrupts this propagation by bounding activations in a way
+
+that depends only on the layer’s parameters and dimension, independent of input
+
+magnitude. We give a rigorous derivation of this bound below.
+
+    Consider a single row x ∈ Rd of the input tensor H ∈ RT ×d. Let
+
+                  1 ∑︂                        σ2 := 1 (xk − µ) , ∑︂ 2
+            µ := d xk,                                d
+
+                         k∈[d]                               k∈[d]
+
+                                                                        √
+and define the standardized coordinates xˆk := (xk − µ)/ σ2 + ε for a fixe√d ε > 0.
+We show that every standardized coordinate has magnitude at most d − 1,
+
+independently of the input.
+
+    (i) Zero mean and bounded squared norm. The standardized coordinates sum
+
+to zero:                 ∑︂ k∈[d] ∑︁ xk − dµ
+                               xˆk = √σ2 + ε = 0.
+
+                         k∈[d]
+
+Their squared norm satisfies
+
+            ∑︂ 2 k∈[d] ∑︁ (xk − µ)2 dσ2
+                         xˆk =                    = σ2 + ε ≤ d.
+                                          σ2 + ε
+            k∈[d]
+
+    (ii) Per-coo∑r︁dinate bound via Cauchy–Schwarz. Fix any j ∈ [d]. The zero-sum
+identity gives k̸=j xˆk = −xˆj. Applying Cauchy–Schwarz to the remaining d − 1
+
+
+===== PAGE 20 / 59 =====
+
+20  L. Wang et al.
+
+coordinates yields
+
+                     ⎛        ⎞2 ⎛                     ⎞⎛                ⎞
+
+                     ∑︂                         ∑︂          ∑︂
+                    xˆ2j = ⎝ xˆk⎠ ≤ ⎝ 12⎠ ⎝ xˆ2k⎠
+
+                        k̸=j                    k̸=j   ⎛    k̸=j            ⎞
+
+                                                            ∑︂
+                                            = (d − 1) ⎝ xˆ2k − xˆ2j ⎠
+
+                                                       k∈[d]
+
+                                            ≤ (d − 1)(d − xˆ2j ).
+
+Rearranging gives                               hence             √
+                      dxˆ2j ≤ d(d − 1),                   |xˆj| ≤ d − 1.
+
+The bound holds uniformly over all rows of the standardized tensor.
+
+    (iii) Quantization and affine rescaling. The bound above determines a fixed
+
+normalization scale                             √
+
+                              Snorm :=             2d−1
+                                                    Q.
+
+Then we have qk := round(xˆk/Snorm) ≤ 2Q. Thus, standardization provides a
+fixed magnitude budget without inheriting the input tensor’s scale or dynamic
+
+range.
+
+    The subsequent coordinatewise affine transformation uses the quantized
+parameters γq,j (l) and βq,j (l) . Let Sγ(l) denote the quantization scale of γ(l), and
+encode the bias at the accumulator scale Sa(l) := SnormSγ(l). The integer multiply–
+add result is aj := γq,j (l) qj + βq,j (l) . Using |qj| ≤ 2Q, we obtain
+
+                            |aj | ≤ |γq,j (l) | |qj | + |βq,j (l) |
+                                 ≤ 2Q|γq,j (l) | + |βq,j (l) |.
+
+We therefore choose the parameter-dependent integer bound
+
+                                            (︂                       )︂
+                     Baff (l) := max 2Q|γq,j (l) | + |βq,j (l) | .
+                                         j
+
+Following Eq. (21), we set
+
+                              Sout (l) := Sa(l)Baff (l)/2Q
+
+and requantize the result back to magnitude at most R. Since Snorm is fixed by d
+and R, both Baff (l) and Sout (l) depend only on the fixed parameters and quantization
+precision, independently of the input values and prefix length. So the scale of the
+
+normalized activations does not inherit the unused range accumulated upstream.
+
+
+===== PAGE 21 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution          21
+
+4.2 One-Shot Transcript Proving via Masking
+
+With the quantization scheme of §4.1 in place, we batch all model-generated
+
+transitions into a single proof (Fig. 2). The key idea is a causal attention mask: it
+
+forces each position’s logit to depend only on preceding tokens, so a single forward
+
+pass on the full transcript evaluates all positions in parallel while preserving
+
+autoregressive semantics. We formally prove the equivalence in Appendix E.
+
+Setup. Fix a public prompt prefix trin = (t0, . . . , tT0−1) and a claimed full
+transcript tr = (t0, . . . , tT −1) ∈ [N ]T with T > T0. Let LLMW : [N ]T → FT ×N
+output the per-position logits under weights W (§2.5), and Dec : FN → [N ] the
+
+agreed decoding rule.
+
+Enforcing autoregressive causality via a causal mask. A naive full-sequence
+
+evaluation allows the logits at position i depend on future tokens t>i, diverging
+
+from sequential generation. In a decoder-only Transformer, however, self-attention
+
+is the only sublayer that mixes information across positions—LayerNorm, MLP,
+
+and residual connections are position-wise—so enforcing causality within every
+
+attention layer suffices. Concretely, for a single head with Q, K, V ∈ FT ×dh , we
+
+apply the causal attention mask               (︃ QK⊤ + M cau )︃
+
+                    Attn(Q, K, V ) = softmax              √  dh         V,                 (22)
+
+where  M cau ij  =  0  for  j  ≤  i  and  −∞  otherwise.  Writing  sij  :=            √    the
+                                                                            ⟨qi, kj⟩/ dh,
+
+resulting softmax weights satisfy
+
+                 αij = ∑︁ exp(sij) (j ≤ i), αij = 0 (otherwise), (23)
+                            k≤i exp(sik)
+
+so the logit at position i in the length-T masked run coincides with the sequential-
+generation logit on prefix tr≤i.
+Circuit realization. Since −∞ is not representable in arithmetic circuits, we
+
+implement Eq. (23) by construction: for each query position i we materialize only
+
+the scores {sij}j≤i and set αij = 0 for j > i, so masked entries never enter the
+softmax denominator.
+
+Shift consistency. Then verifying the transcript reduces to a per-position
+shift-consistency check. Let L := LLMW (tr) and decoding each logits yields a
+predicted-token sequence tˆ︁r ∈ [N ]T ,
+
+                                        tˆ︁ri := Dec(︁L[i, :])︁.
+
+Shift consistency (illustrated in Fig. 2(b)) then requires the prediction at position
+i to match the actual transcript token at position i+1:
+
+                       tˆ︁ri = ti+1 for all i ∈ {T0 − 1, . . . , T − 2}.                   (24)
+
+4.3 Tool Binding for Verifiable Agent Execution
+
+Tool observations are injected into the transcript and can influence subsequent
+agent operations, so transcript-level model integrity alone is insufficient: a ma-
+licious prover could fabricate tool outputs while still producing a valid tran-
+script [43]. We additionally require tool integrity and binding: every injected
+
+
+===== PAGE 22 / 59 =====
+
+22  L. Wang et al.
+
+observation must be tied to an authenticated execution of the claimed tool on
+the request parsed from the transcript.
+Gated shift consistency. We extend shift consistency to interleaved transcripts
+via a generation mask g = (g0, . . . , gT −2) ∈ {0, 1}T −1 that identifies which
+transitions are model-generated:
+
+               gi = 1 ⇐⇒ ti+1 is produced by LLMW from prefix tr≤i,
+
+               gi = 0 ⇐⇒ ti+1 is injected externally.
+
+With tˆ︁r denoting the predicted-token sequence, we enforce
+
+                     gi(︁tˆ︁ri − ti+1)︁ = 0 for all i ∈ {0, . . . , T − 2}. (25)
+
+leaving injected tokens unconstrained.
+    A crucial requirement is that g is derived from the transcript structure, not
+
+chosen by the prover (otherwise the prover could set g = 0 and satisfy Eq. (25)
+vacuously). When the full transcript tr is public, g is uniquely determined by
+a public, unambiguous transcript grammar. When deployments hide internal
+reasoning tokens (e.g., chain-of-thought) [15], we distinguish tr from a public
+transcript trpub containing all user/tool tokens and only the user-visible model
+outputs. Let R denote the hidden span; the provider publishes a binding com-
+mitment cR := Com(R) and length LR := |R|. Given (trpub, cR, LR) and the
+grammar, the verifier reconstructs the unique segmentation and hence g. Any
+substitution R → R′ either alters a subsequent model output (and is rejected by
+Eq. (25)) or leaves trpub unchanged (and is therefore harmless to the guarantee).
+
+    To rule out early termination, we require in the grammar that every model-
+generated span ends with a designated terminator (e.g., EOS/EOT) that is itself
+model-generated; premature truncation then either fails parsing or fails Eq. (25).
+Tool-call parsing and binding. Each tool step consists of (1) a model-generated
+tool-call span that deterministically parses to a structured request reqi, and (2)
+a externally injected tool-observation span. To ensure that the tool-call schema
+is correctly followed, we leverage Coral [2], a system for verifying a committed
+stream corresponds to a structured object, to guarantees that each tool-call
+span conforms to the expected structure and that all necessary parameters are
+present and valid. We bind tools via plaintext equality: the observation span in
+tr must equal the cleartext token sequence of the authenticated response object
+respi opened from the tool subproof. Thus, subsequent verified generation is
+guaranteed to condition on the same observation whose provenance and execution
+are proven. we defer the formal observation-injection attack model and the
+resulting end-to-end soundness statement to Appendix G.
+
+    Consistent with the threat model (§2.6), provider-hosted tools fall into two
+classes whose integrity reduces to distinct guarantees: networked APIs need
+response authenticity under a designated endpoint, and deterministic sandboxed
+computations need execution correctness. We realize the two classes via zkTLS
+and zkVM subproofs, respectively, each invoked as a standard protocol with a
+(Prove, Verify) interface and bound to tr via plaintext equality.
+
+
+===== PAGE 23 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution           23
+
+Table 1: Preprocessing cost of matrix-lookup schemes.
+
+Method                    Preprocessing (s) Size (GiB)
+
+Segment Lookup [18]       8,747.70                                    6.50
+Campanelli et al. [11]    11,296.96                                  48.00
+Ours                       942.43                                    4.52
+
+Authenticated API tools via zkTLS. For networked tools (e.g., web search
+
+and APIs), zkTLS-style systems [79] attest that a recorded TLS session occurred
+
+with a specified server. For invocation i with server identity idi, request reqi, and
+response respi, the prover runs the zkTLS prover to obtain πioi that is accepted
+by the zkTLS verifier,
+
+                          Verifyio(idi, reqi, respi, πiio) = 1,
+
+and binds respi into tr.
+
+Deterministic computation tools via Depyler and zkVM. For deterministic
+
+sandbox tools, we restrict the model-generated script programi to the deterministic
+
+Python subset supported by Depyler [57]. Both parties derive the RISC-V program
+
+                          (︁                                     )︁
+Pi := CompileRISC-V Depyler(programi)
+
+using the same public, deterministic toolchain. The prover then executes Pi in a
+zkVM, such as SP1 [68], and supplies a proof πvm i satisfying
+
+                              Verifyvm(Pi, ini, outputi, πivm) = 1,
+
+where ini denotes any tool input parsed from the transcript. The canonical token
+encoding of outputi is required to equal the corresponding tool-observation span.
+
+5 Evaluation
+
+We implement zkAgent in C++ and report microbenchmarks for each new
+subprotocol (zkEmbed, zkPosEnc, and zkDecode), together with performance
+measurements for one-shot transcript proving and end-to-end agent execution.
+
+5.1 Implementation
+
+Software. Our GKR implementations are adapted from the open-source zkGPT
+codebase [60]. For polynomial commitments, we use the univariate KZG [37]
+and the multilinear KZH [36]. We use two interchangeable lookup backends,
+LogUp [32,58] and Shout [65], offering complementary prover/verifier tradeoffs.
+Finite-field arithmetic and BN254 elliptic-curve operations use the mcl library [49].
+Hardware. All experiments are conducted on a server with an Intel Xeon 6982P-
+C (3.20 GHz, 32 cores) and 512 GB of RAM. We leverage 32-thread parallelization
+by default.
+
+
+===== PAGE 24 / 59 =====
+
+24  L. Wang et al.
+
+    Table 2: Online cost of matrix-lookup schemes.
+
+    Number of queries 25             26       27       28       29 210
+
+    Prove (s)               1602.69  1604.95  1611.45  1617.64  1604.41  1612.59
+    CosetLkup [22]            4.98     5.33     6.46     9.75    14.96    25.25
+    Segment Lookup [18]       1.12     1.21     1.33     1.63     2.22     3.46
+    Campanelli et al. [11]   0.016    0.026    0.047    0.085    0.14     0.27
+    Ours
+
+    Verify (s)              0.0090   0.0090   0.0090   0.0090   0.0090   0.0090
+    CosetLkup [22]            0.03     0.04     0.04     0.03     0.03     0.03
+    Segment Lookup [18]
+    Campanelli et al. [11]  0.0024   0.0025   0.0025   0.0025   0.0025   0.0025
+    Ours                    0.0064   0.0066   0.0069   0.0072   0.0075   0.0082
+
+Quantization. We instantiate the weight-dependent quantization of §4.1 at
+Q = 20 bits, and evaluate the perplexity in Appendix F.
+Baselines. We compare against representative prior open-sourced ZK frameworks
+for LLM inference, including ZKML [13], zkGPT [60], and zkLLM [69]. We do
+not evaluate the protocols by Lu et al. [45] or zkPytorch [77] because neither is
+open-sourced. We also exclude Hao et al. [33]: their released code implements
+only a subset of nonlinear layers, does not provide an end-to-end implementation.
+
+5.2 Microbenchmarks of Complete-Inference Components
+
+We first microbenchmark the three subprotocols introduced in §3: zkEmbed,
+zkPosEnc, and zkDecode.
+zkEmbed. We evaluate zkEmbed on the GPT-2 embedding table [61] (N =50,257,
+d=768), varying the number of queried tokens T . We compare against prior
+matrix lookup protocols, including CosetLkup [22], Segment Lookup [18], and
+Campanelli et al. [11].
+
+    Preprocessing costs. Table 1 compares preprocessing time and size across
+preprocessing-based matrix lookups. zkEmbed achieves the lowest preprocessing
+time, running 9.3× faster than [18] and 12.0× faster than [11]; it also pro-
+duces the smallest auxiliary data size. CosetLkup [22] is excluded since it is not
+preprocessing-based.
+
+    Online costs. Table 2 reports the online costs across all matrix lookup scheme.
+Non-preprocessing baselines are impractical at this scale: CosetLkup [22] takes
+roughly 1,600 s regardless of T . Among preprocessing based schemes, zkEmbed
+achieves the lowest proving time: at T = 25 it takes 0.016 s, 311.3× faster than
+Segment Lookup (4.98 s) and 70.0× faster than Campanelli et al. (1.12 s); at
+T = 210 it remains 0.27 s while Segment Lookup grows to 25 s. While Campanelli
+et al. achieve a faster verifier (∼ 2.5 ms), zkEmbed’s ∼ 8 ms is comparable to
+Segment Lookup and a small fraction of end-to-end zkML verification cost—a
+worthwhile concession for the prover-side speedup reported above.
+
+
+===== PAGE 25 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  25
+
+Table 3: Preprocessing cost of zkEmbed across models.
+
+                 Embedding table        Preprocess
+                                   time (s) size (GiB)
+Model            N              d
+
+GPT-2             50,257     768      942.43     4.52
+TinyLlama         32,000   2,048    1,175.30     6.01
+GPT-2 Medium      50,257   1,024    1,234.28     6.02
+GPT-2 XL          50,257   1,600    1,925.50     9.39
+DeepSeek V2      102,400   5,120   12,966.84    60.04
+GPT-3             50,257  12,288   14,746.46    72.02
+DeepSeek V3      129,280   7,168   18,219.96    84.04
+
+Table 4: Prover and verifier time of RoPE proving.
+
+T dh [70]                                 Ours
+
+        Prove (ms) Verify (ms) Prove (ms) Verify (ms)
+
+32 64   35.53             0.04     2.26         0.03
+
+128 64  144.90            0.04     8.90         0.03
+
+512 64  588.47            0.04     35.48        0.04
+
+32 128 122.99             0.04     4.60         0.03
+
+128 128 521.63            0.04     18.15        0.03
+
+512 128 2162.97           0.05     71.82        0.04
+
+    zkEmbed for different models. Table 3 reports zkEmbed’s preprocessing time
+and auxiliary storage across representative models. For GPT-2-scale tables
+(N =50,257, d ∈ [768, 1600]), preprocessing completes in under 33 minutes with
+4.5–9.4 GiB of auxiliary data. Scaling to frontier models (GPT-3, DeepSeek-
+V2/V3) raises the cost to a few hours and tens of GiB, peaking at ∼ 5 hours and
+84 GiB on DeepSeek-V3. Since preprocessing is a one-time cost amortized across
+all subsequent inference proofs on a fixed model, these costs remain practical
+even for the largest models evaluated.
+
+zkPosEnc. Absolute positional embeddings reduce to an offset addition with
+small overhead, so we focus zkPosEnc’s microbenchmarks on rotary positional
+embeddings (RoPE). We use a single thread here to highlight the algorithmic
+advantage of zkPosEnc. Table 4 reports RoPE prover and verifier time against
+the time-optimal matrix multiplication protocol [70], used in zkLLM [69], varying
+sequence length T ∈ {32, 128, 512} and head dimension dh ∈ {64, 128}. zkPosEnc
+reduces prover time by 15.7×–30.1× with verifier time essentially unchanged,
+consistent with the Hadamard form’s O(T dh) cost against the naive O(T d2h)
+arithmetization.
+
+    Real-world scale. On Llama-2-7B [71], the model evaluated by zkLLM [69], at
+T =512 zkPosEnc reduces per-layer RoPE proving from 5.49 s to 0.13 s (∼ 42×),
+saving ∼ 172 s across the full 32 layers.
+
+
+===== PAGE 26 / 59 =====
+
+26  L. Wang et al.
+
+zkDecode. We microbenchmark zkDecode on the GPT-2 vocabulary (N =50,257)
+over a T =512-token transcript, reporting amortized per-token prover time, verifier
+time, and proof size under both decoding rules. For greedy decoding, the cost
+is dominated by the O(N ) range-checked argmax. With the Shout backend,
+zkDecode amortizes to 0.033 s of prover time, 1.60 ms of verifier time, and a
+18.04 KiB proof per generated token; under LogUp, these become 0.041 s, 0.70 ms,
+and 1.66 KiB. Beyond greedy, top-k further requires candidate-set extraction,
+softmax normalization over the candidate set, and verifiable random sampling.
+With Shout, zkDecode amortizes to 0.15 s of prover time, 3.84 ms of verifier time,
+and a 82.48 KiB proof per token; under LogUp, these become 0.18 s, 2.34 ms, and
+7.99 KiB. In an end-to-end proof, zkDecode’s range-check lookups are folded into
+the same batched lookup argument as the inference proof’s range checks (§5.3),
+reusing the padding already paid for there, so its actual marginal cost is smaller
+than these standalone microbenchmarks suggest.
+
+5.3 One-Shot Transcript Proof
+
+We evaluate one-shot transcript proving on GPT-2, the only model for which
+prior works provide comparable reference implementations or reported costs.
+We fix the prompt length to T0=30 and vary the final transcript length T ∈
+{32, 64, 128, 256, 512}, so each instance contains T − T0 model-generated tokens.
+For zkAgent, we report two lookup backends: Shout [65], which yields the fastest
+prover in our implementation, and LogUp [32,58], which yields smaller proofs
+and faster verification.
+Baseline methodology. To isolate the performance benefit of one-shot proving,
+we align our proof scope with that of zkGPT. Our measured zkGPT verifier time
+and proof size exceed those reported in [60] because we include lookup-argument
+verification, which their released implementation omits. zkLLM does not ship
+a GPT-2 instantiation, so entries marked † in Table 5 are extrapolated from
+the per-step A100 costs reported in [60] (15.8 s proving, 0.54 s verification, and
+123 KiB proof for a 30-token context). This extrapolation is conservative: in
+stepwise autoregressive generation, later tokens are proved over longer contexts,
+so the true per-step cost grows with context length rather than remaining fixed
+at the 30-token measurement.
+Main result. Table 5 reports prover time, verifier time, and proof size. At
+T = 512, zkAgent with the Shout backend proves the entire 482-token continuation
+in a single proof in 142.45 s, amortizing to 0.30 s per generated token. The resulting
+proof is 84,589.13 KiB (≈ 82.61 MiB), and verification takes only 2.63 s, since the
+verifier checks a single transcript-level proof rather than 482 per-token proofs.
+Against stepwise zkGPT at T = 512, this is a 1,047.4× prover speedup (142.45 s vs.
+149,192.6 s, about 41 hours) and a 1,657.5× verifier speedup (2.63 s vs. 4,361.09 s).
+The LogUp backend is slower to prove (200.63 s at T = 512) but shrinks the
+proof to 3,932.09 KiB and verifies in 1.50 s, illustrating the prover/verifier tradeoff
+between the two backends. For zkLLM, the reported costs are measured on an
+A100 GPU, while all other systems run on a 32-core CPU server. A careful peak-
+throughput accounting (Appendix H) gives a ∼ 13× hardware gap in zkLLM’s
+
+
+===== PAGE 27 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution           27
+
+   Table 5: One-shot transcript proving on GPT-2.
+
+T                 32           64           128         256             512
+
+Prove (s)          31.60         537.20     1,548.40     3,570.80      7,615.60
+ zkLLM [69]†       65.01       1,727.84     7,880.97    33,867.87   149,192.60
+ zkGPT [60]       10.18
+ zkAgent (LogUp)   8.69          17.79        40.70         86.67       200.63
+ zkAgent (Shout)                 14.07        29.96         65.45       142.45
+
+Verify (s)        1.08          18.36        52.92        122.04      260.28
+ zkLLM [69]†      2.96         103.91       457.47      1,358.88    4,361.09
+ zkGPT [60]       0.30
+ zkAgent (LogUp)  0.55           0.32         0.37          0.67        1.50
+ zkAgent (Shout)                 0.66         0.85          1.26        2.63
+
+Proof size (KiB)       246.00     4,182.00   12,054.00   27,798.00   59,286.00
+ zkLLM [69]†         1,279.19   38,298.07   112,719.83  393,307.35  956,043.99
+ zkGPT [60]        1,285.63     1,668.94     2,048.53    2,665.16    3,932.09
+ zkAgent (LogUp)  13,988.44    21,653.47    32,220.47   44,153.19   84,589.13
+ zkAgent (Shout)
+
+† Scaled from the per-step zkLLM costs reported in [60] at a 30-token context on an NVIDIA A100
+(15.8 s / 0.54 s / 123 KiB); see baseline methodology.
+
+favor. Without normalizing for this gap, zkAgent with Shout is still 53.5× faster
+to prove at T = 512. We omit ZKML from Table 5 as it is prohibitively slow:
+at the smallest setting (T = 32, i.e., T −T0 = 2 generated tokens on a 30-token
+prompt), its prover already takes 7,148 s, over 3,500 s per generated token; longer
+contexts are infeasible to measure.
+
+5.4 End-to-End Performance of zkAgent
+
+We evaluate zkAgent end-to-end on two realistic tool-using agent tasks covering
+the two tool classes of §4.3.
+Scope. For each task, we combine the complete one-shot inference proof, including
+zkEmbed, zkPosEnc, and zkDecode, with tool-specific subproofs under a single
+statement. Table 6 reports the cost breakdown across the inference proof, the
+Coral schema proof, and the tool-authenticity proofs.
+Weather Agent (zkTLS tool). The agent fetches weather data via a web
+API and produces a 152-token transcript. Tool integrity is bound by a zkTLS
+attestation on the HTTP response, and tool-call structure by a Coral schema
+proof. Under the two inference backends, total proving time is 124.99 s for
+zkAgent(LogUp) and 95.23 s for zkAgent(Shout), with verification time 0.82 s
+versus 1.45 s and proof size 3,189.97 KiB versus 47,249.10 KiB.
+Coding Assistant (zkVM tool). The agent invokes a deterministic Python
+sandbox and produces a 143-token transcript. Tool integrity is bound by a
+zkVM proof on the Rust-transpiled execution, and tool-call structure by a Coral
+schema proof. Under the two inference backends, total proving time is 122.65 s
+
+
+===== PAGE 28 / 59 =====
+
+28  L. Wang et al.
+
+    Table 6: End-to-end breakdown for agent execution.
+
+    Workload Component            Prove (s) Verify (s) Size (KiB)
+
+    Weather    Inference (LogUp)  117.37    0.78   2,925.53
+    agent      Inference (Shout)   87.61    1.41  46,984.66
+               Coral schema          2.30  0.033
+               zkTLS tool            5.32  0.011     263.04
+                                                         1.40
+
+               Total (LogUp)      124.99   0.82 3,189.97
+               Total (Shout)       95.23   1.45 47,249.10
+
+    Coding     Inference (LogUp)  116.47    0.79   2,918.31
+    assistant  Inference (Shout)   87.00    1.42  46,983.53
+               Coral schema          2.29  0.028
+               zkVM tool             3.89   0.18     263.28
+                                                   2,594.69
+
+               Total (LogUp)      122.65   1.00 5,776.28
+               Total (Shout)       93.18   1.63 49,841.50
+
+for zkAgent(LogUp) and 93.18 s for zkAgent(Shout), with verification time 1.00 s
+versus 1.63 s and proof size 5,776.28 KiB versus 49,841.50 KiB.
+
+6 Related Work
+
+ZKPs for ML have progressed from decision trees [83] and CNNs [44,40] to
+full LLM inference [69,60]. A dominant approach expresses quantized models
+as arithmetic circuits over finite fields and applies specialized proof systems.
+zkCNN [44] introduced the GKR-based approach with the advice pattern for
+non-linear layers; Zen [26] and ZKML [13] provide compiler-oriented frameworks;
+zkLLM [69] proposed the first ZKP tailored for Transformer inference with
+dedicated protocols for attention (zkAttn) and non-arithmetic operation (tlookup);
+and zkGPT [60] further optimized the GKR-based pipeline for LLMs. ZIP [63]
+demonstrates high-precision (IEEE-754) ZK inference for non-linear activations.
+NANOZK [74] and Jolt Atlas [10] explore layerwise proofs and lookup-centric
+approaches, respectively. All of the above focus on proving a single forward pass
+and do not address the multi-inference, tool-interleaved setting that zkAgent
+targets. Conversely, these single-forward-pass protocols are orthogonal to and
+composable with our design: any of them can serve as the Transformer-block
+backend of our one-shot transcript proof, and our one-shot-with-tool-binding
+framework immediately lifts single-inference integrity to the multi-inference,
+tool-interleaved agent setting.
+
+    zkPytorch [77] observes that LLM inference can in principle be batched into
+a single circuit, but its construction neither implements a causal mask to enforce
+autoregressive dependence, nor proves equivalence to sequential autoregressive
+generation. Furthermore, its calibration-based quantization lacks completeness on
+heavy-tailed LLM activations (Appendix F, Table 7). zkPytorch therefore leaves
+
+
+===== PAGE 29 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  29
+
+the problem unresolved; we close both gaps via one-shot transcript proving with
+formal prefix equivalence under causal masking (§4.2), and weight-dependent
+quantization that provably keeps every honest activation within the lookup
+domain (§4.1).
+
+    In parallel, VOLE-based interactive proof approaches [75,33,45] show scalable
+techniques for non-linear functions but impose substantially higher communi-
+cation and verification overheads than SNARKs. Complementary to inference
+verification, VeriLoRA [42] provides verifiable LoRA fine-tuning via ZKPs.
+
+Acknowledgments
+
+Claude Code, OpenAI Codex, and Grammarly assisted with drafting and revis-
+ing manuscript. OpenAI Codex and Claude Code also assisted developing and
+debugging the research code. The authors independently reviewed all AI-assisted
+text and code, verified all claims, references, and experimental results, and retain
+full responsibility for the paper and associated code.
+
+Open Science
+
+We provide the source code of our implementation at https://github.com/Noi
+1r/zkAgent-artifacts
+
+References
+
+ 1. Abdelnabi, S., Greshake, K., Mishra, S., Endres, C., Holz, T., Fritz, M.: Not what
+     you’ve signed up for: Compromising real-world llm-integrated applications with
+     indirect prompt injection. In: Proceedings of ACM AISec 2023. pp. 79–90. ACM
+     (2023). https://doi.org/10.1145/3605764.3623985
+
+ 2. Angel, S., Celi, S., Margolin, E., Mishra, P., Sander, M., Woods, J.: Coral: Fast
+     succinct non-interactive zero-knowledge CFG proofs. IACR Cryptol. ePrint Arch.
+     2025, 1420 (2025), https://eprint.iacr.org/2025/1420
+
+ 3. Anthropic: Claude code. https://github.com/anthropics/claude-code (2025),
+     official repository of the API-driven agentic coding tool that runs locally and invokes
+     the Claude API for inference. Accessed 2026-04-14
+
+ 4. Anthropic: Code execution tool | claude api documentation. Documentation (2026),
+     https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-exe
+     cution-tool, server-side sandboxed Python/Bash execution for Claude agents.
+     Accessed 2026-04-09
+
+ 5. Anthropic: How to implement tool use | claude api docs. Documentation (2026),
+     https://platform.claude.com/docs/en/agents-and-tools/tool-use/impleme
+     nt-tool-use, accessed: 2026-02-01
+
+ 6. Anthropic: Server tools | claude api docs. Documentation (2026), https://docs.a
+     nthropic.com/en/docs/agents-and-tools/tool-use/server-tools, describes
+     server-side tool execution (web search, code execution) managed by Anthropic.
+     Accessed 2026-04-09
+
+
+===== PAGE 30 / 59 =====
+
+30  L. Wang et al.
+
+ 7. Ben-Sasson, E., Chiesa, A., Genkin, D., Tromer, E., Virza, M.: Snarks for C:
+     verifying program executions succinctly and in zero knowledge. In: Advances in
+     Cryptology - CRYPTO 2013. pp. 90–108. Springer (2013). https://doi.org/10.1
+     007/978-3-642-40084-1_6
+
+ 8. Ben-Sasson, E., Chiesa, A., Riabzev, M., Spooner, N., Virza, M., Ward, N.P.:
+     Aurora: Transparent succinct arguments for R1CS. In: Advances in Cryptology -
+     EUROCRYPT 2019. pp. 103–128. Springer (2019). https://doi.org/10.1007/97
+     8-3-030-17653-2_4
+
+ 9. Ben-Sasson, E., Chiesa, A., Tromer, E., Virza, M.: Scalable zero knowledge via
+     cycles of elliptic curves. Algorithmica 79(4), 1102–1160 (2017). https://doi.org/
+     10.1007/S00453-016-0221-0, https://doi.org/10.1007/s00453-016-0221-0
+
+10. Benno, W., Centelles, A., Douchet, A., Gibran, K.: Jolt atlas: Verifiable inference
+     via lookup arguments in zero knowledge. CoRR abs/2602.17452 (2026). https:
+     //doi.org/10.48550/ARXIV.2602.17452, https://doi.org/10.48550/arXiv.2
+     602.17452
+
+11. Campanelli, M., Faonio, A., Fiore, D., Li, T., Lipmaa, H.: Lookup arguments:
+     Improvements, extensions and applications to zero-knowledge decision trees. In:
+     Public-Key Cryptography - PKC 2024. pp. 337–369. Springer (2024). https:
+     //doi.org/10.1007/978-3-031-57722-2_11
+
+12. Campanelli, M., Fiore, D., Gennaro, R.: Natively compatible super-efficient lookup
+     arguments and how to apply them. J. Cryptol. 38(1), 14 (2025). https://doi.org/
+     10.1007/S00145-024-09535-0, https://doi.org/10.1007/s00145-024-09535-0
+
+13. Chen, B., Waiwitlikhit, S., Stoica, I., Kang, D.: ZKML: an optimizing system
+     for ML inference in zero-knowledge proofs. In: Proceedings of EuroSys 2024. pp.
+     560–574. ACM (2024). https://doi.org/10.1145/3627703.3650088, code:
+     https://github.com/ddkang/zkml
+
+14. Chen, B., Bünz, B., Boneh, D., Zhang, Z.: Hyperplonk: Plonk with linear-time prover
+     and high-degree custom gates. In: Advances in Cryptology - EUROCRYPT 2023.
+     pp. 499–530. Springer (2023). https://doi.org/10.1007/978-3-031-30617-4_17
+
+15. Chen, X., Sun, Z., Guo, W., Zhang, M., Chen, Y., Sun, Y., Su, H., Pan, Y.,
+     Klakow, D., Li, W., Shen, X.: Unveiling the key factors for distilling chain-of-
+     thought reasoning. In: Findings of ACL 2025. pp. 15094–15119. Association for
+     Computational Linguistics (2025), https://aclanthology.org/2025.findings-a
+     cl.782/
+
+16. Chiesa, A., Hu, Y., Maller, M., Mishra, P., Vesely, P., Ward, N.P.: Marlin: Prepro-
+     cessing zksnarks with universal and updatable SRS. In: Advances in Cryptology -
+     EUROCRYPT 2020. pp. 738–768. Springer (2020). https://doi.org/10.1007/97
+     8-3-030-45721-1_26
+
+17. Chiesa, A., Tromer, E.: Proof-carrying data and hearsay arguments from signature
+     cards. In: Innovations in Computer Science - ICS 2010. pp. 310–331. Tsinghua
+     University Press (2010), http://conference.iiis.tsinghua.edu.cn/ICS2010/co
+     ntent/papers/25.html
+
+18. Choudhuri, A.R., Garg, S., Goel, A., Sekar, S., Sinha, R.: Sublonk: Sublinear prover
+     plonk. Proc. Priv. Enhancing Technol. 2024(3), 314–335 (2024). https://doi.or
+     g/10.56553/POPETS-2024-0080, https://doi.org/10.56553/popets-2024-0080,
+     code: https://github.com/txaty/ark-segmentlookup
+
+19. De Rossi, M., Crapis, D., Ellis, J., Reppel, E.: Erc-8004: Trustless agents. https:
+     //eips.ethereum.org/EIPS/eip-8004 (Aug 2025), draft ERC, accessed: 2026-01-
+     14
+
+
+===== PAGE 31 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  31
+
+20. DeepSeek-AI: Deepseek-v3 technical report. CoRR abs/2412.19437 (2024). https:
+     //doi.org/10.48550/ARXIV.2412.19437, https://doi.org/10.48550/arXiv.2
+     412.19437
+
+21. Dettmers, T., Lewis, M., Belkada, Y., Zettlemoyer, L.: Gpt3.int8(): 8-bit matrix
+     multiplication for transformers at scale. In: Advances in Neural Information Pro-
+     cessing Systems 35 (2022), http://papers.nips.cc/paper_files/paper/2022/ha
+     sh/c3ba4962c05c49636d4c6206a97e9c8a-Abstract-Conference.html
+
+22. Di, Z., Xia, L., Nguyen, W.D., Tyagi, N.: Muxproofs: Succinct arguments for machine
+     computation from vector lookups. In: Advances in Cryptology - ASIACRYPT 2024.
+     pp. 236–265. Springer (2024). https://doi.org/10.1007/978-981-96-0935-2_8,
+     code: https://github.com/lucasxia01/mux-proofs-impl
+
+23. Ding, Y., Zhang, L.L., Zhang, C., Xu, Y., Shang, N., Xu, J., Yang, F., Yang, M.:
+     Longrope: Extending LLM context window beyond 2 million tokens. In: Proceedings
+     of ICML 2024. pp. 11091–11104. PMLR / OpenReview.net (2024), https://proc
+     eedings.mlr.press/v235/ding24i.html
+
+24. Eagen, L., Fiore, D., Gabizon, A.: cq: Cached quotients for fast lookups. IACR
+     Cryptol. ePrint Arch. 2022, 1763 (2022), https://eprint.iacr.org/2022/1763
+
+25. Feist, D., Khovratovich, D.: Fast amortized KZG proofs. IACR Cryptol. ePrint
+     Arch. 2023, 33 (2023), https://eprint.iacr.org/2023/033
+
+26. Feng, B., Qin, L., Zhang, Z., Ding, Y., Chu, S.: ZEN: efficient zero-knowledge
+     proofs for neural networks. IACR Cryptol. ePrint Arch. 2021, 87 (2021), https:
+     //eprint.iacr.org/2021/087
+
+27. Fiat, A., Shamir, A.: How to prove yourself: Practical solutions to identification
+     and signature problems. In: Advances in Cryptology - CRYPTO ’86. pp. 186–194.
+     Springer (1986). https://doi.org/10.1007/3-540-47721-7_12
+
+28. Gabizon, A., Williamson, Z.J.: plookup: A simplified polynomial protocol for lookup
+     tables. IACR Cryptol. ePrint Arch. 2020, 315 (2020), https://eprint.iacr.or
+     g/2020/315
+
+29. Gabizon, A., Williamson, Z.J., Ciobotaru, O.: PLONK: permutations over lagrange-
+     bases for oecumenical noninteractive arguments of knowledge. IACR Cryptol. ePrint
+     Arch. 2019, 953 (2019), https://eprint.iacr.org/2019/953
+
+30. Goldwasser, S., Rothblum, G.N., Kalai, Y.T.: Delegating computation: Interactive
+     proofs for muggles. Electron. Colloquium Comput. Complex. TR17, TR17-108
+     (2017), https://eccc.weizmann.ac.il/report/2017/108
+
+31. Google: Code execution | gemini api. Google AI for Developers Documentation
+     (2026), https://ai.google.dev/gemini-api/docs/code-execution, gemini code
+     execution tool; executes code in Python. Last updated 2026-01-13 (UTC). Accessed
+     2026-01-15
+
+32. Haböck, U.: Multivariate lookups based on logarithmic derivatives. IACR Cryptol.
+     ePrint Arch. 2022, 1530 (2022), https://eprint.iacr.org/2022/1530
+
+33. Hao, M., Chen, H., Li, H., Weng, C., Zhang, Y., Yang, H., Zhang, T.: Scalable
+     zero-knowledge proofs for non-linear functions in machine learning. In: Proceedings
+     of USENIX Security 2024. USENIX Association (2024), https://www.usenix.org
+     /conference/usenixsecurity24/presentation/hao-meng-scalable
+
+34. Holtzman, A., Buys, J., Du, L., Forbes, M., Choi, Y.: The curious case of neural
+     text degeneration. In: International Conference on Learning Representations, ICLR
+     2020. OpenReview.net (2020), https://openreview.net/forum?id=rygGQyrFvH
+
+35. Jacob, B., Kligys, S., Chen, B., Zhu, M., Tang, M., Howard, A.G., Adam, H.,
+     Kalenichenko, D.: Quantization and training of neural networks for efficient integer-
+     arithmetic-only inference. In: Proceedings of CVPR 2018. pp. 2704–2713. Computer
+
+
+===== PAGE 32 / 59 =====
+
+32  L. Wang et al.
+
+     Vision Foundation / IEEE Computer Society (2018). https://doi.org/10.1109/
+     CVPR.2018.00286, http://openaccess.thecvf.com/content_cvpr_2018/html/J
+     acob_Quantization_and_Training_CVPR_2018_paper.html
+36. Kadianakis, G., Zapico, A., Hafezi, H., Bünz, B.: Kzh-fold: Accountable voting from
+     sublinear accumulation. In: Proceedings of ACM CCS 2025. pp. 409–422. ACM
+     (2025). https://doi.org/10.1145/3719027.3744796
+37. Kate, A., Zaverucha, G.M., Goldberg, I.: Constant-size commitments to polynomials
+     and their applications. In: Advances in Cryptology - ASIACRYPT 2010. pp. 177–194.
+     Springer (2010). https://doi.org/10.1007/978-3-642-17373-8_11
+38. Kothapalli, A., Setty, S.T.V.: Hypernova: Recursive arguments for customizable
+     constraint systems. In: Advances in Cryptology - CRYPTO 2024. vol. 14929, pp.
+     345–379. Springer (2024). https://doi.org/10.1007/978-3-031-68403-6_11
+39. Kothapalli, A., Setty, S.T.V., Tzialla, I.: Nova: Recursive zero-knowledge arguments
+     from folding schemes. In: Advances in Cryptology - CRYPTO 2022. pp. 359–388.
+     Springer (2022). https://doi.org/10.1007/978-3-031-15985-5_13
+40. Lee, S., Ko, H., Kim, J., Oh, H.: vcnn: Verifiable convolutional neural network
+     based on zk-snarks. IEEE Trans. Dependable Secur. Comput. 21(4), 4254–4270
+     (2024). https://doi.org/10.1109/TDSC.2023.3348760
+41. Li, X.: A review of prominent paradigms for llm-based agents: Tool use, planning
+     (including rag), and feedback learning. In: Proceedings of COLING 2025. pp. 9760–
+     9779. Association for Computational Linguistics (2025), https://aclanthology.o
+     rg/2025.coling-main.652/
+42. Liao, G., Wang, T., Zhang, S., Zhang, J., Shi, L., Tao, D.: VeriLoRA: Fine-tuning
+     large language models with verifiable security via zero-knowledge proofs. In: Network
+     and Distributed System Security Symposium, NDSS 2026 (2026), https://www.nd
+     ss-symposium.org/ndss-paper/verilora-fine-tuning-large-language-model
+     s-with-verifiable-security-via-zero-knowledge-proofs/
+43. Liu, H., Shou, C., Wen, H., Chen, Y., Fang, R.J., Feng, Y.: Your agent is mine: Mea-
+     suring malicious intermediary attacks on the LLM supply chain. arXiv:2604.08407
+     (2026), https://arxiv.org/abs/2604.08407
+44. Liu, T., Xie, X., Zhang, Y.: zkcnn: Zero knowledge proofs for convolutional neural
+     network predictions and accuracy. In: Proceedings of ACM CCS 2021. pp. 2968–2985.
+     ACM (2021). https://doi.org/10.1145/3460120.3485379
+45. Lu, T., Wang, H., Qu, W., Wang, Z., He, J., Tao, T., Chen, W., Zhang, J.: An
+     efficient and extensible zero-knowledge proof framework for neural networks. IACR
+     Cryptol. ePrint Arch. 2024, 703 (2024), https://eprint.iacr.org/2024/703
+46. Lund, C., Fortnow, L., Karloff, H.J., Nisan, N.: Algebraic methods for interactive
+     proof systems. J. ACM 39(4), 859–868 (1992). https://doi.org/10.1145/146585
+     .146605
+47. Merity, S., Xiong, C., Bradbury, J., Socher, R.: Pointer sentinel mixture models. In:
+     International Conference on Learning Representations, ICLR 2017. OpenReview.net
+     (2017), https://openreview.net/forum?id=Byj72udxe
+48. Mikolov, T., Sutskever, I., Chen, K., Corrado, G.S., Dean, J.: Distributed representa-
+     tions of words and phrases and their compositionality. In: Advances in Neural Infor-
+     mation Processing Systems 26. pp. 3111–3119 (2013), https://proceedings.neur
+     ips.cc/paper/2013/hash/9aa42b31882ec039965f3c4923ce901b-Abstract.html
+49. Mitsunari, S.: mcl: A portable pairing-based cryptography library. https://gith
+     ub.com/herumi/mcl
+50. NVIDIA Corporation: NVIDIA A100 Tensor Core GPU Architecture: Unprece-
+     dented acceleration at every scale. https://images.nvidia.com/aem-dam/en-zz/
+     Solutions/data-center/nvidia-ampere-architecture-whitepaper.pdf (2020)
+
+
+===== PAGE 33 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  33
+
+51. OpenAI: Codex cli. https://github.com/openai/codex (2025), local command-
+     line coding agent powered by the OpenAI Responses API. Accessed 2026-04-14
+
+52. OpenAI: Chatgpt agent. OpenAI Help Center (2026), https://help.openai.com/
+     en/articles/11752874-chatgpt-agent, agent mode overview; lists built-in tools
+     including code interpreter. Accessed 2026-01-15
+
+53. OpenAI: Code interpreter. OpenAI API Documentation (2026), https://plat
+     form.openai.com/docs/guides/tools-code-interpreter, defines the Code
+     Interpreter tool for running Python in a sandboxed environment (containers).
+     Accessed 2026-01-15
+
+54. OpenAI: Data analysis with chatgpt. OpenAI Help Center (2026), https://he
+     lp.openai.com/en/articles/8437071-data-analysis-with-chatgpt, describes
+     ChatGPT’s secure code execution environment and passing generated code for
+     execution. Accessed 2026-01-15
+
+55. OpenAI: Function calling | openai api. Documentation (2026), https://platform
+     .openai.com/docs/guides/function-calling, accessed: 2026-02-01
+
+56. OpenAI, Stripe: Agentic commerce protocol. https://developers.openai.com/
+     commerce/guides/get-started (Jan 2026), accessed: 2026-01-14
+
+57. PAIML, contributors: Depyler: Compiles python to rust. GitHub repository (2025),
+     https://github.com/paiml/depyler
+
+58. Papini, S., Haböck, U.: Improving logarithmic derivative lookups using GKR. IACR
+     Cryptol. ePrint Arch. 2023, 1284 (2023), https://eprint.iacr.org/2023/1284
+
+59. Peng, B., Quesnelle, J., Fan, H., Shippole, E.: Yarn: Efficient context window
+     extension of large language models. In: International Conference on Learning
+     Representations, ICLR 2024. OpenReview.net (2024), https://openreview.net/f
+     orum?id=wHBfxhZu1u
+
+60. Qu, W., Sun, Y., Liu, X., Lu, T., Guo, Y., Chen, K., Zhang, J.: zkgpt: An efficient
+     non-interactive zero-knowledge proof framework for LLM inference. In: Proceedings
+     of USENIX Security 2025. pp. 2045–2063. USENIX Association (2025), https:
+     //www.usenix.org/conference/usenixsecurity25/presentation/qu- zkgpt,
+     code: https://github.com/security-Anonymous/zkGPT
+
+61. Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., Sutskever, I.: Language
+     models are unsupervised multitask learners. Technical report, OpenAI (2019),
+     https://cdn.openai.com/better- language- models/language_models_are_un
+     supervised_multitask_learners.pdf
+
+62. Raffel, C., Shazeer, N., Roberts, A., Lee, K., Narang, S., Matena, M., Zhou,
+     Y., Li, W., Liu, P.J.: Exploring the limits of transfer learning with a unified
+     text-to-text transformer. J. Mach. Learn. Res. 21, 140:1–140:67 (2020), https:
+     //jmlr.org/papers/v21/20-074.html
+
+63. Riasi, A., Wang, H., Behnia, R., Vo, V., Hoang, T.: Zero-knowledge AI inference
+     with high precision. In: Proceedings of ACM CCS 2025. pp. 1053–1067. ACM (2025).
+     https://doi.org/10.1145/3719027.3765056
+
+64. Setty, S.T.V.: Spartan: Efficient and general-purpose zksnarks without trusted
+     setup. In: Advances in Cryptology - CRYPTO 2020. pp. 704–737. Springer (2020).
+     https://doi.org/10.1007/978-3-030-56877-1_25
+
+65. Setty, S.T.V., Thaler, J.: Twist and shout: Faster memory checking arguments via
+     one-hot addressing and increments. IACR Cryptol. ePrint Arch. 2025, 105 (2025),
+     https://eprint.iacr.org/2025/105
+
+66. Setty, S.T.V., Thaler, J., Wahby, R.S.: Unlocking the lookup singularity with lasso.
+     In: Advances in Cryptology - EUROCRYPT 2024. pp. 180–209. Springer (2024).
+     https://doi.org/10.1007/978-3-031-58751-1_7
+
+
+===== PAGE 34 / 59 =====
+
+34  L. Wang et al.
+
+67. Su, J., Ahmed, M.H.M., Lu, Y., Pan, S., Bo, W., Liu, Y.: Roformer: Enhanced
+     transformer with rotary position embedding. Neurocomputing 568, 127063 (2024).
+     https://doi.org/10.1016/J.NEUCOM.2023.127063, https://doi.org/10.1016/
+     j.neucom.2023.127063
+
+68. Succinct Labs, contributors: Sp1: A zero-knowledge virtual machine for proving
+     rust/llvm program execution. GitHub repository (2025), https://github.com/suc
+     cinctlabs/sp1
+
+69. Sun, H., Li, J., Zhang, H.: zkllm: Zero knowledge proofs for large language models.
+     In: Proceedings of ACM CCS 2024. pp. 4405–4419. ACM (2024). https://doi.org/
+     10.1145/3658644.3670334, code: https://github.com/jvhs0706/zkllm-ccs2024
+
+70. Thaler, J.: Time-optimal interactive proofs for circuit evaluation. In: Advances in
+     Cryptology - CRYPTO 2013. pp. 71–89. Springer (2013). https://doi.org/10.1
+     007/978-3-642-40084-1_5
+
+71. Touvron, H., Martin, L., Stone, K., et al.: Llama 2: Open foundation and fine-tuned
+     chat models. CoRR abs/2307.09288 (2023). https://doi.org/10.48550/ARXIV
+     .2307.09288, https://doi.org/10.48550/arXiv.2307.09288
+
+72. Valiant, P.: Incrementally verifiable computation or proofs of knowledge imply
+     time/space efficiency. In: Theory of Cryptography - TCC 2008. pp. 1–18. Springer
+     (2008). https://doi.org/10.1007/978-3-540-78524-8_1
+
+73. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.N., Kaiser,
+     L., Polosukhin, I.: Attention is all you need. In: Advances in Neural Information
+     Processing Systems 30. pp. 5998–6008 (2017), https://proceedings.neurips.cc
+     /paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html
+
+74. Wang, Z.G.: NANOZK: layerwise zero-knowledge proofs for verifiable large language
+     model inference. CoRR abs/2603.18046 (2026). https://doi.org/10.48550/ARX
+     IV.2603.18046, https://doi.org/10.48550/arXiv.2603.18046
+
+75. Weng, C., Yang, K., Xie, X., Katz, J., Wang, X.: Mystique: Efficient conversions
+     for zero-knowledge proofs with applications to machine learning. In: Proceedings of
+     USENIX Security 2021. pp. 501–518. USENIX Association (2021), https://www.
+     usenix.org/conference/usenixsecurity21/presentation/weng
+
+76. Wright, A., Andrews, H., Hutton, B., Dennis, G.: JSON schema: A media type for
+     describing JSON documents. IETF Internet-Draft, draft-bhutton-json-schema-01
+     (2022), https://www.ietf.org/archive/id/draft-bhutton-json-schema-01.ht
+     ml
+
+77. Xie, T., Lu, T., Fang, Z., Wang, S., Zhang, Z., Jia, Y., Song, D., Zhang, J.: zkpytorch:
+     A hierarchical optimized compiler for zero-knowledge machine learning. IACR
+     Cryptol. ePrint Arch. 2025, 535 (2025), https://eprint.iacr.org/2025/535
+
+78. Xie, T., Zhang, J., Zhang, Y., Papamanthou, C., Song, D.: Libra: Succinct zero-
+     knowledge proofs with optimal prover computation. In: Advances in Cryptology -
+     CRYPTO 2019. pp. 733–764. Springer (2019). https://doi.org/10.1007/978-3
+    -030-26954-8_24
+
+79. Xie, X., Yang, K., Wang, X., Yu, Y.: Lightweight authentication of web data via
+     garble-then-prove. In: Proceedings of USENIX Security 2024. USENIX Association
+     (2024), https://www.usenix.org/conference/usenixsecurity24/presentatio
+     n/xie-xiang
+
+80. Yang, A., Yang, B., Hui, B., et al.: Qwen2 technical report. CoRR abs/2407.10671
+     (2024). https://doi.org/10.48550/ARXIV.2407.10671, https://doi.org/10.4
+     8550/arXiv.2407.10671
+
+81. Zapico, A., Buterin, V., Khovratovich, D., Maller, M., Nitulescu, A., Simkin, M.:
+     Caulk: Lookup arguments in sublinear time. In: Proceedings of ACM CCS 2022.
+     pp. 3121–3134. ACM (2022). https://doi.org/10.1145/3548606.3560646
+
+
+===== PAGE 35 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  35
+
+82. Zapico, A., Gabizon, A., Khovratovich, D., Maller, M., Ràfols, C.: Baloo: Nearly
+     optimal lookup arguments. IACR Cryptol. ePrint Arch. 2022, 1565 (2022), https:
+     //eprint.iacr.org/2022/1565
+
+83. Zhang, J., Fang, Z., Zhang, Y., Song, D.: Zero knowledge proofs for decision tree
+     predictions and accuracy. In: Proceedings of ACM CCS 2020. pp. 2039–2053. ACM
+     (2020). https://doi.org/10.1145/3372297.3417278
+
+84. Zhang, J., Liu, T., Wang, W., Zhang, Y., Song, D., Xie, X., Zhang, Y.: Doubly
+     efficient interactive proofs for general arithmetic circuits with linear prover time.
+     In: Proceedings of ACM CCS 2021. pp. 159–177. ACM (2021). https://doi.org/
+     10.1145/3460120.3484767
+
+85. Zhang, T., Ouyang, Y., Zhang, Y.: Dynark: Making groth16 dynamic. IACR Cryptol.
+     ePrint Arch. 2025, 1897 (2025), https://eprint.iacr.org/2025/1897
+
+A Deployment Variants
+
+This appendix expands on §2.6, which covers two default deployment classes
+under a single provider-side adversary: fully hosted chat products and API-driven
+agents. We describe a third class in which the provider-side is split across two
+independent operators, and show that our construction accommodates it with no
+protocol changes.
+Independent agent-framework operator. In this class, an agent-framework
+operator, distinct from the model provider, runs the agent loop on its own
+infrastructure and hosts additional tools, while still delegating LLM inference to
+the model provider’s API. SaaS agent platforms and emerging trustless-agent
+proposals in the Ethereum ecosystem [19] target precisely this pattern.
+
+    The operator is a separate principal from the model provider, and the client
+does not implicitly trust either party. The operator may fabricate tool observations,
+just as the model provider may fabricate LLM outputs. Our construction of
+Section 4 accommodates this with no protocol changes. The zkTLS and zkVM
+primitives of Section 4.3 apply verbatim to operator-hosted tools. The model
+provider’s one-shot inference proof composes into the same bundle unchanged: it
+yields a claim on the LLM-generated spans of tr, while the operator produces
+claims on the tool-observation spans it controls. The verifier checks every subproof
+against ctr, so neither operator can present a consistent bundle without faithfully
+executing the components it controls.
+
+B Inference Process of Decoder-only LLMs
+
+We briefly review the inference process of decoder-only Large Language Models.
+Figure 3 gives the full pipeline schematically, annotated with tensor shapes and
+pointers to the proof protocols introduced in §3.
+Step 1: Tokenization. Given a prompt string, a tokenizer deterministically
+converts it into a sequence of token IDs tr = (t0, t1, . . . ,
+tT −1), where ti ∈ V and we view the vocabulary as an index set V = [|V|]. In most
+
+
+===== PAGE 36 / 59 =====
+
+36  L. Wang et al.
+
+                    Tokenized Text
+
+                     Token Embedding zkEmbed(§3.1)
+
+                                                       H0 ∈ FT ×d
+
+                    Positional Encoding zkPosEnc(§3.2)
+
+                    Transformer                  Residue
+
+                                    LayerNorm 1
+
+                    Multi-head Attention
+                         (causal mask)
+
+                            +                             ×L
+                    LayerNorm 2
+                                                 Residue
+
+                    Feed Forward
+
+                                 +
+
+                                      HL ∈ FT ×d
+
+                    Final LayerNorm
+
+                    Linear Output                logits L ∈ FT ×N
+                       Decoding                  zkDecode(§3.3)
+
+Fig. 3: Detailed inference pipeline of a decoder-only Transformer. The Transformer block
+(gray) is repeated L times with two residual bypasses. Colored boxes mark stages covered
+by our new protocols (zkEmbed, zkPosEnc, zkDecode); internals of the Transformer
+reuse prior zkLLM techniques [69,60].
+
+deployed LLM systems, the tokenizer is treated as public model configuration1.
+Accordingly, we treat the resulting token sequence tr ∈ VT as part of the public
+transcript.
+Step 2: Token-to-embedding lookup. Let WE ∈ F|V|×d be the embedding
+table. The initial hidden states H0 ∈ FT ×d are obtained by row selection:
+
+                         H0 := WE (tr) = (WE,t0,:, . . . , WE,tT −1,:),
+
+i.e., H0,i,: = WE,ti,: for all i ∈ [T ].
+Step 3: Positional encoding. Decoder-only LLMs inject position information
+using either absolute or rotary positional encodings.
+Absolute positional embeddings (APE) If the model uses APE (e.g., GPT-
+2 [61]), a learnable positional matrix P ∈ FTmax×d is added to embeddings:
+
+                                      H0 ← H0 + P [0:T, :].
+
+ 1 LLM manufacturers often release the tokenizer to facilitate token counting and billing
+   for third-party platforms
+
+
+===== PAGE 37 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution         37
+
+Rotary positional embeddings (RoPE) For RoPE-based models (e.g., Llama-
+
+2 [71], Qwen [80]), position is injected inside attention by rotating the Query and
+
+Key vectors. Fix one of the h attention heads, with head dimension dh = d/h.
+For example, for a query vector at position m ∈ [T ], denoted qm ∈ Fdh , the
+rotated vector is
+
+                 qmrot = RΘ,m dh qm,
+
+where RΘ,m dh is block-diagonal:
+
+                                           ⎡ (0) ⎤
+                                             RΘ,m
+
+                                Rdh Θ,m = ⎢⎢⎣ . . ⎥ . ⎥⎦
+                                                          RΘ,m (dh /2−1)
+
+where each sub-matrix RΘ,m (i) equals
+
+(︃cos mθi − sin mθi                          )︃
+
+      {︂ sin mθi cos mθi }︂
+Θ = θi = 10000−2i/dh : i ∈ [dh/2]
+
+Step 4: Stacked Transformer blocks. The core computation is performed by
+
+L Transformer blocks. Let Hℓ ∈ FT ×d denote the hidden states after ℓ blocks,
+with H0 as above. For each block ℓ ∈ [L], we compute
+
+Hℓ+1 ′ = Hℓ + MSAℓ(LNℓ(Hℓ)),                                              (26)
+
+Hℓ+1 = Hℓ+1 ′ + FFNℓ(LN′ℓ(Hℓ′+1)).                                        (27)
+
+Layer normalization (LN) LayerNorm is applied independently to each token
+position. For a row vector h ∈ Rd, define
+
+           1 ∑︂                        σ2(h) := 1 (hj − µ(h)) , ∑︂ 2
+µ(h) := d hj,                                      d
+
+                   j∈[d]                                    j∈[d]
+
+    h − µ(h)1
+LN(h) := γ ◦ √︁                        + β,
+               σ2(h) + ε
+
+where γ, β ∈ Rd are learned affine parameters, ε > 0 is a fixed constant, and ◦
+denotes the Hadamard product. Applying LN to a matrix H ∈ RT ×d is row-wise:
+LN(H)[i, :] = LN(H[i, :]) for all i ∈ [T ].
+
+Multi-head self-attention (MSA) Let X = LNℓ(Hℓ) ∈ FT ×d. MSA forms
+queries/keys/values via learned projections:
+
+Q = XWQ,ℓ, K = XWK,ℓ, V = XWV,ℓ,                                          (28)
+
+where WQ,ℓ, WK,ℓ, WV,ℓ ∈ Fd×d. Split into h heads with head dimension dh =
+d/h: Q = [Q(0); . . . ; Q(h−1)] and similarly for K, V . For each head i ∈ [h], scaled
+
+
+===== PAGE 38 / 59 =====
+
+38  L. Wang et al.
+
+dot-product attention is
+
+                          (i) (︃ Q(i)(K(i))⊤ )︃
+                    A = softmax        √          ,                         (29)
+                                             dh
+
+                    Z(i) = A(i)V (i),                                       (30)
+
+The head outputs are concatenated and projected back:
+
+    MSAℓ(X) = Concat(Z(0), . . . , Z(h−1))WO,ℓ,                             (31)
+
+with WO,ℓ ∈ Fd×d.
+Feed-forward network (FFN) Each block also contains a position-wise MLP
+
+applied independently to each token. A common form is a two-layer MLP with
+
+an activation ϕ:
+
+    FFN(X) := ϕ(XW1 + 1b⊤1 )W2 + 1b⊤2 ,
+
+where W1 ∈ Rd×dff , W2 ∈ Rdff ×d and b1 ∈ Rdff , b2 ∈ Rd. Modern LLMs often
+use gated variants such as SwiGLU or GeLU.
+Step 5: Logits and next-token selection (decoding). After L blocks, the
+model maps hidden states to vocabulary logits via a linear head. For the last
+position T − 1, let HL,T −1,: ∈ Fd be the final hidden state vector and Whead ∈
+Fd×|V| be the output projection. The logits are
+
+                          zT −1 = LNout(HL,T −1,:) · Whead ∈ F|V|.
+
+In deployed systems, decoding typically converts logits to a categorical distribution
+using a temperature parameter τ > 0:
+
+    pτ (v) := Pr[tT = v | zT −1] = ∑︁ exp(zT −1[v]/τ ) ,            v ∈ V.
+                                              u∈V exp(zT −1[u]/τ )
+
+Smaller τ sharpens the distribution, while larger τ flattens it.
+Greedy decoding The greedy rule deterministically selects the most likely
+token:
+
+    tT = arg max zT −1[v] = arg max pτ (v),
+                          v∈V                v∈V
+
+which corresponds to taking τ → 0.
+
+Top-k sampling Let Sk be the set of k tokens with the largest probabilities
+under pτ . Define the truncated distribution
+
+                               ⎧             v ∈ Sk,
+                               ⎨ pτ (v)      otherwise,
+
+                                  ∑︁
+                    p˜k(v) := ⎩ u∈Sk pτ (u)
+
+                                  0
+
+and random sample tT ∼ p˜k(·).
+
+
+===== PAGE 39 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution        39
+
+Top-p sampling [34] Sort tokens by decreasing probability under pτ and let
+Sp be the s∑m︁allest set whose cumulative probability mass exceeds a threshold
+p ∈ (0, 1]: v∈Sp pτ (v) ≥ p. Then renormalize on Sp (as top-k sampling) and
+sample tT from the resulting distribution. Top-p adaptively chooses the candidate
+set size, unlike fixed-size top-k.
+
+Step 6: Autoregressive loop. Generation is autoregressive: given the current
+
+context tr = (t0, . . . , tT −1), Step 5 yields tT , which is appended to form a
+longer context (t0, . . . , tT ). The process repeats to generate tT +1, tT +2, . . . until
+a stopping condition holds (e.g., an EOS token or a maximum length). Practical
+
+implementations may maintain cached state (e.g., KV cache), but the functional
+
+semantics remain: each newly generated token is the decoding result computed
+
+from the model logits on the preceding context.
+
+C Protocol
+
+C.1 Definitions
+
+We recall the standard definitions of zero-knowledge arguments of knowledge
+and zero-knowledge polynomial commitments underlying the constructions in the
+paper. A function µ : N → R≥0 is negligible if µ(κ) = κ−ω(1); we write negl(κ)
+for such a function.
+Zero-knowledge arguments of knowledge. An argument system for an NP
+relation R is a protocol between a PPT prover P and a PPT verifier V, at the
+end of which V is convinced that there exists a witness w with (x; w) ∈ R for the
+common input x. We focus on arguments of knowledge: a convincing prover must
+actually know such a w. Let G denote the public-parameter generation algorithm,
+and assume R is known to both parties.
+
+Definition 1 (Zero-knowledge argument of knowledge). A tuple (G, P, V)
+
+is a zero-knowledge argument of knowledge for an NP relation R if the following
+
+hold.
+ – Correctness. For every pp output by G(1κ) and every (x, w) ∈ R,
+
+                 [︁  ]︁
+                 Pr ⟨P(pp, w), V(pp)⟩(x) = 1 = 1.
+
+– Knowledge soundness. For any PPT prover P∗ there exists a PPT extractor
+   E such that, given oracle access to the entire execution and random tape of
+   P∗, with pp ← G(1κ), π∗ ← P∗(x, pp) and w ← EP∗ (pp, x, π∗),
+                      Pr[︁ (x; w) ∈/ R ∧ V(π∗, pp)(x) = 1 ]︁ ≤ negl(κ).
+
+– Zero knowledge. There exists a PPT simulator S such that for any PPT
+
+verifier V∗, any auxiliary input z ∈ {0, 1}∗, any (x; w) ∈ R, and pp output by
+
+G(1κ),           View(︁⟨P(pp, w), V∗(z, pp)⟩(x))︁ ≈ SV∗ (x, z),
+
+where S is given the randomness of V∗ drawn from a polynomial-size space.
+
+
+===== PAGE 40 / 59 =====
+
+40  L. Wang et al.
+
+    We call (G, P, V) a succinct argument system (equivalently, a zk-SNARK) if
+the total communication between P and V and the verifier’s running time are
+both poly(κ, |x|, log |w|).
+Zero-knowledge polynomial commitment. A zero-knowledge polynomial
+commitment lets the prover commit to a polynomial f and later reveal f (t) at
+any queried point t without exposing the rest of f . Let F be a family of ℓ-variate
+polynomials over F. A zero-knowledge polynomial commitment (zkPC) for f ∈ F
+and t ∈ Fℓ consists of three algorithms:
+ – pp ← zkPC.KeyGen(1κ);
+ – c(︁om ← zkPC.)C︁ ommit(f, rf , pp);
+ – (y, π); {0, 1} ← ⟨zkPC.Open(f, rf ), zkPC.Verify(com)⟩(t, pp),
+where rf denotes the prover’s commitment randomness.
+
+Definition 2 (zkPC). A zkPC scheme satisfies:
+
+– Completeness. For any f ∈ F and t ∈ Fℓ, with pp ←
+   zkPC.KeyGen(1κ) and com ← zkPC.Commit(f, rf , pp),
+
+          [︁                                                         ]︁
+       Pr ⟨zkPC.Open(f, rf ), zkPC.Verify(com)⟩(t, pp) = 1 = 1.
+
+– Knowledge soundness. For any PPT adversary A and pp ← zkPC.KeyGen(1κ),
+
+    there exists a PPT extractor E such that, given any pair (pp, com∗) and the
+
+    execution trace of A, E extracts f ∗ ∈ F and randomness rf∗ satisfying
+
+       ⎡ (︁(y∗, π∗); 1)︁ ← ⟨A(), zkPC.Verify(com∗)⟩(t, pp) ⎤
+       ⎢                                                          ⎥
+    Pr⎣⎢  ∧   (f  ∗,  rf ∗  )  ←  E A (pp,  com∗)                 ⎥  ≤  negl(κ).
+                                                                  ⎦
+                      ∗                     ∗∗
+          ∧ com = zkPC.Commit(f , rf , pp)
+
+          ∧ f ∗(t)̸ = y∗
+
+– Zero knowledge. For any security parameter κ, polynomial f ∈ F, pp ←
+   zkPC.KeyGen(1κ), PPT adversary A, and simulator S = (S1, S2), consider
+   the experiments
+
+                         RealA,f (pp) :
+                         (1) com ← zkPC.Commit(f, rf );
+                         (2) t ← A(com);
+
+                         (3) (y, π) ← ⟨zkPC.Open(f, rf ), A⟩(t);
+                         (4) b ← A(com, y, π); output b.
+
+                         IdealA,Sf (pp) :
+                         (1) com ← S1(1κ, pp);
+                         (2) t ← A(com);
+                         (3) (y, π) ← ⟨S2f(·)(com), A⟩(t);
+                         (4) b ← A(com, y, π); output b.
+
+    where in the ideal experiment S2 is given oracle access to f only at the query
+
+    t. For every PPT A and every f ∈ F,
+
+       ⃓⃓Pr[RealA,f (pp) = 1] − Pr[IdealA,Sf (pp) = 1]⃓ ≤ negl(κ).⃓
+
+
+===== PAGE 41 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution                                                41
+
+PROTOCOL 1 ([46]) SumCheck Protocol
+
+                            ∑︁
+Prover P claims v = x∈{0,1}n f (x) to Verifier V, and V has the oracle access to
+f . Let f0 = v.
+
+– In the k-th round where 1 ≤ k ≤ n − 1:
+   • P sends a univariate polynomial
+                    ∑︁
+      fk(Xk) = x∈{0,1}n−k f (r1, . . . , rk−1, Xk, x) to V.
+   • V checks fk−1 = fk(0) + fk(1). If the check passes, V sends a challenge
+      rk ∈ F to P and sets fk = fk(rk).
+
+– In the n-th round:
+   • P sends a univariate polynomial fn(Xn) = f (r1, . . . , rn−1, Xn) to V.
+   • V checks fn−1 = fn(0) + fn(1). If the check passes, V sends a challenge
+      rn ∈ F, and accepts if fn(rn) = f (r1, . . . , rn) using one oracle call to f .
+
+    Our constructions instantiate the above primitives with concrete building
+blocks: univariate KZG [37] and multilinear KZH [36] serve as the two polynomial-
+commitment schemes, while the GKR [30] machinery compiled following the
+zero-knowledge paradigm of [78] yields the zero-knowledge argument of knowledge
+used for circuit computations.
+
+C.2 Sumcheck Protocol
+
+The sumcheck protocol [46] enables a verifier V to verify that the sum of a
+poly∑n︁omial f : Fn → F over the boolean hypercube equals a claimed value v, i.e.
+v = x∈{0,1}n f (x0, . . . , xn−1), by delegating the heavy computation to a prover
+P. Directly evaluating the sum requires 2n evaluations, which is prohibitive for
+the verifier. In each of the n rounds, the prover sends a univariate polynomial of
+degree d (the maximum per-variable degree of f ), yielding a proof size of O(dn)
+field elements. The verifier time is O(dn) plus one evaluation of f at a random
+point. With the dynamic programming technique of [70,78], the prover time is
+O(d · 2n). The protocol is complete and sound with soundness error ϵ = |F| dn . We
+provide a detailed description in Protocol 1.
+
+C.3 ML-friendly GKR Protocol
+
+Let C be a depth-d arithmetic circuit arranged into layers indexed by i ∈
+{0, . . . , d}, where layer 0 is the output layer and layer d is the input layer. We
+pad each layer so that it contains 2si gates for some si ∈ N, and identify gates in
+layer i with Boolean labels z ∈ {0, 1}si .
+
+    Let Vi : {0, 1}si → F map a gate label to its value at layer i, and let
+V˜i : Fsi → F denote the multilinear extension (MLE) of Vi.
+
+
+===== PAGE 42 / 59 =====
+
+42  L. Wang et al.
+
+Cross-layer value views Vi,j. For each i < j, layer i may use values originating
+from layer j. We index the subset of layer-j values used by layer i by {0, 1}si,j
+
+(padding if needed), and define a mapping
+
+                    πi,j : {0, 1}si,j → {0, 1}sj
+
+that specifies which layer-j gate value is referenced. Define
+
+                    Vi,j (u) := Vj (πi,j (u)), u ∈ {0, 1}si,j ,
+
+and let V˜i,j be the MLE of Vi,j.
+Selection predicates C˜︁i,j. Define the Boolean selector
+
+    Ci,j : {0, 1}si,j × {0, 1}sj → {0, 1}, Ci,j (u, x) = 1[x = πi,j (u)],
+
+and let C˜i,j : Fsi,j × Fsj → F denote its MLE. Then for any r ∈ Fsi,j ,
+
+                    V˜i,j (r) =     ∑︂      C˜i,j(r, x) · V˜j(x).
+
+                                                                           (32)
+
+                                 x∈{0,1}sj
+
+This is the identity used to reduce claims about V˜i,j to claims about V˜j via
+sumcheck.
+Unifying dimensions via padding. For a fixed layer i < d, we define
+
+                    Si := max si,j ,
+
+                              j∈{i+1,...,d}
+
+and view all summations in the layer-i check over {0, 1}Si . For each j > i, define
+the padding indicator
+
+                    p˜a︃di,j(y) :=  S∏i−︂1       y ∈ {0, 1}Si .
+
+                                            yt,
+
+                                    t=si,j
+
+When p˜a︃di,j(y) = 1, the suffix y[si,j : Si] is forced to all ones, so y[0 : si,j]
+effectively ranges over {0, 1}si,j . This trick lets us sum different-si,j terms within
+a single sumcheck instance.
+Wiring predicates for layer constraints. We assume (as in [84]) that each
+gate in layer i has two inputs, where we designate the first input as coming from
+the “adjacent” view Vi,i+1, and the second input as coming from Vi,j for some
+j ∈ {i + 1, . . . , d}.
+
+    For i < d and j ∈ {i + 1, . . . , d}, define Boolean wiring predicates over the
+hypercube:
+
+    addi+1,j : {0, 1}si × {0, 1}si+1 × {0, 1}si,j → {0, 1},
+
+    multi+1,j : {0, 1}si × {0, 1}si+1 × {0, 1}si,j → {0, 1},
+
+
+===== PAGE 43 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution         43
+
+where addi+1,j(z, x, u) = 1 iff the gate z in layer i is an addition gate whose first
+input is the x-th entry in Vi,i+1 and whose second input is the u-th entry in Vi,j;
+similarly for multi+1,j. Let
+
+                            a˜d︃di+1,j , m˜u︁lti+1,j
+
+denote the multilinear extensions of addi+1,j and multi+1,j, respectively. These
+polynomials are fully determined by the circuit description and are efficiently
+
+evaluable by V at arbitrary field points.
+Layer relation. For any g ∈ Fsi and any i < d, we have
+
+               ∑︂           ∑d︂    p˜a︃di,j(y) · a˜d︃di+1,j g, x, y[0 : si,j] ·(︁)︁
+V˜i(g) =
+                            j=i+1
+               x∈{0,1}si+1
+                 y∈{0,1}Si         (︁V˜i,i+1(x) + V˜i,j (y[0 : si,j ]))︁
+
+       ∑︂                   ∑d︂                                                  (33)
++
+                                 p˜a︃di,j(y) · m˜u︁lti+1,j g, x, y[0 : si,j] ·(︁)︁
+    x∈{0,1}si+1
+     y∈{0,1}Si   j=i+1
+
+                                   V˜i,i+1(x) · V˜i,j (y[0 : si,j ]).
+
+Layer-by-layer reduction. Eq. (33) is checked via sumcheck at each layer,
+starting from the output layer 0 and proceeding to the input layer d. At layer
+i, the sumcheck reduces a claim about V˜i(r(i)) at a random point r(i) ∈ Fsi to
+evaluation claims about the adjacent-layer view V˜i,i+1(·) and every cross-layer
+view V˜i,j(·) referenced by layer i. In a Transformer circuit, cross-layer references
+arise from two sources: (i) model weights stored in the input layer (j = d), and
+(ii) residual connections that read earlier hidden-state layers (j an intermediate
+layer). When the reduction reaches a layer j, all evaluation claims accumulated
+from layers above—whether adjacent-layer or cross-layer—are batched via random
+linear combination and resolved through a single selector sumcheck (step 3a of
+Protocol 2), following [84,44]. This layer-by-layer reduction implicitly verifies the
+correct linkage of every layer’s output to the next layer’s input: the output Vi is
+the input to layer i−1. The formal protocol is presented in Protocol 2.
+
+C.4 Composing GKR with Lookup Arguments
+
+We describe how the GKR-based arithmetic proof and the lookup-based non-
+arithmetic proof compose into a single layered-circuit proof, expanding on the
+advice-pattern sketch in the Preliminaries (Section 2.3). We reuse the notation
+from Section C.3: layers are indexed i ∈ {0, . . . , d} (layer 0 = output, layer d
+= input), gate labels are z ∈ {0, 1}si , gate values are Vi(z) with MLE V˜i, and
+wiring predicates are a˜d︃di+1,j, m˜u︁lti+1,j. For any layer j below i, the portion of
+Vj read by layer i is denoted Vi,j with MLE V˜i,j.
+
+
+===== PAGE 44 / 59 =====
+
+44     L. Wang et al.
+
+Binding non-arithmetic operations via the input layer. Non-arithmetic
+operations—such as exponentiation (in Softmax) and range checks (in decoding)—
+cannot be expressed as arithmetic gates. Following zkCNN [44] and zkGPT [60],
+we handle them via the advice (result-as-witness) pattern: for each non-arithmetic
+operation y = f (x), both the input x and the output y are placed in the input
+layer as advice values and committed together with other inputs. Subsequent
+arithmetic layers read the output y directly from the input layer d via the wiring
+predicates a˜d︃di+1,d and m˜u︁lti+1,d, so GKR proves the surrounding computation
+as usual. Consistency between the advice and the actual computation is then
+enforced by two complementary checks.
+
+1. Input matching via in-place zero-check. Using the ML-friendly GKR variant, a
+   gate at layer i can read directly from layer d. To verify that a lookup’s input
+   matches the circuit’s actual intermediate value, the circuit includes zero-check
+   gates at layer i that compute the difference δ = Vi+1(z1) − Vi,d(z2). Here
+   Vi+1(z1) is the upstream intermediate value produced at layer i+1 by the
+   preceding arithmetic computation, and Vi,d(z2) is the corresponding advice
+   copy stored in the input layer d; the subtraction gate thus reads one operand
+   from the adjacent layer and the other from layer d via the ML-friendly wiring.
+   The advice is consistent if and only if δ = 0.
+   However, merely including these zero-check gates does not enforce δ = 0.
+   Because their outputs are sinks, they do not affect the ordinary circuit output:
+   a standard GKR layer check can verify that each residual was computed
+   consistently with its source-layer inputs without requiring the residual to
+   vanish.
+   At this point, the selector sumcheck in step 3a of Protocol 2 has fixed a random
+   point g(i) ∈ Fsi and an evaluation claim
+
+                                              vi = V˜︁i(g(i)).
+
+    For each gate label z ∈ {0, 1}si , let Evali(z) denote the value prescribed by
+    the public layer-i wiring from its source-layer inputs. Let Zi ⊆ {0, 1}si be the
+    public set of zero-check gate labels; in our circuit layout, these gates occupy a
+
+    contiguous suffix beginning at z0. For z ∈ Zi, Evali(z) is the corresponding
+    residual that should equal zero. Define
+
+                    ∑︂                                               ∑︂
+       Ai(X) := e˜q︁ (X, z)Evali(z),                    Di(X) := e˜q︁ (X, z)Evali(z).
+
+                         z∈/Zi                                             z∈Zi
+
+    The ordinary layer relation requires vi = Ai(g(i)) + Di(g(i)), whereas input
+
+    matching additionally requires Di(g(i)) = 0.
+
+    To enforce both conditions within the same layer sumcheck, the verifier samples
+
+    a  fresh  challenge  ρi   $  F  after  (g(i),  vi)  has  been  fixed  and  defines  the  public
+
+                             ←
+
+    gate multiplier {︄
+
+                                    mρi (z) := 1, z ∈/ Zi,
+                                                    ρi, z ∈ Zi.
+
+
+===== PAGE 45 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution       45
+
+The prover and verifier then check the modified layer identity
+
+? ∑︂ (i)                                      (i)               (i)
+vi =             e˜q︁ (g , z)mρi (z)Evali(z) = Ai(g ) + ρiDi(g ). (34)
+
+      z∈{0,1}si
+
+   Thus, no additional sumcheck is introduced, and the modified check reduces to
+   the same adjacent- and cross-layer evaluation claims as the ordinary GKR layer
+   check. Algebraically, Eq. (34) randomly combines the ordinary layer relation
+   vi − Ai(g(i)) − Di(g(i)) = 0 with the zero-residual condition Di(g(i)) = 0.
+   Completeness. For an honest execution, every zero-check residual is zero,
+   so Di(g(i)) = 0. Equation (34) then reduces to the ordinary layer relation
+   vi = Ai(g(i)) and holds for every ρi.
+   Soundness. For any fixed committed input and advice assignment containing
+   a nonzero zero-check residual, Di(X) is a nonzero multilinear polynomial of
+   total degree at most si. Hence,
+
+                                       Pr[Di(g(i)) = 0] ≤ si .
+                                                                |F|
+
+   Conditioned on Di(g(i))̸ = 0, all terms in Eq. (34) except the fresh challenge
+   ρi are already fixed, so the equation has at most one solution in ρi. The zero
+   test therefore adds at most (si + 1)/|F| to the soundness error, in addition to
+   the soundness error of the underlying layer sumcheck.
+2. Non-arithmetic verification via lookup. A separate lookup argument proves that
+   the advice pairs (x, y) in layer d satisfy the required non-arithmetic relation.
+   For range checks, this means the advice value lies in [0, B); for exponentiation,
+   the pair (x, y) appears in the precomputed exp table.
+
+C.5 Efficient Evaluation of Prefix-Indicator MLEs
+
+We show how the verifier evaluates the public prefix-indicator MLEs used in §3.3
+
+without materializing their length-2n evaluation vectors. Recall that
+
+                          {︄
+
+                              1, a < j,       a ∈ [2n].
+                 sj(a) :=
+
+                              0, a ≥ j,
+
+Write the public index j from the most to the least significant bit as
+
+                 j = (b0, . . . , bn−1), bk ∈ {0, 1},
+
+and let r = (r0, . . . , rn−1) ∈ Fn be the sumcheck point.
+    Each 1-bit bk = 1 identifies one Boolean subcube contained in the prefix [0, j):
+
+the bits preceding k equal (b0, . . . , bk−1), the k-th bit is 0, and all subsequent
+bits are free. These subcubes are disjoint and cover [0, j). Summing the MLE
+
+basis polynomials over the free suffix gives
+
+      s˜︁j(r) =  ∑︂           ∏︂(︁                       )︁
+
+                     (1 − rk) bℓrℓ + (1 − bℓ)(1 − rℓ) .                 (34)
+
+                 k:bk =1      ℓ<k
+
+
+===== PAGE 46 / 59 =====
+
+46  L. Wang et al.
+
+    The verifier evaluates Eq. (34) in one left-to-right pass. It initializes P ← 1
+and S ← 0. At bit k, if bk = 0, it updates
+
+                    P ← P (1 − rk).
+
+If bk = 1, it computes T ← P rk and updates
+
+                    S ← S + (P − T ), P ← T.
+
+At termination,
+
+                    S = s˜︁j(r), P = e˜q︁ (r, j).
+
+Since sj+1 = sj +1{j} on the Boolean hypercube, linearity of multilinear extension
+gives
+
+                             s˜︁j+1(r) = s˜︁j(r) + e˜q︁ (r, j) = S + P.
+
+The scan uses one field multiplication per bit and therefore evaluates both s˜︁j(r)
+and s˜︁j+1(r) in O(n) = O(log N ) field operations.
+
+C.6 Top-p Decoding Protocol
+
+Top-p sampling [34] selects the smallest set S ⊆ [N ] whose Softmax mass exceeds
+a public threshold p. The protocol mirrors top-k (§3.3), with two differences:
+(a) the cutoff is defined by cumulative probability mass under the full-vocabulary
+Softmax distribution, so S must be verified against that distribution before
+truncation and renorm∑a︁lization; (b) the size |S| is not fixed by a public k, so the
+structural constraint χ = k is replaced by a pair of mass constraints that pin
+|S| implicitly.
+Setup. After the (full) Softmax is computed and committed (denote the integer-
+scaled probabilities (pi)i with public scale), the prover supplies a boolean selector
+χ ∈ {0, 1}N for S and a separator µ playing the role of the probability cutoff.
+Constraints. The prover proves
+
+                    χi(χi − 1) = 0 ∀i ∈ [N ],
+
+together with the masked range checks
+
+    χi · (pi − µ) ∈ [0, θ], (1 − χi) · (µ − pi) ∈ [0, θ] ∀i ∈ [N ],
+
+and the two mass constraints               (︂∑︂  )︂
+                    ∑︂
+                         χi · pi ≥ p · θ,        χi · pi − µ < p · θ.
+
+                                i          i
+
+Soundness. As in top-k, the masked range checks force pi ≥ µ for i ∈ S and
+pi ≤ µ for i ∈/ S, hence µ ≤ minu∈S pu. The first mass constraint asserts S
+covers m∑a︁ss at least pθ (coverage); the second, combined with µ ≤ minu∈S pu,
+implies u∈S pu − minu∈S pu < pθ (minimality: removing the smallest selected
+probability drops the mass below pθ). Together these pin |S| implicitly without
+
+an explicit cardinality constraint. No pinning of µ is required (the honest prover
+
+takes µ = minu∈S pu); the link to the sampled token y is established transitively
+by the sampling proof.
+
+
+===== PAGE 47 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  47
+
+D Preprocessing Lookup
+
+This appendix reviews the cached-quotients (cq) preprocessed lookup argument
+of Eagen et al. [24], which we use as the table-dependent preprocessing primitive
+throughout the paper. The construction combines Haböck’s logarithmic-derivative
+reduction [32] with univariate KZG polynomial commitments [37], and a one-
+time preprocessing phase amortizes the table-side quotient check across all online
+proofs.
+Notation. We reuse the notation from Section 2.2. Throughout this appendix,
+let N denote the possibly padded table-domain size and ℓ the possibly padded
+number of queries, both powers of two. Section 3.1 uses only the table-side
+preprocessing described here, with the appendix’s N corresponding to N¯ ; it
+replaces the univariate query side over H with a validity-masked multilinear
+argument. Let V, H ⊂ F be multiplicative subgroups with |V | = N and |H| = ℓ,
+generated by ωV and ωH :
+
+     V = {ωVj }j∈[N], H = {ωHi }i∈[ℓ].
+
+Since every element of a multiplicative subgroup of order n satisfies xn = 1, the
+
+vanishing polynomials are
+
+∏︂                                                  ∏︂
+ZV (X) = (X − x) = XN − 1, ZH (X) = (X − x) = Xℓ − 1.
+
+x∈V                                                 x∈H
+
+Statement. Given a table vector b = (bj)j∈[N] ∈ FN and a query vector
+a = (ai)i∈[ℓ] ∈ Fℓ, the prover proves multiset containment
+
+                           {ai}i∈[ℓ] ⊆ {bj }j∈[N].
+
+Equivalently, there exists a matching assignment σ : [ℓ] → [N ] satisfying ai = bσ(i).
+Define mj := |σ−1(j)|; then m = (mj)j∈[N] ∈ FN is a multiplicity witness, and
+
+the two sides share the same product polynomial:
+
+     ∏︂                                ∏︂      (X + bj )mj .
+
+                           (X + ai) =                               (35)
+
+     i∈[ℓ]                             j∈[N ]
+
+Applying the formal logarithmic derivative f ↦→ f ′/f to both sides converts this
+product identity into the additive form used by Haböck [32]:
+
+     ∑︂ 1                  =           ∑︂ mj         ,              (36)
+     i∈[ℓ] ai + X
+                                       j∈[N] bj + X
+
+which is the identity verified by the cq protocol.
+
+Polynomial encoding and commitments. Let T (X) ∈ F<N [X] be the unique
+polynomial interpolating the table b on V , and F (X) ∈ F<ℓ[X] the unique
+polynomial interpolating the witness a on H:
+
+T (ωVj ) = bj (j ∈ [N ]), F (ωHi ) = ai (i ∈ [ℓ]).
+
+
+===== PAGE 48 / 59 =====
+
+48  L. Wang et al.
+
+Throughout, Commit(·) denotes a univariate KZG commitment [37] with the
+
+standard opening interface; cq rely on its F-linearity.
+A subgroup-sum identity. We use the following univariate sumcheck identity
+
+from Aurora [8]: for a multiplicative subgroup S ⊂ F∗ and any polynomial
+
+p ∈ F<|S|[X], ∑︂
+
+                         p(x) = |S| · p(0).                   (37)
+
+                                                      x∈S
+
+This follows from x∈S ∑︁ xk = 0 for 1 ≤ k ≤ |S| − 1 and x∈S ∑︁ 1 = |S|.
+
+                                                                                                                                                                                                        $
+
+Log-derivative reduction at a random point. The verifier samples β ← F.
+Except with negligible probability over β, it suffices to check Eq. (36) at X = β.
+
+Define pointwise reciprocals on V and H:
+
+                    A(ωVj ) := jmj = mj ,
+                                 T (ωV ) + β bj + β
+
+                    B(ωHi ) := i1       =    1            .
+
+                         F (ωH ) + β ai + β
+
+Let A(X) ∈ F<N [X] interpolate {A(ωVj )}j∈[N] on V , and B(X) ∈ F<ℓ[X] inter-
+polate {B(ωHi )}i∈[ℓ] on H. Then Eq. (36) at X = β is equivalent to the grand-sum
+
+equality            ∑︂             ∑︂
+
+                         A(x) = B(x),                         (38)
+
+                    x∈V            x∈H
+
+which by Eq. (37) reduces to a single scalar constraint:
+
+                    N · A(0) = ℓ · B(0).                      (39)
+
+Well-formedness via divisibility. It remains to enforce that A and B are
+
+consistent with T , F and a multiplicity polynomial. Let M (X) ∈ F<N [X] inter-
+polate m on V , i.e., M (ωVj ) = mj. The definitions of A and B imply that the
+following polynomials vanish on V and H, respectively, and hence are divisible
+
+by the corresponding vanishing polynomials:
+
+          A(X) · (T (X) + β) − M (X) = QA(X) · ZV (X),        (40)
+
+                    B(X) · (F (X) + β) − 1 = QB(X) · ZH (X).  (41)
+
+Given KZG commitments, the verifier can check these divisibility relations
+succinctly using pairing.
+The preprocessing phase. We now specify the offline data produced by the cq
+preprocessing algorithm Preproc(·) used in the main text. Given a table b ∈ FN
+with interpolant T ∈ F<N [X] over V , Preproc(b) outputs the following public
+data for a fixed KZG SRS and domain (V, ZV ):
+
+– Lagrange-basis commitments on V . Commitments to the Lagrange basis poly-
+   nomials (Lj(X))j∈[N], where Lj(ωVr ) = 1[r = j]. These allow the prover to
+   commit to any polynomial supported on a sparse set I ⊆ [N ] using O(|I|)
+   group operations via linear combination.
+
+
+===== PAGE 49 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution        49
+
+– Auxiliary commitments for openings at 0. Commitments to
+
+∆Lj (X )  :=  Lj (X)−Lj (0)  for  all  j  ∈  [N ],  which  are  convenient  for  efficient
+                      X
+
+openings at X = 0 when the polynomial is sparse.
+
+– Table commitment. The commitment to the table polynomial cT := Commit(T ).
+
+– Cached-quotient commitments. Commitments (cQ,j)j∈[N] to the cached quo-
+
+tients Qj(X), each defined by
+
+              Lj(X) · T (X) = bj · Lj(X) + ZV (X) · Qj(X).                       (42)
+
+   Such Qj exists because Lj(X)T (X)−bjLj(X) vanishes on V (since Lj(x)T (x) =
+   bjLj(x) for all x ∈ V ) and is therefore divisible by ZV (X).
+
+    Among the above outputs, the Lagrange-basis and ∆Lj commitments depend
+only on (N, V ) and can be reused across many tables of size N , while cT and
+(cQ,j)j∈[N] are table-dependent.
+Linearity. For a fixed SRS and domain, the table-dependent portion pptbl(b) :=
+(cT , (cQ,j)j∈[N]) is F-linear in the table entries:
+
+                         pptbl(αb + α′b′) = α pptbl(b) + α′ pptbl(b′).
+
+The Lagrange-basis and auxiliary commitments depend only on the domain, so
+they are reused as-is rather than included in this linear combination. This is the
+property used in the main text to fold the table commitments and cached-quotient
+commitments of multiple preprocessed instances.
+
+    In lookup applications, the multiplicity vector m is sparse: only indices
+appearing in the witness have mj̸ = 0. Let I := supp(m) ⊆ [N ] with |I| ≤ ℓ.
+Writing A in the Lagrange basis on V ,
+
+                                              ∑︂ j
+                                   A(X) = A(ωV ) Lj(X),
+
+                                                                   j∈I
+
+by linearity, the corresponding quotient in Eq. (40) satisfies
+
+                                       ∑︂ j                                      (43)
+              QA(X) = A(ωV ) Qj(X).
+
+                                       j∈I
+
+Therefore, the prover can form the quotient commitment as
+                                               ∑︂ j
+
+                          Commit(QA) = A(ωV ) Commit(Qj),
+
+                                                                    j∈I
+
+using only O(|I|) = O(ℓ) group operations, without interpolating or dividing any
+degree-N polynomials online. The full preprocessing, proving, and verification
+procedures are given in Protocol 3.
+
+PROTOCOL 3 ([24,25,32]) Preprocessed Lookup (cached-quotients)
+
+
+===== PAGE 50 / 59 =====
+
+50  L. Wang et al.
+
+Let T ∈ F<N [X] interpolate the table b over V and F ∈ F<ℓ[X] interpolate the
+witness a over H.
+
+    Preproc(b) (offline). Fix a KZG SRS and domain parameters (V, ZV ).
+
+    1. Output commitments to the Lagrange basis (Commit(Lj))j∈[N] and
+
+    (Commit(∆Lj))j∈[N] for sparse commitments on V .
+
+    2. Interpolate T ∈ F<N [X] from b over V , and output the table commitment
+
+    cT := Commit(T ).
+
+    3. For each j ∈ [N ], define Qj by the cached-quotient identity Eq. (42) and
+
+    output cQ,j := Commit(Qj ).
+
+    (︁                                                         )︁
+    Return pp(b) := (Commit(Lj )), (Commit(∆Lj )), cT , (cQ,j )j∈[N] .
+
+    Prove(pp(b), a) (online).
+
+    1. Compute a multiplicity vector m = (mj)j∈[N]. Let
+        I := supp(m) = {j ∈ [N ] : mj̸ = 0}, which satisfies |I| ≤ ℓ. Let M ∈ F<N [X]
+        interpolate m on V . Using the precomputed Lagrange-basis commitments,
+        compute the sparse commitment
+                                                              ∑︂
+                                 cM := Commit(M ) = mj Commit(Lj),
+
+                                                                                            j∈I
+
+    2. Derive a challenge β through Fiat–Shamir. Define A ∈ F<N [X] and
+        B ∈ F<ℓ[X] by
+
+        A(ωVj ) =                   mj      ,  B(ωHi ) = i1 .
+                                                            F (ωH ) + β
+                                    j
+                               T (ωV ) + β
+
+    Since A(ωVj ) = 0 for all j ∈/ I, using the precomputed commitments
+    (Commit(Lj))j∈[N], the prover computes
+
+    cA := Commit(A) = A(ωV ) Commit(Lj) = j Commit(Lj), ∑︂ j ∑︂ mj
+                                               j∈I T (ωV ) + β
+                               j∈I
+
+    which takes O(|I|) = O(ℓ) group operations. cB := Commit(B) is computed via
+
+    a standard KZG commitment on H.
+
+    3. Provide quotient commitments witnessing Eq. (40)–(41):
+
+    – Table side: form cQA := Commit(QA) via the cached-quotient combination
+
+    Eq. (43) using (cQ,j).
+
+    – Witness side: compute QB on H (e.g., via FFT) and send
+
+           cQB := Commit(QB).
+    4. Open A(0) and B(0) with KZG proofs. For A(0), exploit sparsity using the
+
+    precomputed (Commit(∆Lj)): the KZG opening proof at 0 can be formed as
+
+    the sparse linear combination
+
+                                    (︃ A(X) − A(0) j )︃ ∑︂
+    Open0(A) = Commit X                        = A(ωV ) Commit(∆Lj),
+
+                                               j∈I
+
+    which costs O(|I|) group operations. The opening of B(0) is computed using
+    the standard KZG opening procedure.
+
+
+===== PAGE 51 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution         51
+
+(︁                                                    )︁
+Return π = cM , cA, cB, cQA , cQB , Open0(A), Open0(B)
+
+Verify(pp(b), cF , π).
+
+1. Recompute β via Fiat–Shamir.
+2. Verify the pairing checks for Eq. (40) and Eq. (41).
+3. Verify the openings of A(0) and B(0), and check the grand-sum constraint
+
+    Eq. (39): N · A(0) = ℓ · B(0).
+
+Accept iff all checks pass.
+
+Complexity. Let ℓ be the number of queries and N the table size.
+
+– One-time preprocessing (per fixed table): Preproc(b) costs O(N log N )
+   field/group operations, leveraging fast quotient techniques [25,85]. The stored
+   table-dependent data is O(N ) group elements.
+
+– Online proving: table-side work is dominated by O(| supp(m)|) = O(ℓ) group
+   operations to form commitments to sparse M, A and the quotient commitment
+   Commit(QA). Query-side work is O(ℓ log ℓ) field operations to form QB on H,
+   plus O(ℓ) commitment/opening work.
+
+– Verification: a constant number of pairing checks, plus O(1) field operations
+   for Eq. (39).
+
+Crucially, the online complexity is essentially independent of the table size N .
+
+E Prefix Equivalence of Teacher-Forced Causal Forward
+     Pass
+
+This appendix formalizes the correctness of the one-shot proving strategy in Sec-
+tion 4.2. We show that, for a decoder-only Transformer with causal masking, a
+single teacher-forced forward pass on the full transcript produces intermediate-
+position logits identical to those obtained by an online autoregressive execution
+on the corresponding prefix. This equivalence justifies using teacher-forced logits
+to enforce the shifted next-token constraints in Eq. (25).
+Setup. Let tr = (t0, . . . , tT −1) ∈ [N ]T be a token sequence over a vocabulary
+of size N . For any n ∈ [T ], consider running the decoder-only Transformer in
+inference mode on the length-n prefix tr≤n−1 := (t0, . . . , tn−1). This produces
+a logit matrix L(n) ∈ Fn×N , whose i-th row is the logit vector at position i,
+denoted ℓi(n) ∈ FN , i.e., L(n)[i, :] = ℓi(n).
+
+    We rely on the following standard architectural properties of decoder-only
+Transformers. They are stated explicitly to make the prefix-induction argument
+self-contained.
+
+1. Prefix-consistent inputs. The embedding lookup and all position dependent
+   terms (absolute/rotary encodings or biases) for positions 0, . . . , n − 1 depend
+   only on their indices, hence are identical whether we run length n or any
+   longer length n′ > n.
+
+
+===== PAGE 52 / 59 =====
+
+52  L. Wang et al.
+
+2. Positionwise non-attention maps. Every non-attention sublayer (e.g., Lay-
+   erNorm, MLP, output projections) is applied independently to each position,
+   with residual additions performed entrywise.
+
+3. Causal masking. Self-attention is causally masked: position i assigns zero
+   weight to keys j > i.
+
+    We state the mask in the form implemented in the circuit ( Eq. (23) in Sec-
+
+tion 4.2). Consi√der a single attention head. Given Q, K, V ∈ Fn×dh , define scores
+sij := ⟨qi, kj⟩/ dh and weights
+
+                     ⎧
+                     ⎨ exp(sij)
+                     ∑︁          , j ≤ i,
+                     αij := ⎩ k≤i exp(sik) (44)
+                     0,                 j > i,
+
+and output rows
+
+                 (︁      )︁      n∑−︂1
+                     Attn(Q, K, V ) [i, :] := αij V [j, :].
+                                                              (45)
+
+                                 j=0
+
+Multi-head attention concatenates heads and applies a positionwise linear map,
+so it suffices to argue headwise.
+
+Lemma 1 (Prefix invariance of causally masked attention). Let m > n.
+Let X(m) ∈ Fm×d be any input matrix, and let X(n) := X[n],: (m) ∈ Fn×d be its
+length-n prefix. Let Attn(r)(·) denote the masked attention computed on a length-r
+input using Eqs. (44) and (45). Then for every i ∈ [n],
+
+                      (︁Attn(m)(X(m)))︁[i, :] = (︁Attn(n)(X(n)))︁[i, :].
+
+Proof. Fix any i ∈ [n]. For each r ∈ {n, m}, write the per-position projections as
+              Q(r) = X(r)WQ, K(r) = X(r)WK , V (r) = X(r)WV ,
+
+and denote rows by qi(r), kj(r), vj(r). Because X(n) is the prefix of X(m), we have
+qi(m) = qi(n) and kj(m) = kj(n), vj(m) = vj(n) for all j ≤ i.
+
+    Under the causal mask Eq. (44), for both lengths r ∈ {n, m}, the attention
+
+weights at position i satisfy αij(r) = 0 for all j > i, and the normalization is over
+the identical set {0, . . . , i}. Since all scores sij(r) for j ≤ i coincide across the two
+runs, the normalized weights {αij(m)}j≤i and {αij(n)}j≤i match entrywise. Plugging
+into Eq. (45) gives the claimed equality of output rows.
+
+Theorem 1 (Prefix equivalence of intermediate logits). For every i ∈
+[T − 1], the teacher-forced length-T run and the online prefix run of length i + 1
+produce the same logit vector at position i:
+
+                                           ℓi(T ) = ℓi(i+1).
+Equivalently, the first i+1 rows of L(T ) equal L(i+1).
+
+
+===== PAGE 53 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  53
+
+Proof. We prove by induction over Transformer layers ℓ = 0, 1, . . . , L that the
+hidden-state prefixes match. Let H(ℓ,n) ∈ Fn×d denote the layer-ℓ hidden states
+in the length-n run.
+Base layer. By prefix-consistency of embedding and positional encoding, H[i+1],: (0,T ) =
+H (0,i+1).
+Inductive step. Assume H[i+1],: (ℓ−1,T ) = H(ℓ−1,i+1). Every positionwise map (Lay-
+erNorm, MLP) preserves row-prefix equality. For the attention sublayer, apply
+
+Lemma 1 to conclude that the first i + 1 rows of the attention output in the
+
+length-T run equal those of the length-(i+1) run. Residual additions are entrywise
+and thus also preserve prefix equality. Therefore H[i+1],: (ℓ,T ) = H(ℓ,i+1).
+Logits. The final projection to logits is positionwise linear, so it preserves the
+same row-prefix identity. In particular, the i-th row matches: ℓi(T ) = ℓi(i+1).
+
+F Quantization: Details and Accuracy Evaluation
+
+This appendix expands on the weight-dependent quantization scheme of §4.1: it
+(a) derives the per-layer bounds Bl that determine each output scale Sout (l) , (b)
+details the dyadic requantization protocol and its lookup-table structure, and (c)
+
+reports accuracy measurements on GPT-2.
+
+Background. Recall from §2.4 that a real value x is represented by a signed
+
+integer q and a scale s, such that x ≈ q · s. Throughout this appendix, the
+
+magnitude bound on any quantized value is |q| ≤ 2Q unless stated otherwise. This
+
+form is standard in integer-only inference and quantized Transformers [35,60,44].
+
+Multiplying two such integers produces a value with magnitude ≤ 22Q, and
+
+accumulating d such products gives magnitude ≤ d · 22Q; without intervention,
+
+magnitudes would compound across layers. Following zkGPT [60] and zkCNN [44],
+
+we insert a requantization step after every multiplication–accumulation operation
+
+to reset the magnitude back to 2Q.
+
+Weight-dependent layer bounds. We next derive input-independent mag-
+
+nitude bounds for the different operations in a quantized Transformer. These
+
+bounds determine the output scales used by the subsequent requantization steps.
+
+Unless stated otherwise, the linear- and attention-layer bounds below are ex-
+
+pressed over integer encodings: activations denote requantized integers satisfying
+
+|xk| ≤ 2Q, weights denote their quantized integer representations, and each bias is
+encoded in the corresponding accumulator domain with scale Sa(l) = Sin(l)SW(l). The
+LayerNorm bound is stated separately in real-value semantics before selecting its
+
+integer output scale.
+
+Linear layers (Q/K/V, output projection, FFN up/down). Applying the
+                                      ∑︁
+triangle inequality to Y (l)[t, j] =      (l)       (l)
+                                        k H[t, k] · Wkj + bj entry-wise and using
+                                          [︁ Q (l)       (l) ]︁
+|H[t, k]| ≤ 2Q gives Eq. (20), so Bl = maxj 2 ∥W [:, j]∥1 + |bj | uniformly
+
+bounds every entry of Y (l) across (t, j) ∈ [T ] × [d]. Since Bl depends only on the
+
+quantized weights and biases, it is computed once at model-loading time and
+
+reused across all executions.
+
+
+===== PAGE 54 / 59 =====
+
+54  L. Wang et al.
+
+    Attention scores QK⊤/√dh. Sin√ce both Q and K are activations, we fall
+back to the bit-width bound |sij| ≤ dh · 22Q.
+
+    Softmax and attention output αV . Following the division-free Softmax protocol
+of §3.3 and zkLLM [69], each attention row is shifted by its log-sum-exp before
+the exponentiation lookup. The lookup inputs are therefore non-positive, so under
+the integer scale θ = 2Q its outputs satisfy
+
+                       0 ≤ α¯ij = ⌊θ exp(xij)⌉ ≤ θ.
+
+                                       ∑︁
+Moreover, the normalization check ensures j α¯ij ≤ θ + εattn. Consequently, for
+    ∑︁
+                              Q
+oik = j α¯ij Vjk and |Vjk| ≤ 2 ,
+
+                              |oik| ≤ (θ + εattn)2Q.
+
+    LayerNorm. LayerNorm is the essential dynamic-range reset that makes
+weight-depend√ent bounds practical at depth: because the standardized coordinates
+satisfy |xˆk| ≤ d − 1 independently of the input (see §4.1 for the derivation).
+Requantization protocol. Given an accumulator a with scale Sa = Sin · SW
+and target output scale Sout , the requantized integer is
+
+                                       (︂ C1(l) · a )︂                           (46)
+                       qout = round (l) ,
+                                       C2
+
+in a dyadic form [35] chosen that C1(l)/C2(l) ≈ Sa/Sout. The prover provides qout
+as advice and proves the rounding constraint via a single shifted range check on
+the signed residual δ(l) := 2C1(l) · a − 2C2(l)qout as in zkGPT [60], namely
+
+                       δ(l) + C2(l) ∈ [0, 2C2(l)),                               (47)
+
+which is equivalent to δ(l) ∈ [−C2(l), C2(l)). After requantization, qout is guaranteed
+to satisfy |qout| ≤ 2Q, resetting the magnitude bound for the next layer. Constraint
+
+fusion [60] further merges adjacent rounding constraints; the fused check operates
+
+on a wider residual.                                    (l)
+
+Parameter  selection:  C1(l)  and  C2(l). Let ρ(l)  :=  Sa     .  Because  ρ(l)  may be
+
+                                                          (l)
+                                                        Sout
+
+much smaller than one, we choose the smallest power-of-two denominator that
+
+makes its scaled numerator have Q significant bits:
+
+                                   ⌈︂ (︂ )︂⌉︂
+                       n(l) := log2 1/ρ(l) ,
+                                                                                 (48)
+
+                       C2(l) := 2 n(l)+Q−1,                                      (49)
+                                   ⌊︂  ⌋︂                                        (50)
+                       C1(l) := ρ(l)C2(l) .
+
+Thus, ρ(l)C2(l) ∈ [2Q−1, 2Q), preventing C1(l) from vanishing while retaining Q-bit
+relative precision.
+
+Empirical failure of calibration-based scaling. We evaluate calibration-
+
+derived range failures across four LLMs of increasing scale. For each model, we
+
+
+===== PAGE 55 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  55
+
+Table 7: Fraction of test tokens that exceed at least one calibration-derived bound
+(%). Calibration on 50K WikiText-2 train tokens; evaluation on 50K tokens
+each from WikiText-2 test, a non-overlapping slice of WikiText-103 test, and C4
+validation.
+
+Model        Params WT2 WT103 C4
+
+GPT-2        0.12B  0.218  0.162  0.438
+TinyLlama     1.1B  0.388  0.610  2.512
+Llama-2-7B      7B  0.644  0.770  2.588
+Llama-2-13B    13B  1.188  1.102  5.006
+
+run calibration on 50K WikiText-2 train tokens and use the maximum absolute
+floating-point value observed for each monitored tensor as its bound. We monitor
+the Q/K/V and attention-output projections, attention scores, residual outputs,
+MLP intermediates, and final logits. We then evaluate three held-out sets of
+50K tokens each: WikiText-2 test; WikiText-103 test2; and C4 validation [62], a
+web-crawl corpus outside the wiki calibration distribution. A token is counted if
+any monitored tensor in its forward pass exceeds its corresponding calibrated
+bound.
+
+    Table 7 reports the resulting per-token calibrated-bound exceedance rate.
+On both wiki test sets, the rate increases monotonically with model size: from
+0.218% to 1.188% on WikiText-2 and from 0.162% to 1.102% on WikiText-103.
+Distribution shift to C4 raises the rate by 2.0–6.5×, reaching 5.006% (2,503
+of 50,000 tokens) on Llama-2-13B. These results show that calibration-derived
+maxima can underestimate runtime activations, leaving the resulting lookup
+ranges insufficient for some valid executions.
+
+Perplexity. We report perplexity (PPL) in Table 8 on three standard language
+modeling benchmarks: WikiText-2 and WikiText-103 [47], and C4 [62]. Perplex-
+ity is the exponentiated average negative log-likelihood, and therefore directly
+measures how much the next-token distribution shifts under quantization. A
+small PPL increase indicates that quantization introduces only minor distortion
+to the model’s predictive distribution. To evaluate the complete quantization
+scheme, we compare it against a naive dimension-only baseline that applies generic
+worst-case bounds and immediate requantization throughout the Transformer.
+The comparison therefore captures the aggregate benefit of our operator-specific
+bounds and weight-dependent quantization.
+
+ 2 The first 50K tokens of WikiText-103 test are byte-identical to WikiText-2 test in the
+   HuggingFace release, so we take tokens 50,000–100,000 instead, yielding a distinct
+   sample from the same wiki domain.
+
+
+===== PAGE 56 / 59 =====
+
+56  L. Wang et al.
+
+Table 8: Perplexity (PPL) on GPT-2 under our quantization scheme and an
+unoptimized dimension-only baseline.
+
+    Configuration Q WikiText-2 WikiText-103  C4
+
+    FP32            —   24.36     24.22      32.85
+
+    Naive Dim.      18 3.86×1023  3.71×1023 7.21×1022
+    Ours (full)
+                    18  24.42     24.28      32.87
+
+    Naive Dim.      20 1.12×1011  1.15×1011 1.48×1010
+    Ours (full)
+                    20  24.36     24.22      32.84
+
+    Naive Dim.      22  3897.19   3893.44    3131.06
+                          24.36     24.22      32.85
+    Ours (full)     22
+
+G Tool Binding Details
+
+This appendix expands on §4.3, covering the Depyler transpilation step, the
+observation-injection attack that motivates Coral, the end-to-end soundness
+statement, and our tool taxonomy.
+Depyler-based transpilation. Depyler [57] is a public open-source transpiler
+that compiles annotated Python to Rust while preserving program semantics.
+Given a model-emitted script programi, Depyler produces Rust(programi), which
+is then compiled to RISC-V and proved correct under SP1 [68]; semantic preser-
+vation makes a proof of the Rust execution a valid proof of the original Python
+execution. Both programi and Rust(programi) are public artifacts and can be
+re-run by any third party, so the transpilation step itself need not be proved
+in-circuit, avoiding substantial prover overhead.
+Observation-injection attack and schema integrity. Without proving tool-
+call well-formedness, a malicious prover could label a model-generated span
+tr[a] that does not satisfy the public tool-call schema as an invocation, execute
+a prover-chosen request, and insert the authenticated response as an external
+observation tr[b]. The tool subproof and all subsequent model-generation checks
+could then remain valid even though the prescribed agent parser would not have
+invoked a tool on tr[a]. We prevent this attack by using Coral [2] to prove that the
+committed call span admits a valid parse under the public tool-call grammar. The
+request extracted from this parse is bound to the request authenticated by the
+corresponding zkTLS or zkVM subproof, while the transcript grammar permits
+an observation span only immediately after such a valid call. Consequently,
+malformed or ordinary model-generated text cannot authorize an externally
+injected observation.
+End-to-end soundness statement. Let g be the transcript-derived generation
+mask defined in §4.3. Given commitments cW and ctr to the model parameters
+W and the full token transcript tr, respectively, zkAgent’s composed proof attests
+to:
+
+1. Model integrity: every gi=1 position satisfies Eq. (25) under LLMW and Dec;
+
+
+===== PAGE 57 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution  57
+
+2. Schema integrity: every tool-call span parses to a structured request reqi under
+   the public grammar;
+
+3. Tool integrity: every tool-observation span is the authentic output of executing
+   the claimed tool on reqi, attested by a zkTLS proof πioi for I/O tools or a
+   zkVM proof πvm i for computation tools (verification predicates given in §4.3);
+
+4. Binding: the requests, programs, responses, and outputs carried by the sub-
+   proofs equal the canonical encodings of the corresponding spans of tr.
+
+Tool taxonomy. zkAgent’s two-class tool taxonomy follows the threat model
+of §2.6, which targets provider-hosted tools (client-side tools are trusted and
+excluded). Provider-hosted tools split into two classes whose integrity reduces
+to distinct guarantees, as stated in §4.3: (i) networked API tools (e.g., web
+search and other REST/RPC endpoints [6]), where integrity reduces to response
+authenticity under a designated endpoint and is realized by a zkTLS subproof;
+and (ii) computation tools (e.g., Python sandboxes [53,31]), where integrity
+reduces to execution correctness under a deterministic machine model and is
+realized by a zkVM subproof.
+
+H Peak-Compute Estimate
+
+This appendix details the ∼ 13× peak-compute gap quoted in §5.3 between the
+A100 GPU on which zkLLM is measured and our CPU testbed.
+Why field-multiplication throughput, not FP32 or TF32. zkLLM [69]
+carry out their arithmetic in the BLS12-381 scalar field, whose elements are
+∼ 256-bit integers. Inspecting zkLLM’s reference implementation, each scalar
+is represented as 8 limbs of 32 bits, and field multiplication is implemented
+entirely using 32-bit integer multiply-add and carry operations. Because A100
+Tensor Cores do not support INT32 operands, zkLLM executes these limb-level
+operations on the CUDA-core integer pipelines rather than on Tensor Cores [50].
+CPU-side, our implementation uses the mcl library, whose optimized x86-64 path
+represents approximately 256-bit field elements as 4 limbs of 64 bits and performs
+Montgomery multiplication over this representation [49]. Our implementation
+uses this scalar path and does not batch field multiplications through AVX-512
+SIMD. Floating-point execution units do not participate in either implementation.
+Consequently, the appropriate metric is field-multiplications per second, derived
+from each platform’s native integer instruction throughput and Montgomery cost,
+not FP32 or TF32 TFLOPS.
+Departure from prior work. Prior work [60] positions the A100 and CPU
+comparison using the A100’s TF32 Tensor-Core peak (312 TFLOPS) against a
+CPU estimate (10.2 TFLOPS), yielding a ∼ 30× ratio. The A100 figure assumes
+2:4 structured sparsity (its dense TF32 peak is 156 TFLOPS), and neither TF32
+nor CPU floating-point throughput directly represents the field-arithmetic paths
+used by the two systems. We therefore use this comparison only as evidence of
+the A100’s substantially greater parallel compute capacity and derive a more
+workload-aligned, back-of-the-envelope estimate below.
+
+
+===== PAGE 58 / 59 =====
+
+58  L. Wang et al.
+
+GPU side. The A100 contains 64 INT32 execution lanes per SM, 108 SMs, and
+a peak clock frequency of approximately 1.41,GHz [50]. As a coarse upper-bound
+proxy, assuming that each lane issues one 32-bit integer limb operation per cycle
+gives
+
+            64 × 108 × 1.41 GHz ≈ 9.75 × 1012 integer limb-operations/s.
+
+In zkLLM’s CUDA field-multiplication path, an eight-limb multiplication performs
+approximately 128 low/high multiply-add operations for the full product, another
+128 for Montgomery reduction, and eight additional limb multiplications for the
+reduction factors, before accounting for carry propagation and final modular
+correction. Using the resulting 264 multiplication-related limb operations gives
+the optimistic estimate
+
+                    9.75 × 1012/264 ≈ 36.9 G field-multiplications/s.
+
+CPU side. Our testbed is an Intel Xeon 6982P-C (32 cores at 3.20 GHz). For the
+four-limb scalar representation used by mcl on x86-64, a CIOS-style Montgomery
+multiplication requires approximately 2n2 + n = 36 64-bit limb multiplications
+for n = 4. As a coarse upper-bound proxy, assuming that each core issues one
+64-bit limb multiplication per cycle and that the workload scales perfectly across
+all 32 cores gives
+
+                  32 × 3.20 × 109/36 ≈ 2.84 G field-multiplications/s.
+
+Ratio. Dividing the two idealized estimates gives
+
+                                          36.9/2.84 ≈ 13,
+
+the ∼ 13× figure quoted in the main text. We note that this estimate would be
+substantially smaller had we engaged mcl’s vectorized AVX-512 IFMA path. Even
+without this optimization, however, zkAgent with the Shout backend remains
+53.5× faster to prove and 98.9× faster to verify at T = 512, indicating that
+algorithmic improvements rather than hardware advantage drive the comparison.
+
+
+===== PAGE 59 / 59 =====
+
+zkAgent: Verifiable LLM Agent Execution                        59
+
+PROTOCOL 2 ([84]) GKR Protocol for General Arithmetic Circuits
+
+Let C be a depth-d general arithmetic circuit as in Appendix C.3. The prover P
+
+wants to convince the verifier V that out = C(in). We assume |out| and |in| are
+powers of 2 (padding if necessary). Let V˜i and V˜i,j denote the MLEs defined in
+Appendix C.3, with V˜0 and V˜d being the MLEs of out and in, respectively.
+
+1. Initialization. V samples a random point g(0) ∈ Fs0 , computes or queries an
+    oracle for V˜0(g(0)) from the claimed output, and sends g(0) to P.
+
+2. Output-layer check (layer 0). P and V run the sumcheck protocol to verify
+
+Eq. (33) for i = 0 at point g(0). At the end of sumcheck, V obtains a constant
+number of random points at which it needs evaluations of V˜0,1 and V˜0,j (for
+
+j > 1). If the final sumcheck identity fails, V outputs rej.
+
+3. For each layer i = 1, . . . , d:
+
+(a) Reducing claims targeting layer i. By the end of the previous steps,
+
+V holds claims of the form V˜︁k,i(r(k,i)) for a set of source layers
+
+Ki  ⊆  {0,  .  .  .  ,  i  −  1},  and  possibly  an  additional  claim  Vi−1,i (r˜︁(i−1,i)′  )  from
+
+the adjacent layer. The verifier samples random coefficients
+
+       $                                                                            ′         $
+{αk,i ← F}k∈Ki and, if the additional claim is present, αi−1,i ← F.
+
+and sends them to P. Then P and V run sumcheck on the selector identity
+
+                           ∑︂ ˜︁ (k,i) ′ ˜︁                       (i−1,i)′   )
+                                   αk,iVk,i(r ) + αi−1,iVi−1,i(r
+
+                           k∈Ki [︄
+                                 = V ∑︂ ˜︁i(x) αk,iC ∑︂ ˜︁k,i(r(k,i), x)
+
+                                   x∈{0,1}si k∈Ki ]︄
+
+                                        ′ ˜︁              (i−1,i)′
+                                        + αi−1,iCi−1,i(r            , x) .
+
+          If the sumcheck passes, V obtains a new random point g(i) ∈ Fsi and a
+          claim V˜i(g(i)).
+
+    (b) Layer check (if i < d). If i < d, P and V run sumcheck to verify
+          Eq. (33) for this i at point g(i). At the end, V obtains the required
+          evaluations of V˜i,i+1 and V˜i,j (for j > i + 1) at random points determined
+
+          by the sumcheck transcript, and checks the final identity. If any check fails,
+
+          output rej.
+4. Input-layer check. At the end of the above, V holds a claim V˜d(g(d)) for
+
+    some g(d) ∈ Fsd . V computes V˜d(g(d)) locally from in or queries the input
+    commitment/oracle and accepts iff it matches the claim.

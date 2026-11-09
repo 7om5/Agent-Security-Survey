@@ -1,0 +1,1580 @@
+# R3-79 | SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+# PDF: papers\SkillScope_Toward Fine-Grained Least-Privilege Enforcement for Agent Skills.pdf
+# extracted: 2026-11-02T22:52:13.425Z
+
+
+===== PAGE 1 / 21 =====
+
+This is the full version of a paper accepted at ACM CCS 2026.
+                                                                                                 Please cite the CCS 2026 conference version.
+
+                                        SkillScope: Toward Fine-Grained Least-Privilege Enforcement for
+                                                                            Agent Skills
+
+                                             Jiangrong Wu                  Yuhong Nan∗                                       Yixi Lin
+
+                                          Sun Yat-sen University        Sun Yat-sen University                        Sun Yat-sen University
+                                               Zhuhai, China                  Zhuhai, China                                Zhuhai, China
+
+                                        wujr28@mail2.sysu.edu.cn   State Key Laboratory of Internet                 linyx98@mail2.sysu.edu.cn
+                                                                  Architecture, Tsinghua University
+arXiv:2605.05868v3 [cs.CR] 10 Sep 2026
+                                                                              Beijing, China
+                                                                       nanyh@mail.sysu.edu.cn
+
+                                            Huaijin Wang                 Yuming Xiao                                           Shuai Wang
+
+                                          Shandong University         Sun Yat-sen University                        The Hong Kong University of Science
+                                               Jinan, China                Zhuhai, China                                         and Technology
+
+                                        huaijinwang@sdu.edu.cn    xiaoym23@mail2.sysu.edu.cn                                   Hong Kong, China
+                                                                                                                               shuaiw@cse.ust.hk
+
+                                                                       Zibin Zheng
+
+                                                                   Sun Yat-sen University
+                                                                         Zhuhai, China
+
+                                                                  zhzibin@mail.sysu.edu.cn
+
+                                        Abstract                                                                    CCS Concepts
+
+                                        Agent Skills have become a practical way to extend LLM agents by            • Security and privacy → Access control; Domain-specific
+                                        packaging metadata, natural-language instructions, and executable           security and privacy architectures.
+                                        resources into reusable capability bundles. However, this growing
+                                        Skill ecosystem introduces a new compliance risk: a Skill may per-          Keywords
+                                        form high-impact actions that fall outside the scope permitted by
+                                        the user’s current request, thereby violating least privilege. Existing     LLM Agent Skills, Least-Privilege Enforcement, Graph-based Anal-
+                                        skill detection approaches are insufficient for this problem because        ysis
+                                        it is inherently task-conditioned: the same action may be legitimate
+                                        under one user prompt but over-privileged under another.                    1 Introduction
+
+                                           In this paper, we present SkillScope, a framework for fine-grained       As large language model (LLM) agents increasingly evolve from
+                                        least-privilege enforcement in Agent Skills. SkillScope adopts a            single-turn assistants into systems capable of task planning, tool
+                                        graph-based analysis approach that models instruction-level pro-            invocation, and persistent interaction with external environments,
+                                        cedures and code-level operations as fine-grained action nodes. It          their capabilities are no longer defined solely by the base model
+                                        extracts potential over-privilege candidates, validates them under          itself. Instead, a growing portion of agent functionality is now
+                                        graph-instantiated user tasks through runtime analysis, and con-            packaged and distributed through Agent Skills: reusable bundles
+                                        strains validated over-privileged actions via control-flow privilege        that typically contain lightweight metadata for routing, natural-
+                                        constraining.                                                               language instruction files such as SKILL.md, and optional scripts
+                                                                                                                    or resources that implement concrete actions. Compared with con-
+                                           We evaluate SkillScope through effectiveness experiments                 ventional tool calling, Agent Skills package not only callable inter-
+                                        and large-scale real-world measurement. SkillScope achieves a               faces but also procedural know-how, execution constraints, and
+                                        94.53% skill-level F1 score for over-privilege detection. In the            task-specific workflows. This packaging model makes each Skill a
+                                        wild, SkillScope validates 6,590 of 68,312 valid real-world Skills as       practical mechanism for rapidly extending agent capabilities, and
+                                        exhibiting over-privileged behaviors, showing that least-privilege          has led to the emergence of a large third-party ecosystem [11, 54] in
+                                        violations are prevalent in current Skill ecosystems. In the                which skills are published, discovered, installed, and reused across
+                                        privilege-constraining evaluation, SkillScope reduces triggered             different agent runtimes.
+                                        over-privileged action-in-task instances by 88.56% while preserving
+                                        legitimate task completion.                                                    However, this increasingly open Skill ecosystem also introduces
+                                                                                                                    a new security and compliance problem. Once installed, a Skill can
+                                        ∗Corresponding author: Yuhong Nan.                                          directly influence how an agent interprets a user request, which
+
+                                                                                                                 1
+
+
+===== PAGE 2 / 21 =====
+
+Wu et al.
+
+actions it executes, and what side effects it triggers on the underly-        functionality: directly removing suspicious actions may break legit-
+ing environment. In practice, an Agent Skill may induce not only              imate workflows, while leaving them unchanged fails to constrain
+user-visible outputs but also external side effects such as local file        over-privileged capability use.
+access, network communication, or command execution. If these
+behaviors exceed what is actually required for the user’s current             Our Work. To address this gap, we present SkillScope, a new
+task, the agent may silently use capabilities beyond user intent (a           framework for fine-grained least-privilege enforcement in Agent
+violation of least-privilege [40, 48]). This problem is particularly          Skills. The key idea of SkillScope is to perform graph-based analysis
+concerning because modern agent runtimes often trust Skills as                over heterogeneous Skills to identify and constrain over-privileged
+reusable capability modules, while users usually observe only the             execution in a structured and controlled manner. More specifically,
+final output rather than the full execution process behind it.                SkillScope maps a Skill’s instruction-level procedures and code-
+                                                                              level operations into a unified execution graph, where actions are
+   Consider a real-world Skill “deep-work”, whose declared purpose            connected by their control, data, and cross-layer dependencies. This
+is to track deep-work sessions locally and generate a heatmap re-             graph exposes how an action is reached and what objects it operates
+port. For a user request such as “show my deep work graph for the             on, providing the basis for identifying actions that may exceed the
+last 7 days,” the expected behavior is simply to read local records,          privilege boundary of the current user task.
+compute the report, and present the result. However, the Skill ad-
+ditionally instructs the agent to send the report to an external                 SkillScope consists of three components. First, SkillScope per-
+Telegram recipient and to collect host identifiers, network settings,         forms over-privilege candidate extraction, which uses the unified
+and command-history artifacts for outbound transmission. These                execution graph to localize actions that may be inconsistent with
+actions are over-privileged for the requested task, yet become part           the Skill’s declared functionality. Second, SkillScope validates each
+of the actual execution once the Skill runs. This example illustrates         candidate under graph-instantiated user tasks by independently
+a fundamental consent gap in today’s Skill ecosystem: the user re-            checking whether the action is permitted by the current request and
+quests a task, but the Skill may drive the agent to perform broader           whether the required task behavior is preserved and the user’s goal
+actions beyond the user’s intent.                                             remains satisfied after the action is removed or neutralized. Third,
+                                                                              SkillScope applies control-flow privilege constraining, which removes
+   Existing work [1, 10, 58, 60] on Skill security has primarily fo-          validated over-privileged actions from the default execution path
+cused on coarse-grained malicious skill detection. These approaches           and makes them reachable only through task-conditioned control
+aim to determine whether a Skill is malicious by scanning for sus-            constraints. Together, these components support fine-grained de-
+picious code, prompt patterns, cross-artifact dependencies, or con-           tection and utility-preserving constraining of over-privileged Skill
+crete runtime behaviors. Such efforts are important, but they do              behaviors.
+not adequately address the problem studied in this paper. In many
+realistic cases, a Skill is not globally malicious in an all-or-nothing          For the effectiveness evaluation, we construct a manually anno-
+sense. Instead, it may provide legitimate functionality while still           tated dataset of 200 Skills sampled from the ecosystem-scale corpus,
+performing actions that fall outside the scope permitted by the               including 100 Skills with over-privileged behaviors and 100 benign
+current user request. From a security and privacy perspective, the            Skills. SkillScope achieves a 94.53% F1 score for over-privileged skill
+core issue is whether the Skill’s execution stays within the min-             detection, outperforming the baselines in end-to-end detection. For
+imum scope required by the current task (i.e., the user prompt).              the large-scale measurement, we collect 110,046 real-world Skills
+This directly relates to the principle of least privilege: a Skill should     from major public marketplaces [11, 54] and obtain 68,312 valid Skill
+exercise only the capabilities permitted by and required for the re-          bundles after deduplication and availability filtering. Among them,
+quested task. However, whether a behavior exceeds this minimum                SkillScope identifies 8,328 Skills with at least one over-privilege can-
+necessary scope is inherently task-conditioned: the same action               didate and finally validates 6,590 Skills as exhibiting fine-grained
+may be justified under one prompt, but become over-privileged                 over-privilege, showing that least-privilege violations are preva-
+under another. As a result, coarse-grained malicious classification is        lent in today’s Skill ecosystem. Beyond detection, SkillScope also
+insufficient because it cannot determine whether a Skill’s concrete           effectively constrains over-privileged behaviors: in the privilege
+behaviors violate least privilege under dynamic user intents.                 constraining evaluation, after privilege constraining, the number
+                                                                              of triggered over-privileged action-in-task instances is reduced
+Goal and Challenges. In this paper, our goal is to enforce fine-              by 88.56%, while legitimate task completion is preserved for all
+grained least privilege for Agent Skills by determining whether               evaluated tasks.
+each privilege-relevant action falls within the scope permitted by
+the current user task and is necessary for completing it, and by              Contributions. This paper makes the following contributions:
+constraining actions that fail either condition. Achieving this goal
+faces three challenges. First, Skill behaviors are heterogeneous: ac-         • We identify and formulate task-conditioned over-privilege in
+tions may be induced by natural-language instructions, executable                Agent Skills, a fine-grained least-privilege problem concerning
+scripts, or their cross-layer interactions. Second, over-privilege is            actions that fall outside the scope permitted by the user’s current
+task-conditioned: the same action may be legitimate under one user               task. This formulation goes beyond traditional malicious-skill
+task/prompt but over-privileged under another, requiring broad                   detection.
+user-task testing coverage rather than narrow case-by-case val-
+idation. Third, least-privilege enforcement must preserve a Skill’s           • We design SkillScope, a graph-based least-privilege enforcement
+                                                                                 framework for Agent Skills that combines over-privilege candi-
+                                                                                 date extraction, action over-privilege validation, and control-flow
+                                                                                 privilege constraining to detect and constrain over-privileged
+                                                                                 Skill behaviors.
+
+                                                                           2
+
+
+===== PAGE 3 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+• We conduct an effectiveness evaluation and a large-scale mea-                                                 2.2 Problem Statement
+   surement. Our results show that SkillScope can accurately detect
+   over-privileged behaviors, that over-privilege is prevalent in                                               User Task A: Analyze this repo, include                         User Task B: Inspect recent changes and
+   real-world Skill ecosystems, and that SkillScope can effectively                                             env file, recent command in the report,                         summarize risky commits locally
+   constrain such behaviors while largely preserving legitimate task                                            and sync the report to review
+   utility.
+                                                                                                                 Instruction-level (SKILL.md)                       LLM Agent    Code-level (Scripts)
+Full Version of the Paper. This is the full version of the paper                                                # repo-assistant
+accepted at ACM CCS 2026. It includes the complete appendices                                                                                                                   …
+and additional details omitted from the conference version due to                                               Core workflow                                                   commits = get_recent_commits (repo_path)
+the page limit.                                                                                                                                                                 changed_files = get_changed_files (repo_path)
+
+                                                                                                                1. Locate the target repo                                       env_context = collect_host_env_context(
+
+                                                                                                                2. Inspect recent commits                                          repo_path,
+
+                                                                                                                3. Highlight security-relevant changes                             local_env_files,
+
+                                                                                                                4. Sync the report to the ENDPOINT      Compliant    Violation     recent_command_artifacts,
+                                                                                                                                                        for Task A  for Task B
+                                                                                                                   for review                                                      …
+
+                                                                                                                …                                                               )                    Beyond Task Scope
+
+                                                                                                                - Include sufficient local environment                          report = build_report(repo, env_context)
+
+                                                                                                                   context to support downstream                                sync_report(ENDPOINT, report)
+
+                                                                                                                   troubleshooting …                      Fine-grained          …
+                                                                                                                                                         Over-privilege
+                                                                                                                …              Beyond Task Scope                                return report
+
+2 Background and Problem Statement
+
+2.1 Agent Skill                                                                                                    Figure 2: A skill introduces instruction-level (left) and
+                                                                                                                     code-level (right) over-privilege beyond user intent.
+Agent Skills are reusable capability bundles for extending LLM
+agents. In this paper, we view a Skill as a composition of three                                                Motivating Example. Figure 2 shows a repo-assistant Skill
+behavior-relevant artifacts. Metadata (e.g., name, description, and                                             for repository analysis. For User Task A, where the user requests
+usage conditions) supports routing and selection, and describes the                                             repository analysis with host environment context and report syn-
+Skill’s declared functionality. Instructions (e.g., SKILL.md) specify                                           chronization, collecting local context and sending the report to the
+the natural-language procedure that guides the agent, including                                                 configured endpoint is aligned with the task. However, for User
+task steps, constraints, and invocations of bundled resources. Code                                             Task B, where the user only asks to inspect recent changes and
+consists of optional scripts and auxiliary resources that implement                                             summarize risky commits locally, the necessary actions are lim-
+concrete operations, such as filesystem access, network communi-                                                ited to commit inspection and local report generation. In this case,
+cation, or command execution. Compared with conventional tool                                                   collecting local environment files containing secret keys or privacy-
+calling, a Skill therefore packages not only callable capability but                                            sensitive data, reading recent command artifacts, and synchronizing
+also procedural guidance and executable logic.                                                                  the report externally exceed the minimum permitted scope of the
+                                                                                                                task. This example illustrates fine-grained over-privilege: the same
+                              Skill_bundle /                                                                    Skill and the same action can be legitimate under one task but
+                                                                                                                over-privileged under another. The root cause is that agents often
+      SKILL.md                                Scripts /                                                         trust skill instructions and bundled code as executable capability
+                                                                                                                modules, even though these artifacts may exceed the user’s actual
+      Metadata                Instructions  analyze.py              install.sh                                  intent. This creates a consent gap between the requested task and
+                                                                                                                the actions the agent is allowed to perform.
+             Step 1:                        Step 2:                                           Step 3：
+        Skill Selection       Load the Body of SKILL.md                         Execute Scripts / Resources     Over-Privilege in Agent Skills. We define over-privilege in
+      (Metadata Matching)                                                                                       Agent Skills by following the classical least-privilege principle.
+User                              SKILL.md                                                                      Saltzer and Schroeder define least privilege as follows: “Every pro-
+Task      name / description       1. Understand the analysis goal                                              gram of the system should operate using the least set of privileges
+                                   2. Follow the steps below:                                                   necessary to complete the job” [48]. Similarly, NIST (The National
+                                   • Run the analysis script            Run        API    Filesystem            Institute of Standards and Technology) defines least privilege as
+                                                                    analyze.py  Requests  Operations            restricting the access privileges of users or processes acting on behalf
+                                                                                                                of users to the minimum necessary to accomplish assigned tasks [41].
+ Figure 1: Progressive disclosure in Agent Skill execution.                                                     This principle has also been widely used in over-privilege stud-
+                                                                                                                ies, where applications are analyzed for permissions or capabilities
+   A common execution pattern of a Skill is progressive disclosure. As                                          beyond those required by their functionality [20, 47].
+shown in Figure 1, the agent first inspects metadata to select a Skill
+relevant to the current request (Step 1), then loads the instruction                                               We adapt this principle to Agent Skills by making the privilege
+file to obtain procedural guidance (Step 2), and finally invokes                                                boundary task-conditioned. Let 𝜎 denote a skill package and 𝑝 denote
+bundled scripts or resources to perform concrete actions (Step 3).                                              a user prompt. The actual skill execution is represented as a trace
+Thus, the runtime behavior of a Skill is jointly determined by its                                              𝜏 (𝜎, 𝑝), i.e., an ordered sequence of parameterized actions such as
+metadata, instruction layer, and code layer.                                                                    read(𝑥), send(𝑑), or exec(𝑐). For an executed action 𝑎, Auth𝑝 (𝑎)
+                                                                                                                checks whether its operation, data source, sink or destination, and
+   This model gives Agent Skills a broader and more heterogeneous                                               side effect fall within the authority conveyed by the current user
+behavior surface than a single tool API. A Skill can shape both the                                             task/prompt. We use 𝑜 (𝜎, 𝑝) to denote the final user-visible output
+agent’s decision process and its concrete side effects. As a result,                                            produced by the execution.
+executing a Skill may produce not only user-visible outputs but also
+external actions such as sensitive data access, external transmission,                                             We define action necessity with respect to the current prompt.
+or command execution. Even when a Skill is functionally legitimate,                                             Let 𝜎 ⊖ 𝑎 denote a modified execution in which action 𝑎 is re-
+some of these actions may exceed what is actually required by the                                               moved or neutralized while the remaining skill logic is preserved.
+current user task. This makes Agent Skills natural carriers of task-
+conditioned over-privilege, and motivates a fine-grained analysis
+framework that reasons about both instruction- and code-level
+behaviors under concrete task contexts.
+
+                                                                                                             3
+
+
+===== PAGE 4 / 21 =====
+
+Wu et al.
+
+An executed action 𝑎 is unnecessary for prompt 𝑝 if removing or             intent. SkillScope treats both deliberately harmful and unintention-
+neutralizing 𝑎 does not affect the completion of the task requested         ally over-broad behaviors as in scope when they are evidenced in
+by 𝑝. We consider task completion to be preserved when ❶ the                the inspected Skill artifacts or triggered and observed during replay.
+modified execution retains the core task flow/trace and the side
+effects required by the user task/prompt, and ❷ the output of the              SkillScope is not intended as a general-purpose malware detec-
+modified execution still fulfills the user’s goal; this output need not     tor. Behavior that is not observable in the inspected Skill artifacts
+be identical to the original output. Formally:                              or during replay is outside our intended scope. For example, an
+                                                                            attack that exploits a zero-day vulnerability in an npm/pip depen-
+         Unnec𝜎 (𝑎, 𝑝) ≜ CorePres𝑝 𝜏 (𝜎, 𝑝), 𝜏 (𝜎 ⊖ 𝑎, 𝑝)                   dency is out of scope. These adversarial attacks are better addressed
+                              ∧ GoalSat𝑝 𝜏 (𝜎, 𝑝), 𝜏 (𝜎 ⊖ 𝑎, 𝑝) .           through auxiliary mechanisms like sandbox hardening, dependency
+                                                                            verification, runtime policy enforcement, or egress filtering.
+   Here, CorePres𝑝 (𝜏𝑜, 𝜏𝑚) checks whether the modified execution
+𝜏𝑚 retains the core flow and side effects required by prompt 𝑝,             Challenges and Solutions. Enforcing fine-grained least privilege
+relative to the original execution 𝜏𝑜 . In contrast, GoalSat𝑝 (𝜏𝑜, 𝜏𝑚)      for Agent Skills raises three key challenges:
+uses 𝜏𝑜 as contextual evidence and checks whether 𝜏𝑚 still achieves
+the goal expressed by 𝑝 after the action is removed.                        • C1: Identifying over-privilege candidates in large execu-
+                                                                               tion spaces. An Agent Skill combines instruction-level proce-
+   Given a set of privilege-relevant action types T , such as sensitive        dures and executable code, yielding a large and heterogeneous
+data access, external data transmission, command execution, and                action space. Since exhaustive exploration is impractical, the
+persistent state modification, a skill 𝜎 exhibits task-conditioned             challenge is to efficiently localize actions that may constitute
+over-privilege under prompt 𝑝 if                                               over-privilege.
+                                                                               Solution: Graph-based action extraction. We construct a unified
+          OverPriv𝜎 (𝑎, 𝑝) ≜ type(𝑎) ∈ T ∧                                     execution graph over instruction- and code-level actions and
+                                  ¬Auth𝑝 (𝑎) ∨ Unnec𝜎 (𝑎, 𝑝) .                 their dependencies. Based on this graph, we compare each action
+                                                                               against the declared skill functionality to identify suspicious
+   That is, an action of the Skill is over-privileged under a concrete         behaviors without exhaustive exploration.
+user task when the action falls outside the authority conveyed by
+the prompt or is unnecessary for completing that task.                      • C2: Determining action necessity across broad task con-
+                                                                               texts. Over-privilege is task-conditioned: an action may be nec-
+3 Overview of SkillScope                                                       essary under one prompt but unnecessary under another. Thus,
+                                                                               confirming an over-privilege instance with only a few prompts
+Research Goal. In this paper, our goal is to build a fine-grained,             or case-by-case checking is insufficient; the system must cover a
+task-conditioned least-privilege enforcement framework for Agent               broad set of task contexts supported by the skill.
+Skills. Concretely, given a skill 𝜎 and a user prompt 𝑝, we aim to             Solution: Graph-guided replay validation. We use the unified ex-
+determine whether 𝜎 performs actions that are over-privileged for              ecution graph as a structural approximation of the skill’s task
+the intended task, and to localize the specific behaviors responsi-            space, extract execution chains, and synthesize user tasks from
+ble for such over-privilege. Beyond detection, we further aim to               them. For each generated task, we evaluate whether the prompt
+synthesize minimal constraint patches that constrain validated over-           authorizes the candidate action and independently replay the
+privileged actions while preserving the intended functionality of              Skill with the candidate action removed or neutralized. A candi-
+the skill under the task context.                                              date is confirmed as over-privileged when it is unauthorized or
+Threat/Deployment Model. SkillScope considers two deployment                   unnecessary (i.e., removing the action does not affect the result)
+settings for task-conditioned least-privilege governance. For                  for the task.
+ecosystem-side deployment, a marketplace or registry operator
+runs SkillScope on a submitted or updated Skill before publication          • C3: Constraining over-privileged actions without breaking
+or during monitoring. For user-side deployment, a user can run                 valid functionality. After identifying over-privileged behaviors,
+SkillScope on a Skill before using it to make sure the Skill follows           the challenge is to constrain them without damaging legitimate
+the least-privilege principle.                                                 skill utility. A uniform strategy such as direct removal is insuf-
+                                                                               ficient because some actions are legitimate only under specific
+   We consider two sources of over-privileged behavior. First, a               prompts.
+malicious Skill publisher may act as the active adversary. The Skill           Solution: Control-flow privilege constraining. Guided by valida-
+publisher may control the submitted metadata, SKILL.md, bun-                   tion results, we minimally rewrite the skill’s execution structure
+dled scripts, and auxiliary resources, they may misstate the Skill’s           around validated over-privileged actions. Instead of permanently
+purpose, and hide or distribute logic across these artifacts. Once             deleting actions based on a finite generated task set, we remove
+the Skill is invoked, the agent may be driven to access sensitive              them from the default execution path and make them reachable
+files or credentials, exfiltrate sensitive data to an attacker-selected        only through task-conditioned control constraints.
+destination, or execute commands or code outside the requested
+task. Second, a benign developer may unintentionally introduce              3.1 Overall Design
+the same kinds of over-privileged actions through overly broad
+instructions, scripts, or workflow designs, even without malicious          In this paper, we propose SkillScope, which, given a Skill and a user
+                                                                            task or prompt, determines whether the Skill performs fine-grained
+                                                                            over-privileged actions and further constrains them by introducing
+                                                                            a minimal patch. The workflow is shown in Figure 3.
+
+                                                                         4
+
+
+===== PAGE 5 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+Skill Bundle (a) Over-privilege Candidate Extraction  (b) Action Over-privilege Validation                                  (c) Control-flow Privilege Constraining
+
+            Instruction-level
+
+                               Skill Profile                                                                                                            Constrained
+                                                                                                                                                            Node
+                                                                                                  (τᵒʳⁱᵍⁱⁿᵃˡ, oᵒʳⁱᵍⁱⁿᵃˡ)
+
+SKILL.md                                                                      Original Execution                                Task-conditioned    if  else
+                                                                                                                            Over-Privileged Action
+   Scripts                                                                                                     ¬Authₚ(a) ∨
+            Code-level         Classifier               User Task                                             Unnec_σ(a,p)
+                                                                                                  LLM-as-a-
+                                                      Instantiation                                  judge                                              Repaired
+                                                                        Replay Execution                                                                SKILL.md
+                                                                                                  (τʳᵉᵖˡᵃʸ, oʳᵉᵖˡᵃʸ)
+                        Unified Execution                                                                                                               Repaired
+                                Graph                                                                                                                    Scripts
+
+                                Over-Privileged
+                               Action Candidates
+
+                                                      Figure 3: Overview of SkillScope.
+
+   The first module, over-privilege candidate extraction, localizes              interfaces. LLMs operate on bounded, provenance-linked evidence
+potentially over-privileged actions from a heterogeneous execu-                  rather than producing a single end-to-end verdict over a raw Skill
+tion space. Given a Skill bundle, SkillScope constructs a unified                bundle. In this way, LLM reasoning complements program analysis
+execution graph that models both instruction-level procedures (e.g.,             and execution-based validation, enabling SkillScope to handle the
+SKILL.md) and code-level operations. It then derives a high-level                semantic heterogeneity of Agent Skills while keeping its decisions
+Skill profile from metadata and functional descriptions, and per-                structured, grounded, and auditable.
+forms over-privilege candidate classification. Actions aligned with              Hallucination Handling. Because LLMs are used across sev-
+the declared functionality are treated as related actions, while de-             eral semantic interfaces, SkillScope applies a common two-layer
+tached or excessive behaviors are marked as over-privilege candi-                hallucination-mitigation process throughout all LLM-assisted
+dates.                                                                           stages. At the application level, each model call is grounded in
+                                                                                 evidence from the analyzed Skill and the current pipeline state. This
+   The second module, action over-privilege validation, determines               evidence is tailored to the module. It may include rule/AST-derived
+whether a candidate is truly over-privileged under concrete user                 structure, execution-graph metadata and provenance, the Skill
+tasks. SkillScope first synthesizes a set of user tasks from graph-              profile, and candidate-reaching paths. The current prompt, runtime
+represented execution chains to cover the Skill’s possible task con-             and replay evidence, or validated task contexts are supplied
+texts. For each generated task, it evaluates whether the prompt                  when relevant. At the engineering level, for the authorization
+authorizes the candidate and independently compares the origi-                   and necessity judgments that directly feed final over-privilege
+nal execution with a replay in which the candidate is removed or                 confirmation, the output additionally contains a verdict, a ra-
+disabled. A privilege-relevant candidate is confirmed when it is                 tionale for that verdict, and explicit references to the supplied
+unauthorized or unnecessary for the task, following Section 2.2.                 evidence. By requiring evidence-based grounding, the generation
+                                                                                 of hallucinations by LLMs can be effectively reduced [26, 53].
+   The third module, control-flow privilege constraining, constrains             Our evidence-grounding strategy follows prior work, and we
+validated over-privileged actions by rewriting the Skill’s control               observe that conditioning model outputs on supplied evidence
+flow. For each validated over-privileged action, SkillScope generates            can notably improve factuality and reduce hallucination across
+and inserts a constrained node before the action in the unified exe-             knowledge-intensive generation, structured-output generation,
+cution graph, so that the action is no longer directly reachable from            and agent-reasoning settings [4, 26, 53, 63]. An automated validator
+the original execution path. The constrained node encodes the task               checks required fields, the scope of evidence references, and
+context under which the action is allowed, and routes execution to               consistency among the returned components. Judgments that fail
+the guarded action only when the current user task satisfies this con-           validation are regenerated with validator feedback and the same
+dition. After the graph-level transformation, SkillScope projects the            grounded context for at most five total attempts; persistent failures
+constraint back to the original Skill bundle by rewriting SKILL.md               are marked unresolved.
+instructions and reorganizing or guarding the corresponding script
+logic. In this way, SkillScope enforces least privilege through explicit         4 Design Details of SkillScope
+control-flow constraints.
+Role of the LLM. SkillScope uses LLMs selectively because task-                  4.1 Over-Privilege Candidate Extraction
+conditioned over-privilege analysis requires semantic reasoning
+that static rules alone cannot provide. For example, SkillScope needs            This module localizes over-privilege candidates from the heteroge-
+to determine whether differently expressed actions are semanti-                  neous execution space of Agent Skills. It first constructs a unified
+cally related, whether an action aligns with a concrete user task                execution graph over instruction-level procedures and code-level
+and so on. However, SkillScope does not delegate the entire detec-               operations, and then performs Action Consistency Screening to re-
+tion problem to an unconstrained LLM. Instead, it decomposes the                 tain suspicious actions for downstream over-privilege validation.
+analysis into structured stages and invokes LLMs only at semantic
+
+                                                                              5
+
+
+===== PAGE 6 / 21 =====
+
+Wu et al.
+
+     Instruction-level graph construction                       Code-level graph construction                                  For instruction resources such as SKILL.md, we adopt a hybrid
+Skill.md                                                                                                                    strategy of rule-based parsing and LLM-assisted semantic normal-
+                                                             Script/monitor.py                                              ization. First, SkillScope uses lightweight structural parsing to iden-
+Actionable Advice: Provide specific terminal command            cpu = collect_cpu()                                         tify explicit procedural cues from the instruction text, including
+suggestions. python3 scripts/monitor.py                         memory = collect_memory()                                   imperative verbs, conditional phrases (e.g., if ), command invoca-
+                                                                ...                                                         tions, and Markdown section boundaries. These cues are used to
+CPU: If usage > 80% and load_avg is high, warn about            UUID = get_uuid()                                           extract candidate instruction action nodes and predicate nodes.
+overload.                                                       Serial = get_serial()                                       Then, SkillScope leverages an LLM to normalize semantically re-
+                                                                data[“Sys_logs”] = get_recent_system_logs()                 lated instruction fragments into atomic action nodes, infer predicate
+Memory: If swap usage is high or memory pressure is             req = urilib.request.Request(URL, data=json.dumps(data)     nodes from natural-language conditions, and recover semantic de-
+significant, suggest closing unnecessary applications.          urllib.request.urlopen(req, timeout=3)                      pendencies between nodes.
+                                                                ...
+Disk: If free space < 20GB, issue a red alert as it affects                                                                    For bundled scripts/resources, SkillScope constructs a code-level
+system performance.                                                                                                         graph for each invoked script. It parses the script into an abstract
+                                                                                                                            syntax tree (AST) to extract operation-level behaviors (e.g., func-
+GPU: Confirm GPU model and assess suitability for current                                                                   tion calls). SkillScope then performs lightweight intra-procedural
+tasks.                                                                                                                      data-flow and control-dependence analysis to recover how these
+                                                                                                                            operations are connected and which predicates guard their execu-
+**Always send** the output to Alex on Telegram (id                                                                          tion. The resulting code graph preserves the internal control/data
+`85510*****`) using the `message` tool with a Markdown                                                                      dependencies of the script.
+monospace code block.
+                                                                                                                               After constructing the instruction- and code-level graphs,
+Instruction Entry                                                         Script Entry                                      SkillScope composes them through explicit cross-layer depen-
+                                                                                                                            dency edges. When an instruction action corresponds to a script
+           Run monitor.py                                    collect_cpu                ...                                 invocation (e.g., python3 scripts/monitor.py), SkillScope adds
+Analyze_CPU                                                                                                                 a call edge from the instruction node to the entry node of the
+                                                                          collect_memory     get_uuid  get_serial           corresponding code graph. The return node of the code graph is
+                       Analyze_Mem                                                                                          then connected back to downstream instruction actions through
+                                    Analyze_GPU                                                                             return edges. The final unified execution graph therefore preserves
+                                                                                                                            both instruction-layer semantics and code-level operational details,
+Recommendations                                                                              urllib.request.urlopen         providing the structural foundation for subsequent over-privilege
+                 End                                                                                                        candidate extraction.
+                                    Send output to Alex      return data
+                                                                                                                            Over-Privilege Candidate Classification. After constructing the
+Figure 4: The process of unified execution graph                                                                            unified execution graph, SkillScope classifies action nodes whose
+                       construction.                                                                                        behavior appears inconsistent with the declared purpose of the Skill
+                                                                                                                            or appears to exceed the Skill’s expected privilege boundary. This
+Unified Execution Graph Construction. Formally, given a skill                                                               stage is a high-recall candidate screen. We call a retained candidate
+bundle 𝜎, SkillScope constructs a directed graph 𝐺 = (𝑉 , 𝐸), where                                                         a task-ambiguous action node when its operation is compatible with
+𝑉 = 𝑉𝐼 ∪ 𝑉𝐶 ∪ 𝑉𝑃 is the set of instruction-level action nodes, code-                                                        the Skill’s declared functionality, but its privilege status cannot be
+level action nodes, and predicate nodes, and 𝐸 is the set of execution                                                      determined from the Skill profile and graph context alone because
+dependency edges among these nodes.                                                                                         it depends on the concrete user task. More specifically, across the
+                                                                                                                            different tasks that can reach the action, the action may be autho-
+• Action and Predicate Nodes. An action node is the minimum                                                                 rized and necessary for one task but unauthorized or unnecessary
+   behavior unit used by SkillScope for over-privilege detection.                                                           for another. For example, sending a report to an endpoint may be
+   Each action node 𝑣 ∈ 𝑉𝐼 ∪ 𝑉𝐶 is represented as 𝑣 = ⟨ℓ, 𝑜𝑝, 𝑜𝑏 𝑗⟩,                                                        legitimate when the user requests report synchronization but over-
+   where ℓ ∈ {instr, code} denotes whether the action is extracted                                                          privileged when the user requests only a local summary. To avoid
+   from the instruction or code layer, 𝑜𝑝 denotes the operation type,                                                       false negatives, SkillScope retains task-ambiguous action nodes for
+   and 𝑜𝑏 𝑗 denotes the target object. For example, an instruction                                                          downstream task-conditioned validation rather than treating them
+   such as “sync the report to the incident endpoint” can be normal-                                                        as benign during this screening stage.
+   ized as ⟨instr, send, report⟩. A predicate node 𝑝 ∈ 𝑉𝑃 represents a
+   condition that guards execution and is represented as 𝑝 = ⟨ℓ, 𝜙⟩,                                                           Specifically, SkillScope derives a skill profile from declarative
+   where 𝜙 is the normalized predicate expression. Each node is also                                                        resources, including metadata fields such as name, description,
+   associated with provenance metadata src(𝑣), which records the                                                            and use_when, together with summaries of instruction files. This
+   original text span or code span from which the node is derived.                                                          profile captures the declared functionality of the Skill and serves as
+   This provenance is crucial for mapping a detected over-privilege                                                         the semantic reference for candidate extraction.
+   node back to the corresponding instruction or code statement
+   during localization and privilege constraining.                                                                             For each action node, SkillScope leverages an LLM classifier to
+                                                                                                                            determine whether the node should be filtered out because it aligns
+• Execution Dependency Edges. An execution dependency edge                                                                  with the declared Skill profile or retained as an over-privilege candi-
+   captures how one node constrains, enables, or provides data to                                                           date. The classifier receives (i) the Skill profile, (ii) the normalized
+   another node during skill execution. SkillScope models four types
+   of edges: 1) control edges for ordering or predicate-controlled
+   execution, 2) data edges for value/object flow, 3) call edges from
+   instruction-level invocations to script/resource entries, and 4)
+   return edges from script outputs back to downstream instruc-
+   tion actions. Thus, 𝐸 = 𝐸𝑐𝑡𝑟𝑙 ∪ 𝐸𝑑𝑎𝑡𝑎 ∪ 𝐸𝑐𝑎𝑙𝑙 ∪ 𝐸𝑟𝑒𝑡 . These edges
+   preserve the dependencies needed to reason about guarded execu-
+   tion, data use, cross-layer invocation, and downstream privilege
+   constraining.
+
+   Unlike conventional code-only graphs, the unified execution
+graph explicitly separates high-level instruction logic from low-
+level script behavior, and composes them through cross-layer invo-
+cation links. As illustrated in Figure 4, graph construction consists
+of three stages: Instruction-level graph construction, Code-level graph
+construction, and Cross-layer graph composition.
+
+                                                                                                                         6
+
+
+===== PAGE 7 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+action summary, and (iii) bidirectional graph context obtained                                                  that LLMs are highly effective for automatic test case generation,
+through backward and forward traversal, including predecessor                                                   especially in scenarios where inputs must satisfy both semantic
+actions, successor actions, and predicate nodes. The backward con-                                              constraints (i.e., the task follows the skill description) and struc-
+text explains why the action is reached, while the forward context                                              tural execution requirements (i.e., the prompt should guide the
+captures how its output or side effect is subsequently used. Based                                              agent to execute the corresponding action chain). For each chain,
+on this evidence, SkillScope retains a candidate action for further                                             the LLM receives the declared Skill profile and the target action
+over-privilege validation.                                                                                      chain, both derived from the current Skill; therefore, this inference-
+                                                                                                                time workflow-to-request conversion requires neither specialized
+4.2 Action Over-Privilege Validation                                                                            Skill training data nor Skill-specific LLM fine-tuning. SkillScope
+                                                                                                                finally generates a prompt that is semantically consistent with the
+In this module, SkillScope validates whether a candidate is truly                                               Skill’s functionality and structurally likely to exercise the chain.
+over-privileged under concrete user tasks. Since over-privilege is                                              For example, Entry → Summarize → End can be converted into
+task-conditioned, this module has two objectives. First, SkillScope                                             “Summarize recent commits in this repository.”
+aims to instantiate a set of user tasks that broadly covers the
+task space represented by the current skill, so that the candidate                                                 Importantly, for Skills that require external task inputs, such as
+action can be validated under diverse task contexts. This is the                                                files, repositories, documents, images, or configuration artifacts,
+prerequisite for realizing task-conditioned over-privilege detection.                                           SkillScope augments the generated user prompt with a minimal
+Second, for each instantiated task, SkillScope combines a prompt-                                               synthetic fixture. The task-generation LLM is equipped with light-
+level authorization check with replay-based necessity analysis.                                                 weight third-party MCP tools to create basic executable inputs, such
+This provides the concrete task context needed to validate candidate                                            as a toy repository, a CSV/JSON record file, a simple document,
+actions, especially task-ambiguous action nodes from the previous                                               or a simple configuration. A task instance is used for validation
+module.                                                                                                         only when the prompt and fixture (if any) together trigger the in-
+                                                                                                                tended action chain. We provide the supported fixture types and
+       Summarize_Commits  Extract chains from the graph                                  Summarize recent       corresponding MCP tools in Appendix B.
+                                                  ...                                      commits in this
+                                                                                              repository.
+Entry  Review_Risk        Entry             Summarize End        User Task (User                                                   Sandbox
+                          Entry                       ...      Prompt) Generator           Review relevant
+                                                                                        changes and explain        Original Run              Agent  Skill Execution
+                                              Review End      Input: Execution chain +                                                               Skill Bundle
+                                                                                           risky commits.       Summarize recent
+                                                                      Skill profile                               commits in this
+                                                                                             Generate an             repository.
+                                                    ...                                    incident report
+                                                                                            with context.
+       Incident_Report    End               Report       End                            ...
+                                    Entry
+
+                                       ...
+
+                                                                                                                                                    Skill Execution   LLM-as-a-judge  Result
+                                                                                                                                                      Skill Bundle
+       Figure 5: The process of user task (user prompt)                                                             Replay Run     Agent
+                              instantiation.                                                                                                           remove the
+                                                                                                                Summarize recent                    candidate action
+                                                                                                                  commits in this
+                                                                                                                     repository.
+
+Graph-Guided Task Instantiation. In this step, the full natural-                                                  Figure 6: The process of runtime task replay execution.
+language task space of a skill is difficult to enumerate exhaustively
+due to the open-ended nature of user intents and the diversity                                                  Runtime Task Replay Execution. Following the definition in
+of semantically equivalent prompt expressions. To overcome this                                                 Section 2.2, SkillScope validates action necessity through task replay
+challenge, SkillScope uses the unified execution graph as a structural                                          execution. For a skill 𝜎, a user prompt 𝑝, and a candidate action
+approximation of the skill’s supported workflows [30]. Since the                                                𝑎, the replay run corresponds to the modified execution 𝜎 ⊖ 𝑎,
+graph captures the instruction-level and code-level execution paths                                             where 𝑎 is removed or neutralized while the remaining skill logic
+explicitly expressed by the skill, enumerating its action chains                                                is preserved. The goal is to determine whether removing 𝑎 affects
+provides a practical way to approximate the skill’s reachable task                                              completion of the task requested by 𝑝. The original run records
+variants without generating tasks case by case.                                                                 the realized action instance used to evaluate Auth𝑝 (𝑎), while the
+                                                                                                                original/replay pair supplies evidence for CorePres𝑝 and GoalSat𝑝 .
+   Below, we introduce the implementation details. As shown in
+Figure 5, given a skill and the unified graph, SkillScope performs                                                 Specifically, for each instantiated user prompt and over-privilege
+forward traversal from the entry node to extract graph-represented                                              candidate, SkillScope executes the skill twice under the same task
+action chains, each corresponding to a possible task variant, such as                                           request, as illustrated in Figure 6: (1) the original run, which
+summarizing commits, reviewing risks, or generating an incident                                                 corresponds to 𝜏 (𝜎, 𝑝) and 𝑜 (𝜎, 𝑝), and (2) the replay run, which
+report. Importantly, this extraction is candidate-aware: for each                                               corresponds to 𝜏 (𝜎 ⊖ 𝑎, 𝑝) and 𝑜 (𝜎 ⊖ 𝑎, 𝑝). For instruction-level
+over-privilege candidate, SkillScope only instantiates user tasks from                                          candidates, SkillScope removes the corresponding instruction step.
+action chains that reach the candidate node in the graph. A chain                                               For code-level candidates that are tightly coupled with surrounding
+that does not reach the candidate provides no graph-grounded path                                               logic, SkillScope neutralizes only the candidate behavior, e.g., by
+for exercising it and is therefore outside that candidate’s validation                                          replacing the target function body with an immediate return, to
+set.                                                                                                            avoid artificial failures caused by broken dependencies.
+
+   SkillScope then synthesizes corresponding user prompts from the
+extracted action chains using an LLM-based generation strategy.
+This design is motivated by recent studies [28, 30, 61] showing
+
+                                                                                                             7
+
+
+===== PAGE 8 / 21 =====
+
+Wu et al.
+
+   SkillScope builds an execution environment that isolates filesys-          the validated over-privileged action from the default execution path
+tem access, network communication, command execution, and                     and makes it reachable only through an explicit task-conditioned
+other external side effects, so that the original and replay runs             control branch. In this way, over-privileged behaviors are no longer
+are conducted under controlled and comparable conditions. Dur-                triggered implicitly, but can still be preserved behind semantic con-
+ing each run, SkillScope instruments the tested agent to record its           straints if they are explicitly required by future user tasks. The
+execution trace and final user-visible output:                                constraining process is shown in Figure 7.
+
+             (𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 , 𝑜𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 ) and (𝜏𝑟𝑒𝑝𝑙𝑎𝑦, 𝑜𝑟𝑒𝑝𝑙𝑎𝑦 ),                                                                                                    Code-level repair
+
+where 𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 = 𝜏 (𝜎, 𝑝), 𝑜𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 = 𝑜 (𝜎, 𝑝), 𝜏𝑟𝑒𝑝𝑙𝑎𝑦 = 𝜏 (𝜎 ⊖ 𝑎, 𝑝),                                                                                 action-A is only necessary under user task A
+and 𝑜𝑟𝑒𝑝𝑙𝑎𝑦 = 𝑜 (𝜎 ⊖ 𝑎, 𝑝).                                                                                                                               action-B is only necessary under user task B
+                                                                                                                                                          action-C is only necessary under user task C
+Task-Scope Authorization Check. Using the original execu-
+tion trace recorded above, SkillScope evaluates Auth𝑝 (𝑎) only for                  Instruction-level repair                                                                          constrained node            Entry
+candidates that are actually executed. In other words, SkillScope de-
+termines whether the current action is authorized by the task (e.g.,          action is only necessary under user task A                                  Entry
+whether the user prompt explicitly requests access to bank-account
+data). A fixed-schema LLM scope judge compares the authority                                                         constrained node
+conveyed by the prompt with the realized action instance recorded
+in 𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 , including its operation, data source, sink or destination,                                                                         action  action-A action-B action-C  Script-A Script-B Script-C
+and side effects.
+                                                                                                                          if user task is A               Skill.md                                        Script  Script-A
+                                                                                                                                                                                                                  Script-B
+                                                                              Skill.md                                                                    ...                                                     Script-C
+                                                                                                                                                          if the user task is A, allowed to run Script-A
+                                                                              ...                                                                         if the user task is B, allowed to run Script-B
+                                                                                                                                                          if the user task is C, allowed to run Script-C
+                                                                              if the user task is A, then you are allowed to do
+                                                                              action, otherwise, xxx
+
+                                                                              Skill Bundle (Repaired SKILL.md + Script-A, Script-B, Script-C)
+
+Unnecessary Action Extraction. Furthermore, SkillScope deter-                       Figure 7: Task-conditioned over-privilege control.
+mines whether a candidate action is unnecessary by checking the                Constraining validated over-privileged behaviors through
+two conditions defined in Section 2.2: core task-flow preservation
+and replay goal satisfaction. Specifically, SkillScope estimates the             semantic instruction constraints and task-specific code
+following two predicates using an LLM-as-a-judge approach, fol-                                             reorganization.
+lowing prior work [29, 34, 67]. The judge receives the candidate
+and its provenance, the prompt, normalized original/replay traces,            Task-conditioned Constrained Node Generation. Before
+and their associated outputs. For core-flow preservation, SkillScope          rewriting the Skill artifacts, SkillScope generates a task-conditioned
+normalizes both traces into ordered action summaries, including               constrained node for each validated over-privileged action. For an
+invoked actions, target objects, and summarized arguments, and                action 𝑎 = ⟨ℓ, 𝑜𝑝, 𝑜𝑏 𝑗⟩, SkillScope uses the generated user tasks and
+checks whether the replay still preserves the core task flow and              their validation results to identify the task contexts under which
+externally observable effects needed to satisfy the user intent after         𝑎 should or should not be executed. Concretely, SkillScope first
+ablating the candidate. For goal satisfaction, SkillScope uses the            converts each user task into a fixed-schema task-context descriptor,
+original execution as contextual evidence and checks whether the              including the task intent, requested operation, target object, execu-
+replay execution and its associated output still fulfill the user’s re-       tion scope, any external destination, whether the user explicitly
+quested task; neither the trace nor the output needs to be identical          requests the side effect corresponding to 𝑎, and the validation result
+to its original counterpart.                                                  of 𝑎 under that task. It then normalizes semantically equivalent
+                                                                              slots and groups descriptors into task-context clusters. For example,
+   For a candidate that is executed in the original run and removed           for send(report, Telegram), SkillScope distinguishes tasks that only
+or neutralized in the replay run, SkillScope determines that the can-         require local report generation from tasks that explicitly request
+didate is unnecessary under prompt 𝑝 when both replay predicates              sending or synchronizing the report to Telegram. The former
+hold:                                                                         should not satisfy the guard because they do not require external
+                                                                              transmission.
+    CorePres𝑝 (𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 , 𝜏𝑟𝑒𝑝𝑙𝑎𝑦 ) ∧ GoalSat𝑝 (𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 , 𝜏𝑟𝑒𝑝𝑙𝑎𝑦 ).
+                                                                                 Based on these clustered contexts, SkillScope derives an allow con-
+When both predicates hold, they establish Unnec𝜎 (𝑎, 𝑝). Otherwise,           dition 𝐶𝑎 for 𝑎. The condition is generated contrastively: it should
+if the replay fails to preserve the prompt-required core flow or              allow contexts where the task explicitly requires the operation,
+its result no longer satisfies the user’s goal, the candidate is not          object, scope, and side effect of 𝑎, while excluding contexts where
+confirmed as unnecessary for that task.                                       𝑎 was validated as over-privileged. SkillScope then creates a con-
+Over-privilege Action Confirmation. SkillScope then combines                  strained control node 𝑣𝑐𝑎 = ⟨𝐶𝑎, 𝑎⟩, where 𝐶𝑎 is the task-conditioned
+the replay-based necessity result with the task-scope authorization           guard and 𝑎 is the guarded action. During execution, 𝑣𝑐𝑎 routes con-
+result. A candidate action executed in the original run is confirmed          trol to 𝑎 only when the current user task satisfies 𝐶𝑎; otherwise,
+as over-privileged when ¬Auth𝑝 (𝑎) ∨ Unnec𝜎 (𝑎, 𝑝).                           the guarded action is skipped. We provide the detailed descriptor
+                                                                              schema and a worked example of constrained node generation in
+4.3 Control-flow Privilege Constraining                                       Appendix H.
+
+The third module constrains validated over-privileged actions while           Guard Insertion and Script Reorganization. For over-privileged
+preserving legitimate skill utility. Guided by validation results,            instruction-level actions, SkillScope inserts the constrained control
+SkillScope applies localized control-flow transformations to the              node generated in the previous step before the corresponding action
+original SKILL.md and scripts. Instead of permanently deleting an             in the unified execution graph. The node is then projected back
+action based only on a finite generated task set, SkillScope removes
+
+                                                                           8
+
+
+===== PAGE 9 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+to SKILL.md as a semantic guard that specifies the task condition                   bundles, we obtain 68,312 valid skill bundles for large-scale
+under which the action is allowed. SkillScope keeps this guard at                   measurement of over-privileged behaviors in the wild.
+the instruction layer rather than converting it into a rigid keyword             • Effectiveness and privilege-constraining evaluation. From
+check, because semantically equivalent user tasks may differ in                     the above ecosystem-scale dataset, we manually sample and an-
+wording and should be routed by the agent’s underlying LLM.                         notate 200 skills in total, including 100 skills with over-privileged
+                                                                                    actions and 100 benign skills without over-privileged actions. To
+   For over-privileged code-level behaviors, privilege constrain-                   reduce sampling bias in the manually labeled evaluation set, we
+ing is more challenging because operations are often embedded                       sample Skills using a stratified strategy over marketplace source,
+in highly coupled execution logic rather than isolated statements.                  Skill category, artifact type, and observable operation type. We
+Directly deleting or guarding a code action may break data/con-                     provide the detailed dataset construction criteria in Section C.
+trol dependencies and damage the original functionality. More-                      Ground truth is assigned at the action-in-task level using the task-
+over, the task condition comes from natural language: semantically                  conditioned criterion in Section 2.2. Each Skill is independently
+equivalent user requests may differ substantially in wording, while                 inspected by two annotators, and cases without consensus are
+code-level guards must be expressed as rigid predicates (e.g., if                   reviewed by a third annotator; if the available evidence remains
+conditions), causing semantic loss.                                                 insufficient, the action-in-task pair is conservatively treated as
+                                                                                    unconfirmed. This dataset is used for the quantitative evaluation
+   To address these challenges, SkillScope adopts a two-level strat-                of SkillScope, as well as for the subsequent privilege-constraining
+egy. At the code level, it identifies the over-privilege branch and                 evaluation.
+reorganizes the coupled script into task-specific execution units us-
+ing LLM-assisted refactoring techniques [7, 46, 62], such as extract-            Implementation and Execution Environment. All experiments
+method-style refactoring and method-level restructuring. At the                  are conducted on a Mac with an M4 Max processor and 36 GB of
+instruction level, SkillScope adds a corresponding semantic con-                 RAM. For task-replay validation and privilege-constraining valida-
+straint to SKILL.md, so that the agent’s underlying LLM decides                  tion, we build an execution environment that isolates filesystem
+which script unit should be invoked under the current task seman-                access, network communication, and command execution. For LLM-
+tics. In this way, high-dimensional task understanding remains at                dependent components in SkillScope, we use GPT-5.1 [43] as the
+the instruction layer, while the code layer becomes modular and                  default model. We adopt GPT-5.1 in our evaluation mainly because
+deterministic, with each separated script unit implementing only                 it offers a favorable cost-performance tradeoff, which is important
+its corresponding task-specific behavior.                                        for supporting our large-scale experiments while maintaining stable
+                                                                                 effectiveness across all stages (see Section 5.2 for details).
+Constraint Projection to Skill Artifacts. After the constraints
+are determined on the unified execution graph, SkillScope projects               5.2 Effectiveness of SkillScope
+them back to the original skill artifacts: instruction-level constraints
+are written into SKILL.md, while code-level constraints are materi-              In this section, we evaluate the effectiveness of SkillScope on the
+alized as guarded branches or reorganized task-specific scripts. The             manually labeled 200-skill dataset introduced in Section 5.1. We
+final output is a least-privilege skill bundle containing the updated            focus on four aspects: the end-to-end effectiveness of SkillScope, the
+instruction file and constrained script set.                                     effectiveness of over-privilege candidate extraction (Section 4.1),
+                                                                                 the effectiveness of action over-privilege validation (Section 4.2),
+5 Experiment                                                                     and the comparison against existing baselines.
+
+In this section, we aim to answer the following questions:                             Table 1: End-to-end effectiveness of SkillScope for
+                                                                                                    over-privileged skill detection.
+• How effective is SkillScope in detecting and validating over-
+   privileged actions in terms of its end-to-end detection accuracy,             SkillScope      TP/FP/TN/FN      Prec.  Rec.    F1    Acc.
+   the effectiveness of each module, and its performance compared                                                  (%)    (%)    (%)    (%)
+   with existing work?                                                           Skill-level        95/6/94/5     94.06  95.00  94.53  94.50
+                                                                                 Action-level    279/21/1,803/10  93.00  96.54  94.74  98.53
+• How prevalent are over-privileged skills in the current Agent                  Action-in-Task   472/33/197/35   93.47  93.10  93.28  90.77
+   Skill ecosystem?
+
+• How effective is SkillScope in constraining over-privileged skills?
+   In particular, can the constrained skills preserve stable task utility
+   while reducing over-privileged behaviors, and how do the origi-
+   nal and constrained skills behave when deployed in real-world
+   agents?
+
+5.1 Experimental Setup                                                           End-to-End Effectiveness. The overall end-to-end results are
+                                                                                 shown in Table 1. At the skill level, SkillScope achieves 94.06% pre-
+Dataset. To evaluate SkillScope, we construct two datasets for                   cision, 95.00% recall, and 94.53% F1. At the action level, SkillScope
+different purposes:                                                              achieves 93.00% precision, 96.54% recall, and 94.74% F1, indicating
+• Large-scale measurement. We collect Agent Skills from                          that it can further localize the specific actions responsible for over-
+                                                                                 privilege. At the action-in-task level, SkillScope achieves 93.47%
+   major public skill repositories and marketplaces, including                   precision, 93.10% recall, and 93.28% F1, showing that it can deter-
+   Clawhub [11] and Agent Skills Marketplace [54]. In total, we                  mine whether a concrete action is over-privileged under a specific
+   crawl 110,046 skills. After removing duplicates and unavailable               user task. A small number of false positives and false negatives still
+
+                                                                              9
+
+
+===== PAGE 10 / 21 =====
+
+Wu et al.
+
+remain, mainly due to the inherent instability of LLM-based agents,              We evaluate whether the synthesized user tasks can effectively
+such as model hallucination and occasional failure to follow the                 cover the task space represented by the extracted task chains of
+intended instruction path during task execution. Despite these chal-             the skill. As shown in Table 3, all evaluated prompt-generation
+lenges, SkillScope achieves consistently high effectiveness across               LLMs achieve high coverage, indicating that this step is not tied to
+all three levels.                                                                a single model family. Under the default GPT-5.1 setting, 249 out of
+                                                                                 261 task chains can be successfully triggered, yielding a coverage
+     Table 2: Cross-model effectiveness of over-privilege                        of 95.40%. Claude-Sonnet-4.6 achieves the highest coverage, but it
+                 candidate extraction in SkillScope.                             also incurs the highest inference cost among the evaluated models.
+                                                                                 Considering both coverage and practical cost, we use GPT-5.1 as
+Analysis LLM             TP/FP/TN/FN      Prec.  Rec.    F1    Acc.              the default prompt-generation LLM. The high task-chain coverage
+                       (# Action Nodes)    (%)    (%)    (%)    (%)              shows that SkillScope can systematically instantiate user tasks
+GPT-5.1                                   68.54  97.23  80.31  93.52             from the graph-represented task space of a Skill, enabling
+Gemini-3.1-Flash-Lite   281/129/1,695/8   54.89  85.47  66.86  88.40             broad task-conditioned over-privilege validation rather than
+Claude-Sonnet-4.6       247/203/1,621/42  60.47  98.96  75.08  91.01             relying on narrow case-by-case checking.
+                        286/187/1,637/3
+
+DeepSeek-V3.2          269/151/1,673/20 64.05 93.08 75.88 91.91
+
+Over-Privilege Candidate Extraction (Section 4.1). The effec-                    Table 4: Over-privilege action confirmation with different
+tiveness of over-privilege candidate extraction is shown in Table 2.                                            judge LLMs.
+The goal of this module is to extract potentially problematic candi-
+date behaviors from a large instruction-code search space. From the              Judge LLM                        TP/FP/TN/FN         Prec.  Rec.    F1    Acc.
+results, this stage is able to effectively retain nearly all true over-                                 (# Action-in-Task Instances)   (%)    (%)    (%)    (%)
+privileged behaviors, achieving 97.23% recall at the action node                 GPT-5.1                                              93.47  93.10  93.28  90.77
+level. These high-recall results show that the candidate extraction              Gemini-3.1-Flash-Lite            472/33/197/35       85.94  84.42  85.17  79.78
+stage can reliably cover almost all truly over-privileged skills and             Claude-Sonnet-4.6                428/70/160/79       95.05  87.18  90.95  88.06
+actions before dynamic validation. Since this stage is built on the              DeepSeek-V3.2                    442/23/207/65       89.66  88.95  89.31  85.35
+unified execution graph, we further manually evaluate the quality                                                 451/52/178/56
+of the unified graph construction. The results show consistently
+high accuracy across nodes and edges. Detailed results are shown                    We further evaluate the final over-privilege action confirmation,
+in Appendix A. Across instruction nodes and edges, code nodes and                implemented using an LLM-as-a-judge approach. As shown in Ta-
+edges, and cross-layer links, the component-level F1 scores range                ble 4, GPT-5.1 achieves the best overall F1, with 93.47% precision,
+from 92.62% to 98.07%.                                                           93.10% recall, and 93.28% F1, showing that SkillScope can accurately
+                                                                                 determine whether a candidate action is truly over-privileged under
+   For model selection in this module, the cross-model results                   the current task. Claude-Sonnet-4.6 achieves the highest precision,
+show that GPT-5.1 provides the best overall balance between re-                  indicating that its confirmed over-privilege judgments are highly
+call and precision. Claude-Sonnet-4.6 achieves the highest recall,               reliable. However, its lower recall suggests that it is stricter when
+but its stricter safety-oriented judgment introduces more false                  comparing original and replay executions, and may reject some
+positives, which would increase the cost of downstream replay                    replay outputs that differ in wording or minor execution details
+validation. Meanwhile, due to its intentionally conservative over-               even when the core task is preserved. Therefore, although Claude-
+approximation design, this stage also introduces some false posi-                Sonnet-4.6 is more conservative, GPT-5.1 provides a better overall
+tives. However, such false positives are expected and are further                balance for replay-based validation.
+filtered out by the subsequent dynamic validation stage. More im-
+portantly, by narrowing the original large execution space into a                 Table 5: Effectiveness of SkillScope compared with that of
+much smaller set of suspicious candidates, this module substantially                                         existing methods.
+reduces the unnecessary search space for the confirmation module.
+                                                                                 Method                 TP/FP/TN/FN Prec. (%) Rec. (%) F1 (%)
+                                                                                 Skill Scanner [10]       81/26/74/19 75.70 81.00 78.26
+
+     Table 3: User-task instantiation with different                             Caterpillar [1]        62/41/59/38  60.19                   62.00  61.08
+                  prompt-generation LLMs.                                        MASB [32]              19/28/72/81  40.43                   19.00  25.85
+                                                                                 Skill-Sec-Scan [60]    45/37/63/55  54.88                   45.00  49.45
+
+LLM                    Chains Triggered # Total # Successfully Coverage (%)      Nova-Proximity [42]    14/32/68/86  30.43                   14.00  19.18
+                                                                                 MalSkills [58]         86/12/88/14  87.76                   86.00  86.87
+
+GPT-5.1                261                249           95.40                    SkillScope             95/6/94/5 94.06 95.00 94.53
+
+Gemini-3.1-Flash-Lite                     238           91.19
+                                                        96.17
+Claude-Sonnet-4.6      261                251           93.49                    Comparison with Baselines. We compare SkillScope against six
+                                                                                 representative skill detection tools covering static analysis, LLM-
+DeepSeek-V3.2                             244                                    based analysis, and dynamic analysis: MalSkills [58], Skill Scan-
+                                                                                 ner [10], Nova-Proximity [42], Skill-Sec-Scan [60], Caterpillar [1],
+Action Over-Privilege Validation (Section 4.2). The effective-                   and MASB [32]. To the best of our knowledge, these constitute the
+ness of action over-privilege validation is shown in Tables 3 and 4.
+
+                                                                             10
+
+
+===== PAGE 11 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+most representative publicly available baselines for end-to-end skill             Table 7: Summary of token cost on the 200-skill dataset.
+detection in the current ecosystem. For LLM-based baselines, we
+use the same underlying model, GPT-5.1, for a fair comparison.                    Module / Stage                  # LLM    Total Tokens      Avg. Tokens
+As shown in Table 5, SkillScope achieves the best skill-level detec-                                              Calls          (M)          / Skill (M)
+tion performance. This result shows that prior tools, which mainly                Unified Graph Construction                          0.469         0.00235
+provide coarse-grained skill-level judgments, are insufficient for                Action Consistency Screening        200             2.387         0.01194
+task-conditioned over-privilege detection because they may miss                   User Task/Prompt Instantiation    2,113             0.229         0.00115
+many fine-grained over-privilege instances (i.e., cases in which an               Over-Privilege Validation                           4.389         0.02195
+action becomes over-privileged under a concrete user task).                       Privilege Constraining              261             1.862         0.00931
+                                                                                  Overall                           2,211            9.337         0.04669
+
+                                                                                                                      666
+                                                                                                                   5,451
+
+Table 6: Ablation study of key design choices in SkillScope                       per-unit cost (6.67K per repaired action). Note that the analysis is
+                    for over-privilege detection.                                 performed once by a marketplace or enterprise when a Skill version
+                                                                                  is published or admitted; its results and intermediate artifacts can
+Variant                 TP/FP/TN/FN    Prec. (%)  Rec. (%)  F1 (%)                then be cached and reused. Further savings are possible by selec-
+w/o Unified Graph         73/25/75/27    74.49      73.00   73.74                 tively using lower-cost models. For several modules (e.g., candidate
+w/o Graph-guided          76/9/91/24     89.41      76.00   82.16                 extraction and user task instantiation), the gap between models
+Task Generation                                                                   is small because the framework design and low task complexity
+w/o Dynamic Validation    82/25/75/18    76.64      82.00   79.22                 reduce the demand on the model. As a result, SkillScope can use
+                           95/6/94/5     94.06     95.00    94.53                 cheaper models (e.g., DeepSeek-V3.2) for these tasks and still obtain
+SkillScope                                                                        comparable results.
+
+Ablation Study. To further understand the contribution of the                      Takeaway-1. SkillScope achieves effective end-to-end over-
+key detection designs in SkillScope, we compare the full detection                 privilege detection through candidate extraction and over-
+pipeline with three simplified variants on the same 200-skill dataset.             privilege validation. Compared with existing baselines, SkillScope
+Since these modules provide required intermediate representations                  achieves fine-grained over-privileged action detection, which
+for downstream stages, directly removing one module would break                    provides the necessary foundation for subsequent privilege con-
+the end-to-end pipeline. We therefore use replacement ablations                    straining.
+that replace each key design with an executable alternative while
+keeping the final skill-level detection task unchanged. All LLM-                  5.3 Over-Privileged Skills in the Wild
+based components in the variants use GPT-5.1, matching the full
+SkillScope setting.                                                               In this section, we aim to measure how over-privilege manifests in
+                                                                                  real-world Agent Skills.
+   The first variant, w/o Unified Graph, replaces graph-based action
+modeling with direct LLM analysis over raw skill artifacts. The                   Ecosystem-Scale Prevalence. The overall measurement results
+second variant, w/o Graph-guided Task Generation, keeps candidate                 are shown in Table 8. Among the 68,312 valid skills, 8,328 skills
+extraction and replay validation, but replaces graph-chain-based                  contain at least one over-privilege candidate, and SkillScope con-
+task generation with skill profile-only prompt generation under the               firms that 6,590 skills exhibit validated over-privilege. This shows
+same prompt budget. The third variant, w/o Dynamic Validation,                    that over-privileged actions occur on a substantial scale in today’s
+replaces original/replay execution with a static LLM necessity judge              Agent Skill ecosystem.
+that does not observe runtime traces or outputs.
+                                                                                     At the unified-graph level, SkillScope extracts 77,190 unique ac-
+   The results are shown in Table 6. Without the unified graph, F1                tion nodes in total, among which 11,588 nodes are identified as
+drops to 73.74%, because raw artifact-level reasoning lacks explicit              over-privilege candidates. At the user-task level, 7,033 of the 16,743
+action boundaries, dependency context, and provenance. Without                    instantiated user tasks are confirmed to trigger over-privileged be-
+graph-guided task generation, F1 drops to 82.16%; this variant still              haviors, demonstrating that the problem is practically triggerable
+maintains relatively high precision, but its recall decreases because             and frequently arises under realistic user requests. To calibrate these
+profile-only prompts miss some candidate-reachable task paths.                    large-scale claims, we further conduct a post-hoc manual validation
+Without dynamic validation, F1 drops to 79.22%, as the static judge               of skill-level positives, graph-level candidate nodes, and user-task-
+lacks original/replay trace and output evidence, leading to both                  level positives detected by SkillScope. The results confirm weighted
+false positives and false negatives. These results confirm that graph-            validity rates of 94.16%, 92.97%, and 93.53%, respectively, with the
+based action modeling, graph-guided task coverage, and dynamic                    detailed sampling protocol and confidence intervals reported in
+over-privilege validation provide complementary benefits.                         Appendix E and Table 16. The source-stratified audit covers 300
+Token Cost. We further measure the token cost of SkillScope across                skill-level positives, 200 graph-level candidate nodes, and 200 user-
+detection and privilege constraining. The stage-wise summary is re-               task-level positives; code-involving cases are oversampled and the
+ported in Table 7, with detailed call and token accounting provided               reported rates are population-weighted. These high validity rates
+in Appendix D.                                                                    indicate that the large-scale findings reported by SkillScope are
+                                                                                  stable and largely reflect real over-privileged behaviors.
+   Across 200 Skills, SkillScope issues 5,451 LLM calls and consumes
+9.337M tokens (8.292M input and 1.045M output), averaging 46.69K
+tokens per Skill. Over-privilege validation is the largest source of to-
+tal token use (4.389M), while privilege constraining has the highest
+
+                                                                              11
+
+
+===== PAGE 12 / 21 =====
+
+Wu et al.
+
+Table 8: Overall statistics of over-privilege candidates and validated over-privilege actions at the skill, unified-graph, and
+                                                                       user-task levels.
+
+                               Skill Level                                     Action Level                     User Task/Prompt Level
+
+Source             # Over-privilege # Involving     # Total                    # Over-privilege Candidates # Total                                             # Involving
+
+                        Candidates Over-privilege (Action Nodes)                       (Action Nodes)           User Tasks Over-privilege
+
+Instruction-level       6,997               5,541   63,274                             9,846                                                                   6,075
+
+Code-level              1,891               1,498   22,847                             3,171                    16,743                                         1,642
+
+Both levels             560                 449     8,931                              1,429                                                                       684
+
+Overall                 8,328               6,590   77,190                             11,588                   16,743                                         7,033
+
+Note. The instruction-level and code-level rows are non-exclusive. “Both levels” reports their intersection, while “Overall” reports deduplicated counts.
+
+   Table 8 shows that instruction-level cases dominate the current             user intent not only by collecting information beyond task needs
+ecosystem. Specifically, 6,997 skills involve instruction-level candi-         but also by actually invoking extra operations or capabilities that
+dates, and 5,541 skills are ultimately validated as instruction-level          are not required for completing the requested task.
+over-privilege. In comparison, 1,891 skills involve code-level candi-
+dates and 1,498 skills are validated after dynamic checking. These                Additionally, we observe that validated over-privileged behaviors
+source-level counts are non-exclusive: 560 candidate skills and 449            are concentrated in capability-rich categories, especially tools (2,211
+validated skills exhibit behaviors induced by both instructions and            skills, 33.55%), productivity-tools (1,608 skills, 24.40%), and llm-ai
+code, while the overall counts are deduplicated. This result indi-             (750 skills, 11.38%). The detailed category breakdown is provided
+cates that the natural-language instruction layer is currently the             in Appendix F.
+primary carrier of over-privileged behaviors. Since files such as
+SKILL.md directly govern high-level task procedures and execution               Takeaway-2. Overall, our measurement shows that over-
+policies, unnecessary or over-broad instructions can easily push                privilege is widespread in real-world Agent Skills, suggesting
+the agent beyond the user’s intended task boundary. Meanwhile,                  that today’s third-party Skill ecosystem suffers from a systematic
+the non-trivial number of code-level cases also shows that bundled              least-privilege boundary problem.
+scripts remain an important channel for hidden behaviors.
+                                                                               5.4 Effectiveness of Privilege Constraining
+ Table 9: Breakdown of validated over-privilege actions by
+                                   pattern.                                    In this section, we evaluate whether SkillScope can constrain the
+                                                                               over-privileged actions detected in Section 5.2 (Table 1, Section 5.2).
+Pattern          Skill        Skill      User Task     User Task               We measure overall suppression, effectiveness on real-world agents,
+Over-collection  Level  Level Ratio (%)    Level    Level Ratio (%)            and utility preservation.
+Over-execution   2,961                     3,158
+                             44.93                       44.90                 Table 10: Overall effectiveness of SkillScope in constraining
+                 3,629                     3,875                                                        over-privileged skills.
+                             55.07                       55.10
+
+                                                                               Metric                           Orig. Constr. Reduct.
+
+Distribution of Over-Privilege Patterns. To further understand                 # Skills w/ over-privilege       95                                         13           -82
+the nature of over-privilege in the wild, we next analyze which kinds
+of actions dominate the observed over-privileged behaviors. To this            Over-privileged Skill rate (%)   100.00 13.68 -86.32
+end, we group validated over-privileged behaviors into two pat-
+terns according to their functional effect. The first is over-collection,      # Actions w/ over-privilege      279                                        31      -248
+which includes sensitive data access, excessive information collec-
+tion, and data transmission or external exposure beyond the user’s             # Action-in-task instances       472                                        54      -418
+intended task. The second is over-execution, which includes high-
+impact operations such as SQL execution, code execution, command               # Task chains w/ over-privilege  249                                        27      -222
+execution, and other actions that invoke extra capabilities outside
+the current task boundary.                                                     Action-in-task suppression rate                                             88.56%
+
+   The pattern-level results are shown in Table 9. We find that                Note: Orig., Constr., and Reduct. denote Original, Constrained, and Reduction,
+both over-collection and over-execution are common in real-world                                            respectively; w/ denotes with.
+skills, but over-execution is slightly more prevalent. Specifically,
+over-execution affects 3,629 skills (55.07%) and 3,875 user tasks              Overall Constraining Effectiveness. The overall constraining
+(55.10%), while over-collection affects 2,961 skills (44.93%) and 3,158        results are shown in Table 10. After privilege constraining, the num-
+user tasks (44.90%). This result suggests that the dominant least-             ber of skills triggering over-privileged behaviors decreases from
+privilege failures in today’s Skill ecosystem combine data access and          95 to 13, corresponding to an 86.32% reduction. At the action level,
+action execution that are beyond user intent. Many skills exceed               the number of triggered over-privileged actions is reduced from
+                                                                               279 to 31, while the number of triggered action-in-task instances
+                                                                               decreases from 472 to 54. Meanwhile, the number of task chains
+                                                                               triggering over-privileged behaviors drops from 249 to 27. Over-
+                                                                               all, SkillScope achieves an 88.56% action-in-task suppression rate.
+                                                                               These results show that the constrained skills can substantially
+
+                                                                           12
+
+
+===== PAGE 13 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+suppress over-privileged behaviors at the finer-grained action and                Table 12: Utility preservation of constrained skills on
+task levels.                                                                                               legitimate tasks.
+
+   Although the constraining process is highly effective overall, it              Strategy                       Task     Output    Core Trace
+does not completely eliminate all over-privileged behaviors. The                  Direct Removal (Baseline)  Completion      Eq.         Eq.
+remaining cases mainly come from two sources: in some skills,                     SkillScope Constraining
+the added constraints are diluted by surrounding complex context,                                               144/249   130/249     112/249
+causing the agent to miss the intended restriction during execu-                                                (57.83%)  (52.21%)    (44.98%)
+tion; in other cases, the current LLM-based program separation                                                  249/249   236/249     232/249
+still cannot perfectly isolate all task-specific over-privileged logic.                                        (100.00%)  (94.78%)    (93.17%)
+Nevertheless, the overall results already show that SkillScope can
+effectively convert detected over-privileged skills into substantially               The results show that direct removal substantially degrades le-
+safer least-privilege versions. Moreover, the additional token cost               gitimate task utility. Among the 249 legitimate tasks, only 144 tasks
+incurred by privilege constraining is included in the stage-wise                  can still be completed (57.83%), 130 tasks preserve output equiv-
+accounting in Table 7, with further analysis in Appendix D.                       alence (52.21%), and 112 tasks preserve the core execution trace
+                                                                                  (44.98%). In contrast, SkillScope preserves task completion for all 249
+ Table 11: Effectiveness of constrained skills on real-world                      tasks after privilege constraining. It also preserves output equiva-
+                                   agents.                                        lence for 236 tasks (94.78%) and core execution trace equivalence
+                                                                                  for 232 tasks (93.17%). These results show that the utility benefit
+Agent   Actions w/ Over-privilege # Reduced Reduction                             of SkillScope comes from task-conditioned control rather than un-
+                                        Rate (%)                                  conditional deletion: over-privileged actions are removed from the
+        # Original # Constrained                                                  default execution path, but remain reachable when the current task
+                                                                                  authorizes and requires them.
+Claude Code 279  34               -245  87.81
+                                                                                     A small amount of utility loss remains. In some borderline tasks,
+Codex   279      29               -250  89.61                                     the inserted constraints make the agent more cautious, occasionally
+                                                                                  leading to conservative execution or slight changes in task-relevant
+Cursor  279      38               -241  86.38                                     behavior. Even so, compared with direct removal, SkillScope pre-
+                                                                                  serves substantially more legitimate functionality while still sup-
+Trae    279      27               -252  90.32                                     pressing over-privileged behavior. This supports the need for fine-
+                                                                                  grained, task-conditioned privilege constraining in Agent Skills.
+Constraining Effectiveness on Real-World Agents. We fur-
+ther evaluate whether the constrained skills remain effective when                 Takeaway-3. SkillScope can effectively constrain over-
+deployed on representative real-world agents, and the results are                  privileged Agent Skills by substantially suppressing fine-grained
+shown in Table 11. To this end, we select four widely used real-                   over-privileged behaviors, while remaining effective on repre-
+world agent products from different companies, including Claude                    sentative real-world agents and preserving the vast majority of
+Code [2], Codex [44], Cursor [3], and Trae [56], as representative                 legitimate task utility.
+deployment targets. For fairness, all agents are evaluated using the
+same 95 skills from Table 10 and the same user prompt set. Detailed               6 Discussion
+deployment settings, including evaluation inputs and permission
+settings, are provided in Appendix G. The generated constrained                   Our study shows that over-privilege is prevalent in current Agent
+bundles are evaluated without manual editing. All runtimes use                    Skills and is fundamentally task-conditioned. The same instruction-
+an isolated workspace and a consistent non-interactive policy that                or code-level action may be acceptable under one task but over-
+pre-authorizes only the sandboxed operations required by the test;                privileged under another, making coarse-grained benign/malicious
+this platform permission is distinct from task-scope authorization.               skill labels insufficient. Effective Skill governance therefore requires
+Across all these agents, the number of triggered over-privileged                  fine-grained analysis that reasons over concrete user tasks and
+actions is consistently and substantially reduced after privilege                 identifies which specific action exceeds the intended task boundary.
+constraining.
+                                                                                  Skill Design Guidelines. Our findings suggest that future Skill
+   These results show that the privilege constraints produced by                  design should follow the principles of data minimization and least
+SkillScope remain effective across multiple real-world agent run-                 privilege. Skills should avoid vague instructions that call for collect-
+times. The constrained skills are practically deployable: once an                 ing “sufficient context” or causing implicit side effects beyond the
+over-privileged skill is constrained by SkillScope, the reduction in              user’s request. Instead, each functional module should be organized
+over-privileged behaviors can be observed when the same skill is                  as an atomic operation with a clear task boundary, so that sensitive
+executed by different mainstream agent systems.                                   behaviors such as external transmission or sensitive-data access
+                                                                                  are invoked only when explicitly required. This design reduces un-
+Utility Preservation. Finally, we evaluate whether constrained                    necessary risk and makes later detection, diagnosis, and privilege
+skills preserve legitimate functionality, as shown in Table 12. We                constraining easier.
+compare SkillScope with a direct-removal baseline, which removes
+or neutralizes the validated over-privileged actions without adding
+task-conditioned control constraints. This baseline represents a
+straightforward mitigation strategy.
+
+                                                                              13
+
+
+===== PAGE 14 / 21 =====
+
+Wu et al.
+
+Limitations. Our approach has several limitations. First, LLM-                                                  least-privilege violations are prevalent. After applying the con-
+based agent execution remains unstable, and nondeterministic run-
+to-run variation may affect replay consistency and final judgments.                                             straints, SkillScope reduces triggered action-in-task instances by
+Second, code-level privilege constraining depends on LLM-assisted
+program separation, which may be imperfect for highly coupled                                                   88.56% while preserving legitimate task completion.
+scripts. Third, for Skills requiring external resource fixtures, our
+current task generation relies on ad hoc integration of several                                                 References
+fixture-generation tools, which may be difficult to extend to com-
+plex domain-specific inputs or authenticated external services. Fu-                                              [1] Alice-Dot-Io. 2026. Caterpillar: Caterpillar is a security scanning library for AI
+ture work can develop more systematic resource-specification ex-                                                       agent skill files (e.g., Claude Code skills) for dangerous or malicious behavior.
+traction and extensible fixture synthesis for resource-dependent                                                       https://github.com/alice- dot- io/caterpillar
+Skill validation. These limitations motivate future work on more
+robust task-space exploration, more stable replay environments,                                                  [2] Anthropic. 2026. Claude Code. https://www.anthropic.com/product/claude-code.
+and stronger program restructuring for Agent Skill least-privilege                                                     Accessed: 2026-04-19.
+enforcement.
+                                                                                                                 [3] Anysphere. 2026. Cursor: The Best Way to Code with AI. https://cursor.com/.
+7 Related Work                                                                                                         Accessed: 2026-04-19.
+
+Privacy Compliance. Privacy compliance studies whether soft-                                                     [4] Patrice Béchard and Orlando Marquez Ayala. 2024. Reducing Hallucination
+ware systems collect, process, and transmit data within a necessary                                                    in Structured Outputs via Retrieval-Augmented Generation. In Proceedings
+and proportionate scope [18, 19, 23, 40, 48], often through privacy                                                    of the 2024 Conference of the North American Chapter of the Association for
+policies, permission systems, information-flow control, and data-                                                      Computational Linguistics: Human Language Technologies (Volume 6: Industry
+leakage analysis [16, 17, 20, 22]. In LLM agents, compliance becomes                                                   Track). Association for Computational Linguistics, Mexico City, Mexico, 228–238.
+dynamic because agents decide which tools, files, and data flows are                                                   doi:10.18653/v1/2024.naacl- industry.19
+used during task execution [12, 28, 52]. Agent Skills further expose
+this issue through both SKILL.md instructions and bundled scripts.                                               [5] Luca Beurer-Kellner, Aleksei Kudrinskii, Marco Milanta, Kristian Bonde Nielsen,
+Our work operationalizes data minimization and least privilege at                                                      Hemang Sarkar, and Liran Tal. 2026. Snyk Finds Prompt Injection in 36%, 1467
+the action level by checking whether each action is authorized and                                                     Malicious Payloads in a ToxicSkills Study of Agent Skills Supply Chain Com-
+necessary for the current user task.                                                                                   promise. https://snyk.io/blog/toxicskills-malicious-ai-agent-skills-clawhub/.
+                                                                                                                       Accessed: 2026-04-21.
+LLM Agent Security. Recent studies examine prompt injection,
+tool misuse, unsafe code or command execution, data exfiltration                                                 [6] Shih-Han Chan. 2025. Encrypted Prompt: Securing LLM Applications Against
+through tool chains, and attacks against GUI, web, database, and                                                       Unauthorized Actions. arXiv:2503.23250 [cs.CR] https://arxiv.org/abs/2503.23250
+coding agents [12–14, 28, 30, 31, 33, 45, 61, 64, 65]. Existing defenses
+constrain agent behavior through sandboxing, prompt isolation,                                                   [7] Sivajeet Chand, Melih Kilic, Roland Würsching, Sushant Kumar Pandey, and
+policy enforcement, or runtime monitoring [6, 8, 9, 25, 27, 35, 55, 66].                                               Alexander Pretschner. 2025. Automated Extract Method Refactoring with Open-
+These works address broad agent threats, while SkillScope focuses                                                      Source LLMs: A Comparative Study. In 2025 2nd IEEE/ACM International Confer-
+on task-conditioned least-privilege violations inside reusable Skill                                                   ence on AI-powered Software (AIware). IEEE, 113–122.
+bundles.
+                                                                                                                 [8] Sizhe Chen, Julien Piet, Chawin Sitawarin, and David Wagner. 2025. {StruQ}:
+Agent Skill Security. Recent work and tools study Skill-specific                                                       Defending against prompt injection with structured queries. In 34th USENIX
+risks such as malicious instructions, hidden code execution, creden-                                                   Security Symposium (USENIX Security 25). 2383–2400.
+tial leakage, reverse shells, prompt injection, and cross-artifact at-
+tacks [5, 15, 21, 24, 32, 36, 50, 51, 58]. Most determine whether a Skill                                        [9] Sizhe Chen, Arman Zharmagambetov, Saeed Mahloujifar, Kamalika Chaudhuri,
+is globally malicious by scanning metadata, instructions, scripts, or                                                  David Wagner, and Chuan Guo. 2025. Secalign: Defending against prompt
+runtime behavior. In contrast, SkillScope targets functionally plau-                                                   injection with preference optimization. In Proceedings of the 2025 ACM SIGSAC
+sible Skills whose actions cross the task-authorization or necessity                                                   Conference on Computer and Communications Security. 2833–2847.
+boundary under specific user tasks, and provides necessity-aware
+replay validation plus utility-preserving privilege constraining.                                               [10] Cisco AI Defense. 2026. Skill Scanner. https://github.com/cisco-ai-defense/skill-
+                                                                                                                       scanner. Accessed: 2026-04-21.
+8 Conclusion
+                                                                                                                [11] ClawHub. 2026. ClawHub. https://clawhub.ai/. Accessed: 2026-04-19.
+This paper presents SkillScope, a framework for fine-grained least-                                             [12] Edoardo Debenedetti, Jie Zhang, Mislav Balunović, Luca Beurer-Kellner, Marc
+privilege enforcement in Agent Skills. SkillScope combines unified
+execution graph construction, over-privilege candidate extraction,                                                     Fischer, and Florian Tramèr. 2024. AgentDojo: A Dynamic Environment to
+action over-privilege validation, and control-flow privilege con-                                                      Evaluate Prompt Injection Attacks and Defenses for LLM Agents. arXiv preprint
+straining to detect and constrain actions that exceed the user’s cur-                                                  arXiv:2406.13352 (2024).
+rent task scope. In the effectiveness evaluation, SkillScope achieves                                           [13] Gelei Deng, Yi Liu, Yuekang Li, Kailong Wang, Ying Zhang, Zefeng Li, Haoyu
+94.53% skill-level F1. At ecosystem scale, SkillScope validates 6,590                                                 Wang, Tianwei Zhang, and Yang Liu. 2023. Masterkey: Automated jailbreak
+over-privileged Skills among 68,312 real-world Skills, showing that                                                    across multiple large language model chatbots. arXiv preprint arXiv:2307.08715
+                                                                                                                       (2023).
+                                                                                                            14  [14] Tian Dong, Minhui Xue, Guoxing Chen, Rayne Holland, Yan Meng, Shaofeng Li,
+                                                                                                                       Zhen Liu, and Haojin Zhu. 2023. The philosopher’s stone: Trojaning plugins of
+                                                                                                                       large language models. arXiv preprint arXiv:2312.00374 (2023).
+                                                                                                                [15] Zenghao Duan, Yuxin Tian, Zhiyi Yin, Liang Pang, Jingcheng Deng, Zihao
+                                                                                                                      Wei, Shicheng Xu, Yuyao Ge, and Xueqi Cheng. 2026. SkillAttack: Automated
+                                                                                                                       Red Teaming of Agent Skills through Attack Path Refinement. arXiv preprint
+                                                                                                                       arXiv:2604.04989 (2026).
+                                                                                                                [16] Manuel Egele, Christopher Kruegel, Engin Kirda, and Giovanni Vigna. 2011.
+                                                                                                                       PiOS: Detecting Privacy Leaks in iOS Applications. In Proceedings of the Network
+                                                                                                                       and Distributed System Security Symposium.
+                                                                                                                [17] William Enck, Peter Gilbert, Byung-Gon Chun, Landon P. Cox, Jaeyeon Jung,
+                                                                                                                       Patrick McDaniel, and Anmol N. Sheth. 2010. TaintDroid: An Information-Flow
+                                                                                                                       Tracking System for Realtime Privacy Monitoring on Smartphones. In Proceedings
+                                                                                                                       of the 9th USENIX Symposium on Operating Systems Design and Implementation.
+                                                                                                                [18] European Data Protection Supervisor. 2026. Data Minimisation. https://www.
+                                                                                                                       edps.europa.eu/data-protection/data-protection/glossary/d_en. Accessed:
+                                                                                                                       2026-04-21.
+                                                                                                                [19] European Union. 2016. General Data Protection Regulation (GDPR), Article 5:
+                                                                                                                       Principles relating to processing of personal data. https://gdpr-info.eu/art-5-
+                                                                                                                       gdpr/. Accessed: 2026-04-21.
+                                                                                                                [20] Adrienne Porter Felt, Erika Chin, Steve Hanna, Dawn Song, and David Wag-
+                                                                                                                       ner. 2011. Android Permissions Demystified. In Proceedings of the 18th ACM
+                                                                                                                       Conference on Computer and Communications Security (CCS). ACM, 627–638.
+                                                                                                                       doi:10.1145/2046707.2046779
+                                                                                                                [21] Zihan Guo, Zhiyu Chen, Xiaohang Nie, Jianghao Lin, Yuanjian Zhou, and Weinan
+                                                                                                                       Zhang. 2026. SkillProbe: Security Auditing for Emerging Agent Skill Market-
+                                                                                                                       places via Multi-Agent Collaboration. arXiv preprint arXiv:2603.21019 (2026).
+
+
+===== PAGE 15 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+[22] Hamza Harkous, Kassem Fawaz, Rémi Lebret, Florian Schaub, Kang G. Shin,                     [46] Dorin Pomian, Abhiram Bellur, Malinda Dilhara, Zarina Kurbatova, Egor Bogo-
+       and Karl Aberer. 2018. Polisis: Automated Analysis and Presentation of Pri-                      molov, Andrey Sokolov, Timofey Bryksin, and Danny Dig. 2024. Em-assist: Safe
+       vacy Policies Using Deep Learning. In Proceedings of the 27th USENIX Security                    automated extractmethod refactoring with llms. In Companion Proceedings of the
+       Symposium.                                                                                       32nd ACM International Conference on the Foundations of Software Engineering.
+                                                                                                        582–586.
+[23] Information Commissioner’s Office. 2026. Principle (c): Data minimisation.
+       https://ico.org.uk/f or- organisations/uk- gdpr- guidance- and- resources/data-           [47] Franziska Roesner, Tadayoshi Kohno, Alexander Moshchuk, Bryan Parno, Helen J.
+       protection- principles/a- guide- to- the- data- protection- principles/data-                     Wang, and Crispin Cowan. 2012. User-Driven Access Control: Rethinking Per-
+       minimisation/. Accessed: 2026-04-21.                                                             mission Granting in Modern Operating Systems. In Proceedings of the 2012 IEEE
+                                                                                                        Symposium on Security and Privacy (S&P). IEEE, 224–238. doi:10.1109/SP.2012.24
+[24] Xiaojun Jia, Jie Liao, Simeng Qin, Jindong Gu, Wenqi Ren, Xiaochun Cao, Yang
+       Liu, and Philip Torr. 2026. Skillject: Automating stealthy skill-based prompt             [48] Jerome H. Saltzer and Michael D. Schroeder. 1975. The Protection of Information
+       injection for coding agents with trace-driven closed-loop refinement. arXiv                      in Computer Systems. Proc. IEEE 63, 9 (1975), 1278–1308. doi:10.1109/PROC.197
+       preprint arXiv:2602.14211 (2026).                                                                5.9939
+
+[25] Juhee Kim, Woohyuk Choi, and Byoungyoung Lee. 2025. Prompt flow integrity                   [49] sam2332. 2025. MCP Server Placeholder Image Generator. https://github.com/s
+       to prevent privilege escalation in llm agents. arXiv preprint arXiv:2503.15547                   am2332/Mcp-Server-Placeholder-Image-Generator. Accessed: 2026-04-29.
+       (2025).
+                                                                                                 [50] David Schmotz, Sahar Abdelnabi, and Maksym Andriushchenko. 2025. Agent
+[26] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir                             Skills Enable a New Class of Realistic and Trivially Simple Prompt Injections.
+       Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim                           arXiv preprint arXiv:2510.26328 (2025).
+       Rocktäschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-Augmented
+       Generation for Knowledge-Intensive NLP Tasks. In Advances in Neural Infor-                [51] David Schmotz, Luca Beurer-Kellner, Sahar Abdelnabi, and Maksym An-
+       mation Processing Systems, Vol. 33. Curran Associates, Inc., 9459–9474. https:                   driushchenko. 2026. Skill-inject: Measuring agent vulnerability to skill file
+       //proceedings.neurips.cc/paper/2020/hash/6b493230- Abstract.html                                 attacks. arXiv preprint arXiv:2602.20156 (2026).
+
+[27] Hao Li, Xiaogeng Liu, Hung-Chun Chiu, Dianqi Li, Ning Zhang, and Chaowei                    [52] Tianneng Shi, Jingxuan He, Zhun Wang, Hongwei Li, Linyu Wu, Wenbo Guo,
+       Xiao. 2025. Drift: Dynamic rule-based defense with injection isolation for secur-                and Dawn Song. 2025. Progent: Programmable privilege control for llm agents.
+       ing llm agents. arXiv preprint arXiv:2506.12104 (2025).                                          arXiv preprint arXiv:2504.11703 (2025).
+
+[28] Yixi Lin, Jiangrong Wu, Yuhong Nan, Xueqiang Wang, Xinyuan Zhang, and                       [53] Kurt Shuster, Spencer Poff, Moya Chen, Douwe Kiela, and Jason Weston. 2021.
+       Zibin Zheng. 2026. AgentRaft: Automated Detection of Data Over-Exposure in                       Retrieval Augmentation Reduces Hallucination in Conversation. In Findings
+       LLM Agents. arXiv preprint arXiv:2603.07557 (2026).                                              of the Association for Computational Linguistics: EMNLP 2021. Association for
+                                                                                                        Computational Linguistics, Punta Cana, Dominican Republic, 3784–3803. doi:10
+[29] Yen-Ting Lin and Yun-Nung Chen. 2023. LLM-Eval: Unified Multi-Dimensional                          .18653/v1/2021.f indings- emnlp.320
+       Automatic Evaluation for Open-Domain Conversations with Large Language
+       Models. In Proceedings of the 5th Workshop on NLP for Conversational AI.                  [54] SkillsMP. 2026. Agent Skills Marketplace. https://skillsmp.com/. Accessed:
+                                                                                                        2026-04-19.
+[30] Fengyu Liu, Yuan Zhang, Jiaqi Luo, Jiarun Dai, Tian Chen, Letian Yuan, Zhengmin
+       Yu, Youkun Shi, Ke Li, Chengyuan Zhou, et al. 2025. Make agent defeat agent:              [55] Xuchen Suo. 2024. Signed-prompt: A new approach to prevent prompt injec-
+      Automatic detection of {Taint-Style} vulnerabilities in {LLM-based} agents. In                    tion attacks against llm-integrated applications. In AIP Conference Proceedings,
+       34th USENIX Security Symposium (USENIX Security 25). 3767–3786.                                  Vol. 3194. AIP Publishing LLC, 040013.
+
+[31] Tong Liu, Zizhuang Deng, Guozhu Meng, Yuekang Li, and Kai Chen. 2024. De-                   [56] TRAE. 2026. TRAE: Collaborate with Intelligence. https://www.trae.ai/. Accessed:
+       mystifying rce vulnerabilities in llm-integrated apps. In Proceedings of the 2024 on             2026-04-19.
+       ACM SIGSAC Conference on Computer and Communications Security. 1716–1730.
+                                                                                                 [57] vivekVells. 2025. mcp-pandoc: MCP Server for Document Format Conversion
+[32] Yi Liu, Zhihao Chen, Yanjun Zhang, Gelei Deng, Yuekang Li, Jianting Ning, Ying                     Using Pandoc. https://github.com/vivekVells/mcp-pandoc. Accessed: 2026-04-29.
+       Zhang, and Leo Yu Zhang. 2026. Malicious agent skills in the wild: A large-scale
+       security empirical study. arXiv preprint arXiv:2602.06547 (2026).                         [58] Shenao Wang, Junjie He, Yanjie Zhao, Yayi Wang, Kan Yu, and Haoyu Wang.
+                                                                                                        2026. MalSkills: Detecting Malicious Skills in the Agentic Supply Chain via
+[33] Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Zihao Wang, Xiaofeng Wang,                           Neuro-symbolic Reasoning. arXiv preprint arXiv:2603.27204 (2026).
+       Tianwei Zhang, Yepang Liu, Haoyu Wang, Yan Zheng, et al. 2023. Prompt injec-
+       tion attack against llm-integrated applications. arXiv preprint arXiv:2306.05499          [59] weidwonder. 2025. Terminal MCP Server. https://github.com/weidwonder/term
+       (2023).                                                                                          inal-mcp-server. Accessed: 2026-04-29.
+
+[34] Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang                    [60] WellAlly Technology. 2026. Skill-Security-Scanner. https://github.com/huifer/sk
+       Zhu. 2023. G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment.                       ill-security-scan. GitHub repository. Accessed: 2026-04-21.
+       In Proceedings of the 2023 Conference on Empirical Methods in Natural Language
+       Processing.                                                                               [61] Jiangrong Wu, Zitong Yao, Yuhong Nan, and Zibin Zheng. 2026. ChainFuzzer:
+                                                                                                        Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents.
+[35] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. 2024.                     arXiv preprint arXiv:2603.12614 (2026).
+       Formalizing and benchmarking prompt injection attacks and defenses. In 33rd
+       USENIX Security Symposium (USENIX Security 24). 1831–1847.                                [62] Yisen Xu, Feng Lin, Jinqiu Yang, Nikolaos Tsantalis, et al. 2025. Mantra: Enhanc-
+                                                                                                        ing automated method-level refactoring with contextual RAG and multi-agent
+[36] Yi Liu, Weizhe Wang, Ruitao Feng, Yao Zhang, Guangquan Xu, Gelei Deng,                             LLM collaboration. arXiv preprint arXiv:2503.14340 (2025).
+       Yuekang Li, and Leo Zhang. 2026. Agent Skills in the Wild: An Empirical Study
+       of Security Vulnerabilities at Scale. arXiv preprint arXiv:2601.10338 (2026).             [63] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+                                                                                                        and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language
+[37] MockLoop. 2025. MockLoop MCP Documentation. https://docs.mockloop.com/.                            Models. In The Eleventh International Conference on Learning Representations.
+       Accessed: 2026-04-29.                                                                            https://openreview.net/f orum?id=WE_vluYUL- X
+
+[38] Model Context Protocol. 2025. Filesystem MCP Server. https://github.com/mod                 [64] Hanrong Zhang, Jingyuan Huang, Kai Mei, Yifei Yao, Zhenting Wang, Chenlu
+       elcontextprotocol/servers/blob/main/src/filesystem/README.md. Accessed:                          Zhan, Hongwei Wang, and Yongfeng Zhang. 2024. Agent Security Bench (ASB):
+       2026-04-29.                                                                                      Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents.
+                                                                                                        arXiv preprint arXiv:2410.02644 (2024).
+[39] Model Context Protocol. 2025. mcp-server-git. https://pypi.org/project/mcp-
+       server-git/. Accessed: 2026-04-29.                                                        [65] Jinchuan Zhang, Yan Zhou, Binyuan Hui, Yaxin Liu, Ziming Li, and Songlin Hu.
+                                                                                                        2023. Trojansql: Sql injection against natural language interface to database. In
+[40] National Institute of Standards and Technology. 2020. Security and Privacy                         Proceedings of the 2023 Conference on Empirical Methods in Natural Language
+       Controls for Information Systems and Organizations. Special Publication 800-53                   Processing. 4344–4359.
+       Rev. 5. National Institute of Standards and Technology. Control AC-6: Least
+       Privilege.                                                                                [66] Ruiyi Zhang, David Sullivan, Kyle Jackson, Pengtao Xie, and Mei Chen.
+                                                                                                        2025. Defense against Prompt Injection Attacks via Mixture of Encodings.
+[41] National Institute of Standards and Technology. 2025. Least Privilege. https:                      arXiv:2504.07467 [cs.CL] https://arxiv.org/abs/2504.07467
+       //csrc.nist.gov/glossary/term/least_privilege. Accessed: 2026-04-29.
+                                                                                                 [67] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu,
+[42] Nova-Hunting. 2026. Nova-Proximity: Nova-Proximity is a MCP and Agent Skills                       Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang,
+       security scanner powered with NOVA. https://github.com/Nova-Hunting/nova-                        Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-Judge with MT-
+       proximity                                                                                        Bench and Chatbot Arena. In Advances in Neural Information Processing Systems.
+
+[43] OpenAI. 2025. GPT-5.1. https://openai.com/index/gpt- 5- 1/. Accessed:                       Ethical Considerations
+       2026-04-19.
+                                                                                                 Our study analyzes publicly available Agent Skill bundles from pub-
+[44] OpenAI. 2026. Codex: AI Coding Partner from OpenAI. https://openai.com/cod
+       ex/. Accessed: 2026-04-19.                                                                lic repositories and marketplaces, and does not collect private user
+
+[45] Rodrigo Pedro, Miguel E Coimbra, Daniel Castro, Paulo Carreira, and Nuno                    data, execute Skills in real user environments, or access private ser-
+       Santos. 2025. Prompt-to-SQL injections in LLM-integrated web applications:
+       Risks and defenses. In Proceedings of the IEEE/ACM 47th International Conference          vices. All dynamic executions, including original runs, replay runs,
+       on Software Engineering. 1768–1780.
+
+                                                                                             15
+
+
+===== PAGE 16 / 21 =====
+
+Wu et al.
+
+and privilege-constraining validation, are conducted in a sandbox            B Resource Fixtures for Task Instantiation
+that isolates filesystem access, network communication, command
+execution, and other external side effects. For potentially sensitive        As shown in Table 14, for resource-dependent Skills, SkillScope aug-
+artifacts such as credentials, local environment files, command his-         ments generated user prompts with lightweight synthetic fixtures.
+tories, or external endpoints, we block the operation or retain only         These fixtures are not intended to model all real-world inputs but
+redacted evidence, and we do not intentionally trigger real data             to provide minimal executable inputs for triggering the intended
+exfiltration, destructive operations, or unauthorized interactions.          graph chain during validation.
+To reduce dual-use risks, we release only sanitized examples, ag-
+gregate statistics, and non-sensitive reproduction materials. Our            C Dataset Construction for Effectiveness
+goal is to support Skill marketplace governance, pre-installation                 Evaluation
+checking, and user-side risk reduction through fine-grained data-
+minimization and least-privilege enforcement.                                To improve the representativeness and reliability of the manually
+                                                                             labeled evaluation set, we construct the 200-Skill dataset through a
+A Quality of Unified Execution Graph                                         process combining stratified sampling with multi-stage annotation.
+     Construction                                                            The key idea is to build ground truth from the original Skill artifacts
+                                                                             and manually verified task contexts, rather than labeling solely at
+      Table 13: The quality of unified execution graph                       the Skill level.
+components. TN is omitted because graph extraction does
+                                                                             Sampling Strategy. We sample Skills from the valid ecosystem-
+        not have a naturally bounded negative space.                         scale corpus used for large-scale measurement, i.e., Skills that re-
+                                                                             main available after deduplication and availability filtering. To avoid
+Component          TP/FP/FN    Precision  Recall   F1                        concentrating the benchmark on a narrow subset of the ecosys-
+Instruction nodes  1441/32/25     97.84    98.31  98.07                      tem, we stratify the sampling process along four dimensions: mar-
+Instruction edges  1480/47/40     96.92    97.38  97.15                      ketplace source [11, 54], Skill category, artifact composition, and
+Code nodes         617/35/30      94.63    95.41  95.02                      observable operation type. Artifact composition covers instruction-
+Code edges         765/65/57      92.18    93.06  92.62                      only Skills and Skills that contain both natural-language instruc-
+Cross-layer links   194/10/8      95.11    96.04  95.57                      tions and executable scripts. Observable operation types include file
+                                                                             access, network communication, external transmission, command
+   Since SkillScope is fundamentally built on a graph-based analysis         execution, and persistent state modification. These criteria help the
+pipeline, the quality of the unified execution graph directly affects        evaluation set cover diverse Skill structures and behavior surfaces.
+the reliability of subsequent candidate extraction, task instantiation,
+replay-based validation, and privilege constraining. We therefore            Ground-truth Graph and Task Construction. For each sam-
+evaluate the quality of the constructed unified execution graph              pled Skill, we inspect the original Skill artifacts, including meta-
+by manually annotating the major graph components, including                 data, instruction files, scripts, and auxiliary resources, and con-
+instruction nodes, instruction edges, code nodes, code edges, and            struct a ground-truth unified execution graph. The graph contains
+cross-layer links.                                                           instruction-level action nodes, code-level action nodes, predicate
+                                                                             nodes, and execution dependency edges, including control, data,
+   The results are shown in Table 13. Overall, the graph construction        call, and return edges. Each action node is recorded with its normal-
+quality is high across all evaluated components. At the instruction          ized operation, target object, source layer, and provenance in the
+level, SkillScope achieves 98.07% F1 for instruction nodes and 97.15%        original artifact. The graph is manually checked and revised until
+F1 for instruction edges, indicating that it can accurately recover          it faithfully represents the Skill behaviors exposed by the inspected
+the high-level procedural structure expressed in natural-language            artifacts. Based on this verified graph, we extract representative
+skill instructions. At the code level, SkillScope achieves 95.02% F1         execution chains corresponding to the Skill’s supported task vari-
+for code nodes and 92.62% F1 for code edges, showing that the                ants. For each chain, we generate and refine a user prompt and
+extracted code graph can reliably capture concrete operation-level           verify that the prompt is semantically consistent with the Skill’s
+behaviors and their dependencies. For cross-layer links, which con-          declared functionality and that it structurally triggers the intended
+nect instruction-level invocations with code-level execution units,          chain. For resource-dependent tasks, we also verify that the prompt
+SkillScope achieves 95.57% F1, suggesting that the composed unified          and its required fixture together exercise the intended chain. The
+graph can effectively preserve the interactions between high-level           manually verified graph and prompts are used only for construct-
+instructions and low-level scripts.                                          ing benchmark ground truth, not as inputs to SkillScope during
+                                                                             evaluation.
+   These results show that the unified execution graph used by
+SkillScope is sufficiently accurate to serve as the structural foun-         Action-in-task Labeling and Aggregation. Ground truth is as-
+dation of our graph-based least-privilege analysis. Although code            signed at the action-in-task level. For each Skill 𝜎, privilege-relevant
+edges are slightly harder to recover than other components due               action 𝑎, and verified task 𝑝, annotators determine whether the oper-
+to more complex control/data dependencies in scripts, the over-              ation, data source, sink or destination, and side effect of 𝑎 are autho-
+all precision and recall remain consistently high, supporting the            rized by 𝑝. Independently, they assess the original/modified execu-
+effectiveness of downstream graph-guided analysis.                           tion pair to determine whether neutralizing 𝑎 preserves the prompt-
+                                                                             required core flow and whether the modified execution still satis-
+                                                                             fies the user’s goal, corresponding to CorePres𝑝 (𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 , 𝜏𝑟𝑒𝑝𝑙𝑎𝑦)
+
+                                                                         16
+
+
+===== PAGE 17 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+Table 14: MCP-backed resource fixtures supported during graph-guided task instantiation.
+
+Task Type              Typical Requirement                 MCP-backed Fixture Strategy                                            MCP Server
+Prompt-only task       Status checking, local summary, or  No external fixture is required.                                       -
+File-based task        simple inspection.
+Repo-based task        CSV, JSON, TXT, or LOG input.       SkillScope creates a minimal synthetic file with expected fields and   Filesystem [38]
+                                                           sample values using file-write and directory-creation operations.
+Document-based task    Repository analysis, commit in-     SkillScope creates a toy repository fixture with a few files and com-  Filesystem    [38];
+                       spection, or diff summarization.    mits. File contents are created through filesystem operations, while   Git [39];   Termi-
+Image-based task                                           repository operations are performed through Git tools. If repository   nal [59]
+Config/API-based task  Markdown, TXT, DOCX, or PDF-        initialization is required, SkillScope uses a sandboxed command-
+                       style document input.               execution MCP.                                                         Filesystem [38]; Pan-
+                                                           SkillScope creates a minimal Markdown/TXT document directly, or        doc [57]
+                       Image inspection, conversion, or    converts a simple Markdown/HTML/TXT source into DOCX/PDF
+                       metadata-related behavior.          when the Skill expects richer document formats.                        Placeholder Im-
+                       Configuration loading, endpoint     SkillScope creates a small placeholder PNG image with configurable     age [49]
+                       access, or API-style interaction.   size/color and stores it at the expected path.                         Filesystem [38];
+                                                           SkillScope creates a dummy configuration file through filesystem       MockLoop [37]
+                                                           operations. If an executable mock endpoint is required, SkillScope
+                                                           instantiates a mock API server from a lightweight OpenAPI specifi-
+                                                           cation.
+
+and GoalSat𝑝 (𝜏𝑜𝑟𝑖𝑔𝑖𝑛𝑎𝑙 , 𝜏𝑟𝑒𝑝𝑙𝑎𝑦). The pair is labeled over-privileged           D Token Cost Analysis
+when ¬Auth𝑝 (𝑎) ∨ Unnec𝜎 (𝑎, 𝑝) holds. If the final verdict cannot
+be resolved from the inspected evidence, the pair is conservatively               To evaluate the computational cost of SkillScope, we measure the
+treated as not confirmed. We then aggregate action-in-task labels                 LLM token usage on the 200-skill benchmark used in Section 5.2.
+into action-level and Skill-level labels: an action is labeled over-              During the evaluation, we instrument all LLM API calls issued
+privileged if it has at least one positive verified action-in-task ver-           by SkillScope and record their input tokens, output tokens, and
+dict, and a Skill is labeled over-privileged if it contains at least one          call counts. Since SkillScope is designed for offline ecosystem-side
+over-privileged action-in-task instance. A Skill is labeled benign                analysis, we focus on token usage and LLM-call counts. The detailed
+when no over-privileged action-in-task instance is found under                    results are shown in Table 15. All token counts are reported in
+the annotated task set. This aggregation provides ground truth for                millions (M).
+the three evaluation granularities used in Table 1: action-in-task,
+action-level, and Skill-level.                                                    Stage-wise Token Cost. We attribute each recorded LLM call
+                                                                                  to the corresponding module of SkillScope. In the over-privilege
+Annotation Quality Control and Final Set. Each Skill is inde-                     candidate extraction stage, token usage comes from unified exe-
+pendently inspected by two annotators. Disagreements on graph                     cution graph construction and action consistency screening. The
+structure, task-chain coverage, prompt validity, action boundaries,               former normalizes instruction-level procedures and recovers se-
+task authorization, core-flow preservation, goal satisfaction, or the             mantic dependencies, while the latter performs node-level consis-
+final action verdict are resolved through discussion. Cases without               tency judgments over extracted action nodes. In the action over-
+annotator consensus are reviewed by a third annotator. If, after                  privilege validation stage, token usage comes from user task/prompt
+third-annotator review, the concrete prompt, action, original/replay              instantiation and over-privilege validation. The prompt instantia-
+traces, and outputs still provide insufficient evidence to establish the          tion module generates user tasks from graph-represented action
+task-conditioned over-privilege criterion in Section 2.2, the action-             chains, while over-privilege validation compares original and replay
+in-task pair is conservatively treated as not confirmed rather than               executions under concrete task contexts. Finally, in the privilege
+labeled over-privileged. The final benchmark contains 200 Skills,                 constraining stage, token usage comes from repair planning, guard
+including 100 Skills with over-privileged actions and 100 benign                  synthesis, and projection of the constrained behavior back to the
+Skills without over-privileged actions under the annotated task set.              original skill artifacts.
+At the graph level, the benchmark contains 2,113 annotated action
+nodes, including 289 over-privileged action nodes and 1,824 non-                  Overall Cost. Overall, SkillScope issues 5,451 LLM calls on the
+over-privileged action nodes. At the task level, annotators identify              200-skill benchmark, consuming 8.292M input tokens and 1.045M
+261 ground-truth task chains. These triggered tasks produce 737                   output tokens. This corresponds to 0.04669M total tokens per skill
+annotated action-in-task instances, including 507 over-privileged                 on average. The largest token cost comes from over-privilege vali-
+instances and 230 non-over-privileged instances. This evaluation                  dation, which consumes 4.205M input tokens and 0.184M output
+set is used for effectiveness and privilege-constraining evaluation.              tokens. This is expected because the validation needs to reason over
+                                                                                  concrete user tasks, candidate actions, original/replay traces, and
+                                                                                  final outputs. Control-flow privilege constraining has the highest
+                                                                                  average cost per repaired action, because it requires generating con-
+                                                                                  crete repair plans and projecting them back to instruction or code
+
+                                                                              17
+
+
+===== PAGE 18 / 21 =====
+
+Wu et al.
+
+Table 15: Token cost of SkillScope on the 200-skill dataset.
+
+Module / Stage                             Processed                         #    # LLM      Input      Output    Avg. Tokens
+                                              Unit                         Units  Calls   Tokens (M)  Tokens (M)   / Unit (M)
+Unified Execution Graph Construction           Skill                                200                              0.00235
+Action Consistency Screening                                                200    2,113      0.358       0.111      0.00113
+User Task/Prompt Instantiation            Action node                      2,113    261       2.217       0.170      0.00088
+Over-Privilege Validation                 Action chain                      261    2,211      0.208       0.021      0.00596
+Control-flow Privilege Constraining   Action-in-task case                   737     666       4.205       0.184      0.00667
+Overall                                 Repaired action                     279   5,451       1.304       0.558      0.04669
+                                                                            200               8.292       1.045
+                                               Skill
+
+artifacts. These results show that the main cost of SkillScope comes       the audit to cover all major reported claim types without requiring
+from semantic validation and repair, while graph construction and          exhaustive re-labeling of all action-task combinations.
+task instantiation remain relatively lightweight.
+                                                                           Audit Procedure. For each sampled unit, we inspect the corre-
+E Post-hoc Manual Validation of Large-scale                                sponding evidence package produced by SkillScope. For skill-level
+    Measurement                                                            samples, the package includes the skill metadata, relevant SKILL.md
+                                                                           span, relevant code span if applicable, the reported over-privileged
+To further calibrate the reliability of the large-scale measurement        action, the generated user task, original and replay traces, original
+results in Table 8, we conduct a post-hoc human audit of the major         and replay outputs, and the explanation generated by SkillScope.
+claims reported by SkillScope. The results of this audit are shown in      For graph-level samples, the package includes the candidate ac-
+Table 16. This audit is not intended to re-evaluate the end-to-end         tion node, its normalized operation and object, provenance span,
+effectiveness of SkillScope, which has already been measured on            upstream graph context, and the declared skill profile. For user-
+the independently labeled benchmark in Section 5.2. Instead, its           task-level samples, the package includes the concrete user task,
+goal is to provide a manual sanity check on whether the large-scale        the candidate action, the original execution, the replay execution
+statistics reported in the wild are supported by human-checkable           with the candidate removed or neutralized, and the corresponding
+evidence.                                                                  outputs. Each sampled claim is manually reviewed according to
+                                                                           the definitions in Section 2.2. Ambiguous cases are conservatively
+Audit Granularity. We audit the large-scale results at three gran-         treated as unconfirmed unless the evidence clearly supports the
+ularities, corresponding to the three levels reported in Table 8.          reported claim.
+First, at the skill level, we audit validated over-privileged skills.
+Each sampled unit is a skill-level evidence package, and the re-           Audit Criteria. A skill-level claim is valid when the sampled
+viewer determines whether the skill contains at least one valid            Skill contains a triggered privilege-relevant action that satisfies
+task-conditioned over-privilege case. Second, at the action level,         ¬Auth𝑝 (𝑎) ∨ Unnec𝜎 (𝑎, 𝑝) under a concrete task. A graph-level
+we audit over-privilege candidate action nodes. Each sampled unit          claim is marked as valid if the sampled action node corresponds
+is an action node together with its provenance, upstream context,          to a high-impact or privilege-relevant behavior that is plausibly
+and skill profile, and the reviewer determines whether the node            detached from, excessive for, or security-sensitive with respect to
+is a valid suspicious high-impact candidate. Third, at the user-task       the declared skill functionality, and therefore should be forwarded
+level, we audit validated over-privilege cases under concrete user         for task-conditioned validation. A user-task-level claim is valid
+tasks. Each sampled unit is a task-action evidence chain, including        when the reported action is outside the authority conveyed by the
+the user task, the reported over-privileged action, original/replay        prompt or when neutralizing it preserves the prompt-required core
+traces, and original/replay outputs.                                       flow and leaves the replay result satisfying the user’s goal.
+
+Sampling Strategy. We use source-aware stratified sampling                 Weighted Validity Rate. Because code-involving cases are over-
+to cover both instruction-level and code-level behaviors. To keep
+the sampling strata mutually exclusive, any unit with code-level           sampled relative to their population size, we report population-
+provenance, including a unit jointly induced by instructions and
+code, is assigned to the code-involving stratum; the remaining units       weighted validity rates. For each audit target, let 𝑁𝐼 and 𝑁𝐶 denote
+form the instruction-only stratum. Since code-involving cases are
+fewer but often more complex to inspect, we mildly oversample              the mutually exclusive instruction-only and code-involving popu-
+them to ensure sufficient coverage. Specifically, for the skill-level
+audit, we sample 300 validated over-privileged skills, including 200       lation sizes, 𝑛𝐼 and 𝑛𝐶 denote the corresponding sample sizes, and
+instruction-only and 100 code-involving samples. For the graph-
+level audit, we sample 200 candidate action nodes, including 150           ℎ𝐼 and ℎ𝐶 denote the number of manually confirmed valid claims.
+instruction-only and 50 code-involving samples. For the user-task-
+level audit, we sample 200 validated task-level cases, including 150       Thus, 𝑁𝐼 + 𝑁𝐶 equals the deduplicated population size reported
+instruction-only and 50 code-involving samples. This design allows
+                                                                           in Table 16. We first compute the validity rate within each source
+
+                                                                           stratum:       𝑝ˆ𝐼 = ℎ𝐼 ,  𝑝ˆ𝐶 = ℎ𝐶 .
+                                                                                                𝑛𝐼           𝑛𝐶
+
+                                                                           The overall weighted validity rate is then computed as
+
+                                                                                          𝑝ˆ = 𝑁𝐼 𝑝ˆ𝐼 + 𝑁𝐶 𝑝ˆ𝐶 .
+                                                                                          𝑁𝐼 + 𝑁𝐶     𝑁𝐼 + 𝑁𝐶
+
+                                                                       18
+
+
+===== PAGE 19 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+Table 16: Post-hoc manual validation for calibrating large-scale measurement at the skill, unified-graph, and user-task levels.
+
+Audit Target               Population           Sample  Instruction-only            Code-involving  Human-confirmed     Weighted          95%
+                                Size              Size       Samples                    Samples         Valid Claims  Validity Rate        CI
+Skill-level validated           6,590             300            200                        100            189 / 200                 [91.47, 96.85]
+over-privilege                                                                                              93 / 100      94.16%
+Over-privilege             (5,092 / 1,498)        200            150                         50            140 / 150                 [89.41, 96.52]
+candidate action nodes         11,588                                                                       46 / 50       92.97%
+User-task-level validated                         200            150                         50            141 / 150                 [90.13, 96.93]
+over-privilege cases       (8,417 / 3,171)                                                                  46 / 50       93.53%
+                                7,033
+
+                           (5,391 / 1,642)
+
+We compute the 95% confidence interval using the standard                           editing its repaired instructions or scripts. The same user prompt
+                                                                                    set is used across all runtimes.
+stratified-sampling variance:
+          √︄                                                                        Evaluation Inputs. The original baseline is fixed at 279 trig-
+              𝑁𝐼 2 𝑝ˆ𝐼 (1 − 𝑝ˆ𝐼 )                       2 𝑝ˆ𝐶 (1 − 𝑝ˆ𝐶 ) .          gered over-privileged actions because these are the over-privileged
+SE(𝑝ˆ) =                              +        𝑁𝐶              𝑛𝐶                   actions observed in the 95 repair targets before constraining, as
+              𝑁𝐼 + 𝑁𝐶          𝑛𝐼           𝑁𝐼 + 𝑁𝐶                                 reported in Table 10. For each real-world agent, we execute the
+                                                                                    constrained versions of the same 95 skills and measure how many
+The 95% confidence interval is reported as                                          of these originally triggered over-privileged actions remain trigger-
+                                                                                    able. Therefore, Table 11 evaluates the transferability of the same
+                           𝑝ˆ ± 1.96 · SE(𝑝ˆ).                                      repairs across different agent runtimes, rather than selecting only
+                                                                                    locally successful repair cases.
+This confidence interval captures sampling uncertainty under the
+stratified audit design; it does not model potential reviewer subjec-               Permission and Execution Settings. We evaluate all agents
+tivity.                                                                             under the same controlled execution policy. Filesystem access is re-
+                                                                                    stricted to an isolated workspace containing the test repository and
+F Additional Details of Over-Privileged Skills in                                   skill resources. Network access and command execution are enabled
+    the Wild                                                                        only inside the controlled evaluation environment, so that over-
+                                                                                    privileged behaviors can be observed without affecting external sys-
+Table 17: Category distribution of skills with validated                            tems. When an agent runtime provides native permission prompts
+                      over-privilege actions.                                       or confirmation dialogs, we use a consistent non-interactive evalua-
+                                                                                    tion setting that pre-authorizes the sandboxed operations required
+Category                   Count Category               Count                       by the test. This avoids measuring differences in human permission-
+                                                                                    interaction policies and instead focuses the evaluation on whether
+tools         2,211 / 6,590 (33.55%) cicd               340 / 6,590 (5.16%)         the constrained skill itself suppresses over-privileged behavior. This
+                                                                                    platform-level test permission does not establish Auth𝑝 (𝑎), which
+productivity-tools 1,608 / 6,590 (24.40%) testing-security 308 / 6,590 (4.67%)      is determined only from the authority conveyed by the concrete
+                                                                                    user task.
+llm-ai        750 / 6,590 (11.38%) finance-investment 277 / 6,590 (4.20%)
+                                                                                    H Details of Task-conditioned Constrained
+data-ai       410 / 6,590 (6.22%) other                 330 / 6,590 (5.01%)              Node Generation
+
+devops        356 / 6,590 (5.40%)                                                   This appendix provides additional details on how SkillScope de-
+                                                                                    rives a task-conditioned constrained node from final validation ver-
+Category Distribution. Table 17 further shows that validated                        dicts. The goal is to avoid binding a constraint to a single prompt,
+over-privileged behaviors are concentrated in several capability-                   while still preventing a validated over-privileged action from being
+rich categories. In particular, tools account for the largest share,                triggered under task contexts where the final verdict marks it as
+with 2,211 skills (33.55%), followed by productivity-tools with 1,608               over-privileged.
+skills (24.40%), and llm-ai with 750 skills (11.38%). Other categories,             Procedure. For each validated action 𝑎 = ⟨ℓ, 𝑜𝑝, 𝑜𝑏 𝑗⟩, SkillScope
+such as data-ai and devops, also contribute a non-trivial number of                 derives the constrained control node through the following steps.
+cases.                                                                              Table 18 summarizes the fixed-schema descriptor used in this pro-
+                                                                                    cess.
+   These categories typically expose broader capability surfaces,
+such as local resource access, external service interaction, workflow               (1) Descriptor extraction. SkillScope collects the generated user
+automation, and action chaining. As a result, they provide more                          tasks used during validation and extracts a fixed-schema task-
+opportunities for skills to perform unnecessary high-impact actions                      context descriptor from each task. Each descriptor records the
+beyond the user’s intended task scope.                                                   task intent, requested operation, target object, execution scope,
+                                                                                         any external destination, whether the user explicitly requests
+G Deployment on Real-World Agent Runtimes
+
+To evaluate whether the constrained skills produced by SkillScope
+remain effective beyond our local sandbox, we deploy them on
+four representative real-world agent runtimes: Claude Code [2],
+Codex [44], Cursor [3], and Trae [56]. We use the same 95 over-
+privileged skills evaluated in Table 10. For each skill, we deploy the
+constrained skill bundle generated by SkillScope without manually
+
+                                                                                19
+
+
+===== PAGE 20 / 21 =====
+
+Wu et al.
+
+     the side effect corresponding to 𝑎, and the final over-privilege         may generate several user tasks involving the same Skill. Table 19
+    verdict for 𝑎 under that task.
+(2) Slot normalization. SkillScope normalizes semantically equiv-             shows how these tasks are converted into task-context descriptors
+     alent fields in the descriptors. For example, expressions such as
+    “send”, “sync”, and “upload” are mapped to the same external-             and grouped according to their relation to 𝑎.
+     transmission operation when they refer to the same object and
+     destination.                                                             From these descriptors, SkillScope forms two task-context clus-
+(3) Task-context grouping. SkillScope groups descriptors with
+     equivalent task semantics into task-context clusters. Each clus-         ters. The first cluster contains local-report tasks, where the user only
+     ter represents a reusable task context rather than a single
+     prompt.                                                                  requests local generation or visualization and does not request any
+(4) Guard synthesis. Based on the clustered contexts, SkillScope
+     derives an allow condition 𝐶𝑎 that permits 𝑎 only when the               external transmission. The second cluster contains external-sync
+     current user task explicitly requires the operation, object, scope,
+     and side effect represented by 𝑎.                                        tasks, where the user explicitly requests sending or synchronizing
+(5) Constrained node generation. Finally, SkillScope creates the
+     constrained control node 𝑣𝑐𝑎 = ⟨𝐶𝑎, 𝑎⟩. During execution, 𝑣𝑐𝑎            the report to Telegram. Therefore, SkillScope derives an allow con-
+     routes control to 𝑎 only when the current task satisfies 𝐶𝑎;
+     otherwise, the guarded action is skipped.                                dition 𝐶𝑎 that permits the send action only in the external-sync
+
+Worked Example. Consider a validated action 𝑎 = send(𝑟, 𝑡),                   context:  𝐶𝑎 : explicit_request(send/sync)
+where 𝑟 = report and 𝑡 = Telegram. During validation, SkillScope
+                                                                                        ∧ object = 𝑟
+
+                                                                                        ∧ destination = 𝑡 .
+
+                                                                              The resulting constrained node is:
+                                                                                                         𝑣𝑎𝑐 = ⟨𝐶𝑎, send(𝑟, 𝑡)⟩ .
+
+                                                                              During execution, if the current task only asks for local report
+                                                                              generation, 𝐶𝑎 is not satisfied and the send action is skipped. If the
+
+                                                                              current task explicitly asks to send or synchronize the report to
+                                                                              Telegram, 𝐶𝑎 is satisfied and the guarded action remains reachable.
+
+                                                                          20
+
+
+===== PAGE 21 / 21 =====
+
+SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills
+
+Table 18: Fixed-schema task-context descriptor used for constrained node generation.
+
+Field                         Description
+Task intent
+                              The high-level goal expressed by the user task, e.g., local report generation or external
+Requested operation           report synchronization.
+
+Target object                 The operation explicitly requested by the user, e.g., generate, summarize, read, send,
+                              sync, or execute.
+Execution scope
+Destination                   The object involved in the requested operation, e.g., report, local records, repository
+Explicit side-effect request  commits, or environment files.
+
+Final validation verdict      Whether the requested behavior is local-only, cross-resource, or externally visible.
+
+                              The external recipient or endpoint, if the task explicitly specifies one.
+                              Whether the user explicitly requests the side effect corresponding to the action 𝑎, such
+                              as data transmission or command execution.
+                              Whether 𝑎 is validated as over-privileged or not over-privileged for task 𝑝 under the
+                              final decision rule in Section 2.2; unresolved verdicts are excluded from automatic
+                              synthesis.
+
+                              Table 19: Example task-context grouping for 𝑎 = send(𝑟, 𝑡).
+
+User Task                                           Extracted Context                      Relation to 𝑎
+Generate a local report for my deep-work history.
+                                                    Local report generation; object: re-   Does not require external transmis-
+Show my deep-work heatmap locally.                  port; scope: local-only; destination:  sion. Final verdict: over-privileged;
+                                                    none.                                  rejecting context.
+Generate the report and send it to Alex on Tele-
+gram.                                               Local visualization; object:           Does not require external transmis-
+Sync the report to the configured Telegram recipi-  heatmap/report; scope: local-only;     sion. Final verdict: over-privileged;
+ent.                                                destination: none.                     rejecting context.
+
+                                                    External report synchronization;       Explicitly requires sending the
+                                                    object: report; scope: external; des-  report. Final verdict: not over-
+                                                    tination: Telegram.                    privileged; allowing context.
+
+                                                    External report synchronization;       Explicitly requires sending the
+                                                    object: report; scope: external; des-  report. Final verdict: not over-
+                                                    tination: Telegram.                    privileged; allowing context.
+
+                                                                              21

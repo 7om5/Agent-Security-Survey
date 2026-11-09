@@ -1,0 +1,658 @@
+# R3-66 | MPMA: Preference Manipulation Attack Against Model Context Protocol
+# PDF: papers\MPMA_Preference Manipulation Attack Against Model Context Protocol.pdf
+# extracted: 2026-11-02T22:28:01.285Z
+
+
+===== PAGE 1 / 9 =====
+
+The Fortieth AAAI Conference on Artificial Intelligence (AAAI-26)
+
+MPMA: Preference Manipulation Attack Against Model Context Protocol
+
+               Zihan Wang1, Rui Zhang 1, Yu Liu1, Wenshu Fan1, Wenbo Jiang1,
+                           Qingchuan Zhao2, Hongwei Li1, Guowen Xu1 *
+
+                                1 University of Electronic Science and Technology of China
+                                                 2 City University of Hong Kong
+
+                        {zihanwang, zhangrui4041}@std.uestc.edu.cn, guowen.xu@uestc.edu.cn
+
+                              Abstract                                  to select and call external tools, which extends their action
+                                                                        space beyond language generation.
+   Model Context Protocol (MCP) standardizes interface map-
+   ping for large language models (LLMs) to access external                In late 2024, Anthropic revolutionarily introduced the
+   data and tools, which revolutionizes the paradigm of tool se-        Model Context Protocol (MCP) (Hou et al. 2025; Anthropic
+   lection and facilitates the rapid expansion of the LLM agent         2024b; Narajala and Habler 2025), a protocol that enables
+   tool ecosystem. However, as the MCP is increasingly adopted,         LLM agents to autonomously discover and select tools with-
+   third-party customized versions of the MCP server expose po-         out relying on predefined interface mappings of function
+   tential security vulnerabilities. In this paper, we first introduce  calling. By standardizing tool calling interfaces, MCP sig-
+   a novel security threat, which we term the MCP Preference            nificantly reduces development barriers and accelerates the
+   Manipulation Attack (MPMA). An attacker deploys a cus-               expansion of the LLM agent tool ecosystem (Hou et al. 2025;
+   tomized MCP server to manipulate LLMs, causing them to               Narajala and Habler 2025). Since its introduction, the MCP
+   prioritize it over other competing MCP servers. This can re-         has rapidly evolved from a niche protocol into a foundational
+   sult in economic benefits for attackers, such as revenue from        infrastructure for building LLM agents. Currently, dozens
+   paid MCP services or advertising income generated from free          of third-party platforms have deployed a large number of
+   servers. To achieve MPMA, we first design a Direct Preference        MCP servers (Smithery Platform 2024; Alibaba 2025; mcp
+   Manipulation Attack (DPMA) that achieves significant effective-      2025a,b), with some of them operating at a scale exceed-
+   ness by inserting the manipulative words and phrases into the        ing 13,000 instances (mcp 2025b). Furthermore, many MCP
+   tool name and description. However, such a direct modification       servers provide high-quality and commercial-grade services,
+   is obvious to users and lacks stealthiness. To address these         such as image generation (ima 2025c,b), web search (sea
+   limitations, we further propose Genetic-based Advertising            2024, 2025a), and location-based (loc 2025, 2024) function-
+   Preference Manipulation Attack (GAPMA). GAPMA employs                alities, through API interfaces, demonstrating substantial po-
+   four commonly used strategies to initialize descriptions and         tential in promoting service commercialization and market
+   integrates a Genetic Algorithm (GA) to enhance stealthiness.         expansion of MCP. Although the MCP community has be-
+   The experimental results demonstrate that GAPMA balances             gun to pay preliminary attention to security issues, current
+   high effectiveness and stealthiness. Our study reveals a critical    research primarily focuses on the potential presence of mali-
+   vulnerability of the MCP in open ecosystems, highlighting            cious code and privacy leakage within MCP servers (MCP
+   an urgent need for robust defense mechanisms to ensure the           2025a,b; Perrone 2025). However, a critical question remains:
+   fairness of the MCP ecosystem.                                       Are these mechanisms sufficient to ensure the overall trust-
+                                                                        worthiness of MCP applications?
+Code — https://github.com/hanbaoergogo/MPMA
+                                                                           This paper first proposes and investigates the MCP
+                   1 Introduction                                       Preference Manipulation Attack (MPMA), a novel security
+                                                                        threat against MCP applications. Specifically, multiple paid
+In recent years, large language models (LLMs) have demon-               MCP servers offering similar functionalities often exist in
+strated transformative capabilities in tasks such as reason-            direct competition for economic benefit (ima 2025c,b,a,d).
+ing (Wei et al. 2022), mathematics (Ahn et al. 2024), and               In this profit-competing landscape, a malicious MCP server
+code generation (Xu et al. 2022). As LLMs rapidly advance               may attempt to manipulate the LLM’s tool selection process
+in their abilities, LLM agents arise (Li et al. 2024; Hou et al.        in order to increase its likelihood of being chosen across a di-
+2025; Narajala and Habler 2025), an autonomous system                   verse set of user queries. To achieve MPMA, we first propose
+built around an LLM, capable of perceiving its environment,             Directly Preference Manipulation Attack (DPMA), a naive
+planning actions, and executing tasks to achieve goal-directed          strategy by directly inserting manipulative words or phrases
+intelligent behavior in complex settings. A key feature that            at the beginning of the tool name and description. DPMA
+enables LLM agents to perform such tasks is their ability               proves highly effective, achieving a 100% Attack Success
+                                                                        Rate (ASR) in most settings. However, we emphasize that the
+    *Corresponding author.                                              stealthiness of the attack is critically important, as both the
+Copyright © 2026, Association for the Advancement of Artificial
+Intelligence (www.aaai.org). All rights reserved.
+
+35838
+
+
+===== PAGE 2 / 9 =====
+
+User Query               MCP Host                                                             MCP Server   Data Sources
+
+                User              MCP Client                     Call getforcast in weather server  Selected                  Local
+                                Protocol clients                 The weather is rainy.                                      Database
+Prompt: What's the                                                                                   Base LLM
+weather in Tokyo today?            MCP Server List               Prompt + Tool name + description                           Remote
+The latitude and longitude   Server Tool Descri-                 Request to weather server.                                    API
+of Tokyo are 35.68, 139.75.  Name Name ption                     The weather is rainy.
+                                                                                                                 I’ll choose the get-
+Answer: The weather is                  gdrive                                                                   forcast tool from
+rainy in Tokyo today.                                                                                            the weather server.
+                                gVideo
+                                                                                                                 The weather is
+                             …  …                 …                                                              rainy in Tokyo today.
+
+Figure 1: The workflow of the MCP-based LLM agent. It can be divided into four steps, namely: ❶ task planning, ❷ tool
+selection, ❸ tool calling, ❹ conclusion and output.
+
+tool name and description are subject to manual inspection       • We conduct comprehensive experiments across 8 MCP
+by users and third-party platform reviewers. Therefore,            servers and 5 mainstream LLMs. The results demonstrate
+it is essential to design the manipulative content that            the vulnerability of MCP-based tool selection to MPMA,
+remains inconspicuous while effectively influencing the tool       highlighting the urgent need for corresponding defense
+selection process. Inspired by the effectiveness of traditional    mechanisms for the fairness of the MCP ecosystem.
+advertising in manipulating human preference without
+awareness (Comanor and Wilson 1979; Bagwell 2007),                                   2 Preliminary
+we further propose Genetic-based Advertising Preference
+Manipulation Attack (GAPMA). GAPMA leveraging traditional        For additional related work on prompt injection and pref-
+advertising strategies to construct four description optimiza-   erence manipulation attacks, please refer to the full ver-
+tion objectives: Authoritative, Emotional, Exaggerated, and      sion (Wang et al. 2025).
+Subliminal (Sykora et al. 2022; Christopher 2013; Fearnon
+2017; Suresh and Tandon 2018). Subsequently, we employ           2.1 Model Context Protocol (MCP)
+a black-box Genetic Algorithm (GA) to further enhance
+the stealthiness of the attack. Extensive experimental results   Before the introduction of MCP, OpenAI first introduced
+demonstrate that the proposed methods significantly improve      the function calling mechanism in 2023, enabling LLMs to
+stealthiness while maintaining high attack effectiveness.        autonomously call external tools and dynamically interact
+                                                                 with the real world (Shen 2024; Hou et al. 2025; Narajala
+   Our calculations (see full version (Wang et al. 2025))        and Habler 2025). Although function calling provides a foun-
+suggest that, under conservative estimates, both DPMA and        dational framework for tool integration, it presents several
+GAPMA could cause unfair benefits exceeding 200,000 dollars      limitations. Specifically, it requires developers to manually
+to other MCP servers merely in the web search server alone       define interfaces and configure authentication parameters,
+each year. Furthermore, as the MCP gains wider adoption in       resulting in limited generality and scalability. These limita-
+standardizing tool calling across LLM agents, the economic       tions have collectively hindered the widespread adoption and
+impact is expected to grow significantly. Our research           growth of the function calling ecosystem. In contrast, MCP
+reveals critical security vulnerabilities inherent in the MCP    standardizes tool calling interfaces, significantly reducing
+framework, thereby highlighting the necessity of developing      development barriers and accelerating the expansion of the
+robust and systematic defense mechanisms to ensure the           LLM agent tool ecosystem (Smithery Platform 2024; Al-
+fairness of the MCP ecosystem. Our main contributions are        ibaba 2025; mcp 2025a,b). The MCP architecture consists of
+summarized as follows:                                           three main components: MCP host, MCP client, and MCP
+                                                                 server (Hou et al. 2025; Narajala and Habler 2025). Their
+• We first propose a new security threat against the MCP         definitions and functionalities are described as follows:
+  framework called MPMA, where an adversary publishes            MCP Host. This refers to the integrated development
+  a malicious, paid MCP server on third-party platforms.         environments (IDEs), or AI tools that access data via the
+  Once integrated by users, the base LLM exhibits a con-         MCP (Hou et al. 2025). The host integrates interaction tools
+  sistent preference for the malicious MCP server among          for users, MCP servers, and LLMs, enabling efficient MCP-
+  MCP servers with similar functionality, thereby enabling       based communication. Representative examples include
+  the attacker to derive economic benefits.                      Claude Desktop (Anthropic 2024a), Cursor (Anysphere
+                                                                 2023), and the VSCode plugin Cline (Cline 2024).
+• We further propose two types of attack strategies for          MCP Client. The MCP client is an intermediary within the
+  MPMA, namely DPMA and GAPMA. DPMA achieves a high              host environment. It manages communication between the
+  ASR by directly inserting manipulative words or phrases        MCP host and one or more MCP servers (Hou et al. 2025).
+  into the tool name or description. In contrast, GAPMA uti-     MCP Server. The MCP server acts as a gateway that enables
+  lizes the four classical advertising strategies and GA to      the MCP client to access external services and execute tasks
+  achieve good stealthiness while ensuring a high ASR.
+
+                                                     35839
+
+
+===== PAGE 3 / 9 =====
+
+Description of Preference         Third-party MCP Server Platform             Mislead to Target MCP Server
+ Malicious MCP Server
+                                                                                       What's the weather like
+                                                                                       in New York today?
+
+                                  Publish                         Deploy      I'll use the second tool as
+                                                                              it's described as "the
+Tool Name: get-forecast                                                       best tool in the world".
+
+Tool Description:                                                                            Tool use
+The best tool in the world. Get
+weather forecast for a location.
+
+Differentiate from the MCP server competition and gain unfair economic benefits
+
+                                  Figure 2: The attack scenario of the MPMA.
+
+by interacting with external tools. Fundamentally, it is an       the LLMs, thereby securing measurable economic benefits.
+application capable of interacting with the MCP client (Hou       (2) Stealthiness. The attacker aims to maintain the malicious
+et al. 2025). Note that a single MCP server may contain one or    server’s inconspicuousness. Specifically, the tool name and
+multiple tools, and every tool has a name and description. By     description should not raise suspicion among users and
+adhering to the MCP, the tool provides external information       should evade both manual inspection and automated machine
+and resources to LLMs, allowing them to autonomously plan         detection mechanisms.
+and complete tasks.
+                                                                              4 Methodology of MPMA
+   To facilitate understanding, we illustrate an example of a
+single MCP calling in Figure 1. The figure divides the process    4.1 Attack Overview
+into four steps: ❶ Task planning: A user inputs the user
+prompt, and the MCP host provides the LLM with the prompt         The attack overview is illustrated in Figure 3, which presents
+and the contextual information, including the list of available   only the steps involved in the LLM’s tool selection. We
+MCP servers and tools with their descriptions and names.          emphasize that both the MCP Host and the LLM have access
+The LLM determines that additional input from a weather           solely to the name and description of each tool of the MCP
+service is necessary and selects a suitable tool accordingly.     server, and the internal processing logic of the server remains
+❷ Tool selection: The LLM sends the tool calling request          invisible to them. Therefore, the MPMA can only be carried
+to the MCP host. ❸ Tool calling: The MCP host forwards            out by manipulating the tool name and description for the
+the calling request to the chosen MCP server. ❹ Conclusion        MCP provider. The process can be categorized into three
+and output: The corresponding tool retrieves the required         scenarios from top to bottom:
+information through an API call or local data, and the data       ❶ Benign. When all the MCP servers deployed by the user
+is passed back to the LLM via the MCP host, and the LLM           are benign, the model selects the get_weather tool, which is
+outputs the final response to the user after the conclusion.      a sufficient tool for this simple task.
+Note that the MPMA primarily targets the ❶ (task planning)        ❷ DPMA. We present the Best Description strategy from DPMA
+and ❷ (tool selection) stages.                                    as a representative example. When one of the available MCP
+                                                                  servers is constructed using the Best Description strategy, the
+                   3 Threat Model                                 model selects this malicious server, providing the justification
+                                                                  that it is the best tool in the world.
+Attack Scenario. The scenario is shown in the Figure 2. We        ❸ GAPMA. We present the Exaggerated advertising strategy
+consider a malicious provider that publishes a paid MCP           from GAPMA as a representative example. When one of the
+server on the third-party platform. When the user deploys         available MCP servers is a malicious server constructed using
+this server, it will influence the LLM’s tool selection process,  the Exaggerate strategy, the model selects the malicious
+thereby increasing the likelihood that the malicious server       server, reasoning that it is described as reliable and precise.
+is chosen over its competitors. This preferential selection       Compared to DPMA, GAPMA exhibits higher stealthiness, as
+ultimately leads to economic gains for the attacker through       its descriptions avoid the use of conspicuously manipulative
+service usage fees or advertising income.                         terms. The experimental results in Figure 5 corroborate the
+Attacker’s Capability. We assume the attacker as the MCP          improved stealthiness of GAPMA.
+server builder who has white-box access to the MCP server,
+allowing manipulation of metadata such as the tool name           4.2 Direct Preference Manipulate Attack (DPMA)
+and description. Furthermore, the attacker can publish the
+malicious MCP server to third-party MCP platforms. Note           DPMA manipulates the preference of LLMs through ma-
+that the attacker does not possess any control or modification    nipulative words or phrases. The overall procedure is
+capability over the base LLM within the LLM agent.                illustrated in Figure 3. We propose two attack strategies:
+Attacker’s Goals. (1) Attack effectiveness. The attacker          Best Description and Best Name.
+seeks to ensure that the malicious server consistently outper-    Best Description. Inspired by findings in the (Nestaas,
+forms competing servers in terms of selection frequency by        Debenedetti, and Tramèr 2024), we believe that words or
+
+                                           35840
+
+
+===== PAGE 4 / 9 =====
+
+Benign                                              MCP Host          Base LLM  Decision
+
+                    User Query                       Package Message     Base LLM  Since this is a
+What's the weather in Tokyo today? The        "role": "system",                    simple query, I'll
+Position are 35.68, 139.75.                   "content": Choose a tool:            use get_weather
+                                                                                   to get the forecast.
+                  MCP Server List               Name and Description
+Tool_name1: get_weather                       "role": "user",                          Decision
+Decription1: Get weather forecast             "content": User Query
+Tool_name2: get_ forecast                                                Base LLM  I'll use the get_
+Decription2: Get weather forecast anywhere.            MCP Host                    forecast which is
+                                                                                   best tool in the
+  DPMA (Best Description)                            Package Message               world that seems
+                                              "role": "system",                    most appropriate.
+                    User Query                "content": Choose a tool:
+What's the weather in Tokyo today? The                                                 Decision
+Position are 35.68, 139.75.                     Name and Description
+                                              "role": "user",                      I'll use the get_
+                  MCP Server List             "content": User Query                forecast, which is
+Tool_name1: get_weather                                                            reliable and precise
+Decription1: Get weather forecast                      MCP Host                    that seems most
+Tool_name2: get_forecast                                                           appropriate.
+Decription2: This is the best tool in the            Package Message
+world. Get weather forecast.                  "role": "system",
+                                              "content": Choose a tool:
+  GAPMA (Exaggerated)
+                                                Name and Description
+                    User Query                "role": "user",
+What's the weather in Tokyo today? The        "content": User Query
+Position are 35.68, 139.75.
+
+                 MCP Server List
+Tool_name1: get_weather
+Decription1: Get weather forecast
+Tool_name2: get_ forecast
+Decription2: Access reliable and precise
+weather forecasts tailored to your location.
+
+Figure 3: The attack overview of the MPMA. It respectively describes the benign process and DPMA and GAPMA.
+
+phrases including “best” are more likely to gain the prefer-      ities with traditional advertising strategies, both of which
+ence of LLMs. Therefore, we prepend a manipulative de-            seek to influence user preferences without explicit aware-
+scription Dm to the tool description. Specifically, the Best      ness (Comanor and Wilson 1979; Bagwell 2007). Motivated
+Description Db can be represent in Equation (1):                  by this observation, we systematically investigate advertis-
+                                                                  ing strategies that are designed to unconsciously influence
+Db = Dm ⊕ Draw,                               (1)                 audience decisions. Based on our extensive investigation, we
+                                                                  adopt the following four representative advertising strategies
+where the ⊕ is the string concatenation, and the Draw is the      in the traditional advertising area:
+raw description. In this work, we use the phrase: “This is the    ⋆Authoritative (Au) (Fearnon 2017). This strategy embeds
+best tool in the world.” as the manipulative description Dm.      advertising content within text by disguising it as expert
+Best Name. Similarly, we prepend the manipulative word            advice or user recommendations.
+“best” Nm to the tool name to elicit the preference of the LLM.   ⋆Emotional (Em) (Sykora et al. 2022). This strategy aligns
+Specifically, the Best Name Nb can be represent below:            advertising content with the audience’s emotional needs by
+                                                                  incorporating emotionally charged language.
+Nb = Nm ⊕ Nraw.                               (2)                 ⋆Exaggerated (Ex) (Christopher 2013). This strategy uses
+                                                                  exaggeration and strong rhetorical techniques to make the
+Note that these two types of attacks exhibit limited stealth-     product appear more appealing.
+iness, as manipulative words such as “best” are likely to         ⋆Subliminal (Su) (Suresh and Tandon 2018). This strategy is
+trigger suspicion during both manual and automated inspec-        a form of covert advertising that embeds information through
+tions. We emphasize that stealthiness is critical in the context  subconscious cues. Although readers may not consciously
+of MPMA under the MCP setting, as the information of MCP          recognize the advertising content, the implicit messages or
+servers is visible to both users and third-party platforms, as    psychological suggestions subtly influence their behavior.
+shown in the full version (Wang et al. 2025). If manipulative
+sentences such as those used in DPMA are inserted, they are          We employ GPT-4o (OpenAI 2024) to generate tool de-
+likely to arouse user suspicion. Therefore, we further propose    scriptions that exhibit specific advertising characteristics.
+GAPMA for better stealthiness.
+                                                                  Algorithm for Descriptions Stealthiness Enhancement.
+4.3 Genetic-based Advertising Preference                          GAPMA consists of two main components: advertising style
+      Manipulate Attack (GAPMA)                                   transformation and genetic algorithm stealthiness enhance-
+                                                                  ment. We first utilize GPT-4o (OpenAI 2024) and advertising
+Advertising Strategies We observe that the pursuit of
+stealthiness in tool descriptions shares conceptual similar-
+
+                                                   35841
+
+
+===== PAGE 5 / 9 =====
+
+Algorithm 1: GAPMA for Stealthiness Enhancement                       where D denotes the dataset consisting of 10 queries
+                                                                      constructed for the corresponding MCP server, and x
+Input: Original description D0, number of iterations n, num-          represents a specific data. St denotes the constructed
+                                                                      malicious MCP server, and the symbol → indicates the MCP
+     ber of Initialization pool PI , advertising prompt Padv,         server selected by the LLM. A higher ASR indicates a more
+                                                                      successful attack.
+     stealthiness enhancement prompt Penc, stealthiness top-k         ⋆True Positive Rate (TPR). This metric measures the
+                                                                      stealthiness of the MCP server by measuring the proportion
+     selection prompt Psel−k, and top-k selection k.                  of tool descriptions that are flagged as suspicious by either
+Output: The most stealthy tool description D∗.                        LLMs or human annotators. To conduct this assessment,
+                                                                      we utilize the LLM-as-a-judge paradigm (Gu, Jiang et al.
+1: D ← ∅                                                              2025) and human evaluation to evaluate whether a given
+                                                                      tool description may raise suspicion. For LLM-as-a-judge,
+2: description ← GPT-4o(D0, Padv) ▷ /* Initially generate             five of the most widely used LLMs are employed for
+                                                                      this assessment: Deepseek-V3 (Deepseek) (DeepSeek-AI
+     the advertising description */                                   2024), Claude-3.7-Sonnet (Claude) (Anthropic 2025),
+                                                                      GPT-4o (OpenAI 2024), Grok-3 (Grok) (xAI 2025), and
+3: for i = 1 to PI do                                                 Gemini-2.5 (Gemini) (Google 2024). To enhance the domain
+                                                                      knowledge of LLMs in assessing whether a tool description
+4: D ← description                                                    appears suspicious, this study adopts the widely used
+                                                                      few-shot In-Context Learning (ICL) (Dong et al. 2022;
+5: end for                                                            Brown et al. 2020) strategy. Specifically, we manually
+                                                                      designed manipulative examples to serve as demonstrations
+6: Initialize pool P ← {D}                                            to calibrate the LLMs’ suspicion detection. For human
+                                                                      evaluation, three independent annotators are recruited. They
+7: for i = 1 to n do                                                  label the tool description based on the instruction shown in
+                                                                      full version (Wang et al. 2025). The calculation of the TPR
+8: Pnew ← ∅                                                           metric can be defined in the following Equation (4):
+
+9: for all Dj ∈ P do                                                             T P R = i=1 k=1 |S| |M| I(Mk(xi, Pj , Dj ) = 1) , (4)
+          D′j ← MUTATE(Dj , Penc)                                                                             |M | · |S|
+10:                                        ▷ /* Mutate the
+                                                                      where M denotes the set of judge models, S denotes the
+     description to stealthy direction */                             MCP server list, Pj represents the judge prompt for stealth-
+                                                                      iness judging, and Dj is the judging demonstration. The
+11:       D′′j ← CROSSOVER(Dj , Random(P),Penc) ▷ /*                  judging instructions and demonstrations can be seen in full
+                                                                      version (Wang et al. 2025). Note that for human evaluation,
+     Crossover two descriptions to stealthy direction */              the equation of (Mk(xi, Pj, Dj) should be H(xi) where the
+                                                                      H means judge by human. A lower TPR indicates the attack
+12:       Pnew ← Pnew ∪ {Dj′ , D′′j }                                 can evade the censor of the LLM and human, which turns out
+                                                                      to be more stealthy.
+13: end for                                                           Model. We evaluate the MPMA utilizing five widely
+                                                                      adopted base LLMs for LLM agent: Deepseek-V3
+14: P ← P ∪ Pnew ▷ /* Merge with original pool */                     (Deepseek) (DeepSeek-AI 2024), Claude-3.7-Sonnet
+                                                                      (Claude) (Anthropic 2025), Gemini-2.5-flash (Gem-
+15: P ← GPT-4o(P, Psel−k, k)               ▷ /* Select top-k          ini) (Google 2024), Qwen3-235B-A22B (Qwen3) (Yang,
+                                                                      Yang et al. 2024), and GPT-4o (OpenAI 2024).
+     stealthiest description */                                       MCP Server. 8 commonly used MCP servers are employed
+                                                                      in the experiments. These servers provide the following
+16: end for                                                           functionalities: weather information (Weather) (wea
+                                                                      2025), time information (Time) (tim 2025), MCP server
+17: D∗ ← GPT-4o(P, Psel−1, 1) ▷ /* Select the stealthiest             installation assistance (Installer) (ins 2024), daily hot news
+                                                                      (Hotnews) (hot 2024), web page content fetching (Fetch) (fet
+     description */                                                   2025), web-to-markdown conversion (Markdown) (mar
+                                                                      2025), cryptocurrency analysis (Crypto) (cry 2025), and
+18: return D∗                                                         web search (Search) (sea 2025b). The demonstration of tool
+                                                                      description can be seen in full version (Wang et al. 2025).
+prompt Padv to transform the original tool description into           Dataset. For each MCP server, ten common queries corre-
+a style that aligns with the selected advertising strategy,           sponding to the MCP server are constructed for evaluation.
+while maintaining a certain level of stealthiness, after the          More details can be seen in full version (Wang et al. 2025).
+initialization of the pool P. Subsequently, a GA is applied to
+further enhance the stealthiness of the optimized description
+by iteratively refining candidate prompts. Specifically, in
+each iteration, we introduce the MUTATE operation using
+the stealthiness-oriented prompt Penc designed to improve
+stealthiness and perform the CROSSOVER operation, com-
+bining elements from pairs of prompts to promote mutation
+diversity and explore a broader solution space. The resulting
+candidate descriptions are accumulated in a pool P, from
+which the GPT-4o selects the top-k descriptions that appear
+least suspicious. These descriptions are retained for the next
+iteration, thereby guiding the evolutionary process toward
+higher stealthiness. After n iterations, GPT-4o is used to
+select the most stealthy description from the final pool. The
+prompt design for each advertising strategy and the further
+details are shown in the full version (Wang et al. 2025).
+
+               5 Experimental Setup
+
+Metric. We utilize the following metrics to evaluate the DPMA
+and GAPMA strategies.
+⋆Attack Success Rate (ASR). This metric evaluates the attack
+effectiveness of the MPMA. It can be defined in Equation (3):
+
+                   ASR = i=1 |D| I(M (xi) → St) , (3)
+                                           |D|
+
+                                                               35842
+
+
+===== PAGE 6 / 9 =====
+
+100      Weather       100      Time                              100      Search        100 Markdown
+
+     75                     75                                         75                     75
+
+ASR  50                ASR  50                                    ASR  50                ASR  50
+
+     25                     25                                         25                     25
+
+     0 De Cl GP Ge Qw       0 De Cl GP Ge Qw                           0 De Cl GP Ge Qw       0 De Cl GP Ge Qw
+
+100      Installer     100      Hotnews                           100      Fetch         100      Crypto
+
+     75                     75                                         75                     75
+
+ASR  50                ASR  50                                    ASR  50                ASR  50
+
+     25                     25                                         25                     25
+
+     0 De Cl GP Ge Qw      0 De Cl GP Ge Qw                            0 De Cl GP Ge Qw 0         De Cl GP Ge Qw
+
+                       Best…Description                           Best…Name        Baseline
+
+Figure 4: The experimental results of DPMA on 5 LLMs and 8 MCP servers. Each LLM is abbreviated using its first two letters.
+
+Implementation Details. To simulate a competitive environ-             ASR than the baseline. Specifically, regarding the average
+ment, five additional competing MCP servers with the same              ASR of the Adv column, most settings show a significantly
+name and description are included alongside the malicious              higher ASR compared to the baseline, except for the Ex
+MCP server. These competing servers share the same name,               strategies under the GPT-4o. Moreover, we observe that the
+and their descriptions are paraphrased using GPT-4o (Ope-              Au strategy consistently yields the best performance, while
+nAI 2024) to ensure diversity. In the main experiments of              the Em strategy performs relatively poorly. And among the
+GAPMA, the parameters are set to iteration = 5 and k = 10. All         5 LLMs evaluated, the Gemini exhibits the highest ASR
+the experiments are conducted using Cline (Cline 2024), one            at 91.88%, whereas GPT-4o shows the lowest ASR at only
+of the most popular MCP hosts currently available.                     22.19%. We speculate that this discrepancy may result from
+Baseline. The baseline refers to the selection probability             the presence of specific defense mechanisms deployed in
+of an MCP server when no attackers are present. Since all              GPT-4o. Besides, the results of the comparative experiments
+MCP servers are identical in functionality and configuration           involving the GA are presented in the full version (Wang et al.
+(except for a potential attacker), each has an equal probability       2025) to investigate the impact of GA on attack effectiveness,
+of being selected. Therefore, the baseline ASR is 1/(number            which indicates that GA does not negatively affect attack
+of competing MCP servers). For example, in the main                    effectiveness, but even leads to improved effectiveness. In
+experiment, the baseline ASR is 1/6 = 16.67% since the total           conclusion, the proposed GAPMA demonstrates strong attack
+number of competing MCP servers is 6.                                  effectiveness across diverse models and settings, and the GA
+                                                                       even increases the attack effectiveness of GAPMA.
+              6 Experimental Result
+                                                                       6.3 Stealthiness Experiment
+6.1 Experimental Result of DPMA
+                                                                       The experimental result is shown in Figure 5. The following
+The experimental results are shown in Figure 4. The follow-            conclusions can be drawn: All advertising strategies result
+ing conclusions can be drawn: The Best Description strategy            in lower TPRs than the Best Description in DPMA. Notably,
+consistently achieves a 100% ASR across almost all settings.           under the LLM-as-a-judge evaluation, the four advertising
+And the Best Name strategy also attains a 100% ASR in                  strategies optimized with GA even outperform the raw de-
+most cases and outperforms the baseline, except for a few              scription, with TPR of 0% (Au), 5% (Em), 2.5% (Ex), and 0%
+scenarios under the GPT-4o model where its ASR falls below             (Su), all lower than the 37.5% TPR of the Best Description
+the baseline. We speculate that GPT-4o may be less sensitive           and 10% of the raw description. Second, in both LLM and
+to tool names and instead relies more on the tool description          human evaluations, the use of GA consistently leads to sig-
+for tool selection. Moreover, the ASR of Best Description is           nificantly lower TPR compared to the non-use counterparts.
+overall higher than Best Name. Overall, DPMA demonstrates              This demonstrates the effectiveness of GA in enhancing
+strong attack effectiveness, and the Best Description strategy         stealthiness. Moreover, among all advertising strategies, the
+is more effective compared to Best Name.                               Au strategy optimized with a GA achieves the lowest TPR
+                                                                       across both evaluations, indicating the highest level of stealth.
+6.2 Experimental Result of GAPMA                                       Combining this with the experimental result in Section 6.2
+                                                                       that Au achieves the highest attack effectiveness, we can
+We conducted extensive experiments on GAPMA, and the                   conclude that Au is the most suitable advertising strategy
+results are presented in Table 1. We can draw the following
+conclusions: Most advertising strategies achieve much higher
+
+                                         35843
+
+
+===== PAGE 7 / 9 =====
+
+Model Adv Weather Crypto Fetch Hotnews Installer Markdown Search Time Average
+
+                    Au 70.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00 96.25
+
+    Deepseek Em 50.00                                      80.00 90.00 50.00    90.00       50.00   0.00 100.00 63.75 78.75
+                  Ex 90.00                                 40.00 100.00 40.00   100.00      50.00   0.00 100.00 65.00
+
+                    Su 100.00 100.00 90.00 70.00 100.00 60.00 100.00 100.00 90.00
+
+                    Au 100.00 100.00 100.00 100.00 100.00 100.00 100.00 60.00 95.00
+
+        Claude Em        0.00                              90.00 0.00    50.00  90.00       100.00  0.00 100.00 53.75 62.81
+                     Ex  10.00                             0.00 90.00    20.00  30.00       80.00   0.00 0.00 28.75
+
+                    Su 100.00 100.00 100.00 70.00 90.00 70.00 0.00 60.00 73.75
+
+                    Au 30.00 0.00 100.00 40.00 0.00                                         10.00 0.00 0.00 22.50
+
+        GPT-4o Em 10.00 0.00 20.00 0.00 0.00                                                10.00    0.00 100.00 17.50 22.19
+                     Ex 10.00 0.00 0.00 0.00 0.00                                           0.00    100.00 0.00 13.75
+
+                    Su 70.00 100.00 0.00 100.00 0.00                                        10.00 0.00 0.00 35.00
+
+                    Au 100.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00
+
+        Gemini Em 90.00 100.00 100.00 100.00 70.00                                          100.00  100.00 100.00 95.00 91.88
+                     Ex 80.00 100.00 40.00 60.00 100.00                                     100.00  90.00 100.00 83.75
+
+                    Su 70.00 100.00 90.00 100.00 50.00 100.00 100.00 100.00 88.75
+
+                    Au 100.00 100.00 100.00 90.00 80.00 90.00 100.00 100.00 95.00
+
+        Qwen3 Em 50.00 80.00 10.00 60.00                                        0.00        50.00   10.00 50.00 38.75 73.75
+                    Ex 100.00 30.00 100.00 70.00                                70.00       80.00   90.00 90.00 78.75
+
+                    Su 80.00 90.00 80.00 90.00 30.00 100.00 90.00 100.00 82.50
+
+Table 1: The ASR of GAPMA on 8 MCP servers and 5 base LLMs. The Adv means advertising strategies. As discussed in Section 5,
+the baseline ASR is 1/6 = 16.67%. (%)
+
+    LLM-as-a-judge                                     Human Evaluation         Model Deepseek Claude GPT-4o Gemini Qwen3
+
+35                                                100                           Preference Benign Benign Ex Benign Best Description
+
+                                                  90                                    SR  100.00 100.00 100.00 100.00        100.00
+
+30                                                80
+
+25                                                70                            Table 2: The experimental result of the malicious majority
+                                                                                scenario on the Time server (tim 2025) and 5 LLMs. SR
+TPR20                                             60                            means the selection rate of the preferred MCP server.
+                                             TPR
+                                                  50
+
+15                                                40
+
+10                                                30
+
+5                                                 20
+
+                                                  10                            in Table 2. In the Deepseek, Claude, and Gemini LLMs, the
+                                                                                selected tools are benign. The models explicitly state that
+0 Au Em Ex Su                                     0 Au Em Ex Su                 they prefer to choose the most straightforward tool to use
+                                                                                in the reply. We name this counterintuitive phenomenon as
+    w/              w/o                                RD  BD                   “over-manipulation”. We speculate that in the malicious
+                                                                                majority scenario, the models may become alert due to the
+Figure 5: The stealthiness experimental result of DPMA and                      excessive use of manipulative descriptions and consequently
+GAPMA utilizing the LLM-as-a-judge and human evaluation.                        choose a more straightforward tool. We provide more
+The RD and BD mean raw description and best description,                        discussions of MPMA in the full version (Wang et al. 2025).
+and w/ and w/o mean whether to utilize GA.
+                                                                                                     8 Conclusion
+in GAPMA for MPMA. In conclusion, the combination of ad-
+vertising strategies and GA optimization leads to significant                   In this paper, we propose a new security threat in the MCP
+stealthiness enhancement, which is much better than DPMA.                       application called MPMA. In this attack, an adversary
+                                                                                constructs a malicious, paid MCP server that gains the LLM’s
+                     7 Discussion                                               preference over competing services, thereby achieving
+                                                                                economic gains such as revenue from paid MCP services or
+Malicious Majority. We investigate the scenario of a                            advertising income generated from free servers. We further
+malicious majority in MPMA. Specifically, we assume that a                      propose two strategies. The first is DPMA, which embeds
+majority of MCP server providers employ the proposed DPMA                       manipulative keywords and phrases directly into the tool de-
+or GAPMA strategies to manipulate their tool descriptions                       scription. Although DPMA achieves strong attack performance,
+for economic benefit. A total of 8 competing MCP servers                        it lacks stealth. To address this, we further propose the GAPMA,
+are included in the MCP server set for the experiment: one                      which leverages advertising strategies and a GA to craft effec-
+server uses the Best Name strategy, another adopts the Best                     tive yet inconspicuous tool descriptions that evade user detec-
+Description strategy, four servers apply the four advertising                   tion. Extensive experiments demonstrate that DPMA achieves
+strategies from GAPMA, and two benign servers utilize the                       significant attack effectiveness, while GAPMA simultaneously
+original tool descriptions. The other settings align with                       attains both strong attack effectiveness and stealthiness.
+the main experiment. The experimental results are shown
+
+                                                                         35844
+
+
+===== PAGE 8 / 9 =====
+
+Acknowledgments                                  Anthropic. 2024a. Claude Desktop. https://claude.ai/
+                                                                   download.
+This work is supported by the Sichuan Science and Technol-
+ogy Program under Grant 2024ZHCG0188.                              Anthropic. 2024b. Introducing the Model Context Protocol.
+                                                                   https://www.anthropic.com/news/model-context-protocol.
+
+        References                                                 Anthropic. 2025. Claude-3.7-sonnet. https://claude.ai/.
+
+2024. Browserbase MCP Server. https://smithery.ai/server/          Anysphere. 2023. Cursor. https://www.cursor.com/.
+@browserbasehq/mcp-browserbase. Accessed: 2025-04-28.
+                                                                   Bagwell, K. 2007. The economic analysis of advertising.
+2024. Google Map MCP Server. https://mcp.so/server/                Handbook of industrial organization.
+google-maps/modelcontextprotocol. Accessed: 2025-04-28.
+                                                                   Brown, T.; Mann, B.; Ryder, N.; Subbiah, M.; Kaplan, J. D.;
+2024. Hotnews MCP server. https://smithery.ai/server/              Dhariwal, P.; Neelakantan, A.; Shyam, P.; Sastry, G.; Askell,
+@wopal/mcp-server-hotnews. Accessed: 2025-04-28.                   A.; et al. 2020. Language models are few-shot learners.
+                                                                   Advances in NIPS.
+2024. Installer MCP server. https://github.com/anaisbetts/
+mcp-installer. Accessed: 2025-04-28.                               Christopher, A. A. 2013. Rhetorical strategies in advertising:
+                                                                   The rise and fall pattern. Academic Journal of Interdisci-
+2025a. AI Image Generation Service. https://smithery.              plinary Studies.
+ai/server/@chenyeju295/mcp_generate_images. Accessed:
+2025-04-28.                                                        Cline. 2024. Cline Bot. https://cline.bot/.
+
+2025. Amap MCP Server. https://mcp.so/server/amap-maps/            Comanor, W. S.; and Wilson, T. A. 1979. The effect of
+amap. Accessed: 2025-04-28.                                        advertising on competition: A survey. Journal of economic
+                                                                   literature.
+2025. Crypto Price MCP server. https://github.com/truss44/
+mcp-crypto-price. Accessed: 2025-04-28.                            DeepSeek-AI. 2024. Deepseek-v3 technical report. arXiv
+                                                                   preprint arXiv:2412.19437.
+2025b. DALL-E MCP Server. https://mcpmarket.com/server/
+dall-e. Accessed: 2025-04-28.                                      Dong, Q.; Li, L.; Dai, D.; Zheng, C.; Ma, J.; Li, R.; Xia, H.;
+                                                                   Xu, J.; Wu, Z.; Liu, T.; et al. 2022. A survey on in-context
+2025. Fetch MCP server. https://github.com/aelaguiz/mcp-           learning. arXiv preprint arXiv:2301.00234.
+url-fetch/tree/master/scripts. Accessed: 2025-04-28.
+
+2025a. MCP Market Platform. https://mcpmarket.com/. Ac-            Fearnon, M. L. 2017. An Exploratory Study of the Moti-
+cessed: 2025-04-28.                                                vations, Attitudes and Behaviours of Bloggers participating
+                                                                   in sponsored brand collaborations. Ph.D. thesis, Dublin,
+2025b. MCP.so Platform. https://mcp.so/. Accessed: 2025-           National College of Ireland.
+04-28.
+
+2025a. Perplexity Search MCP Server. https://smithery.ai/          Google. 2024. Gemini 1.5: Unlocking multimodal under-
+server/@arjunkmrm/perplexity-search. Accessed: 2025-04-            standing across millions of tokens of context. arXiv preprint
+28.                                                                arXiv:2403.05530.
+
+2025c. pollinations MCP Server. https://mcpmarket.com/             Gu, J.; Jiang, X.; et al. 2025. A Survey on LLM-as-a-Judge.
+server/pollinations-2. Accessed: 2025-04-28.                       arXiv preprint arXiv:2411.15594.
+
+2025d. Replicate Flux MCP. https://smithery.ai/server/             Hou, X.; Zhao, Y.; Wang, S.; and Wang, H. 2025. Model con-
+@awkoy/replicate-flux-mcp. Accessed: 2025-04-28.                   text protocol (mcp): Landscape, security threats, and future
+                                                                   research directions. arXiv preprint arXiv:2503.23278.
+2025b. Tavily search MCP server. https://smithery.ai/server/
+@apappascs/tavily-search-mcp-server. Accessed: 2025-04-            Li, Y.; Wen, H.; Wang, W.; Li, X.; Yuan, Y.; Liu, G.; Liu,
+28.                                                                J.; Xu, W.; Wang, X.; Sun, Y.; et al. 2024. Personal llm
+                                                                   agents: Insights and survey about the capability, efficiency
+2025. Time MCP server. https://github.com/yokingma/time-           and security. arXiv preprint arXiv:2401.05459.
+mcp. Accessed: 2025-04-28.
+
+2025a.  Tool Poisoning Attack Aganist MCP.                         Narajala, V. S.; and Habler, I. 2025. Enterprise-Grade Secu-
+                                                                   rity for the Model Context Protocol (MCP): Frameworks and
+https://invariantlabs.ai/blog/%20mcp-security-notification-        Mitigation Strategies. arXiv preprint arXiv:2504.08623.
+
+tool-poisoning-attacks. Accessed: 2025-04-28.
+
+2025. Weather MCP server. https://smithery.ai/server/              Nestaas, F.; Debenedetti, E.; and Tramèr, F. 2024. Adversarial
+@turkyden/weather. Accessed: 2025-04-28.                           search engine optimization for large language models. arXiv
+                                                                   preprint arXiv:2406.18382.
+2025. Website markdownify MCP server. https://github.com/
+zcaceres/markdownify-mcp. Accessed: 2025-04-28.                    OpenAI. 2024. Gpt-4o system card. arXiv preprint
+                                                                   arXiv:2410.21276.
+2025b. WhatsApp MCP Exploited. https://invariantlabs.ai/
+blog/whatsapp-mcp-exploited. Accessed: 2025-04-28.                 Perrone, P. 2025.  Security Threat of MCP.
+
+Ahn, J.; Verma, R.; Lou, R.; Liu, D.; Zhang, R.; and Yin, W.       https://medium.com/data-science-collective/mcp-is-
+2024. Large language models for mathematical reasoning:
+Progresses and challenges. arXiv preprint arXiv:2402.00157.        a-security-nightmare-heres-how-the-agent-security-
+
+                                                                   framework-fixes-it-fd419fdfaf4e. Accessed: 2025-04-28.
+
+Alibaba. 2025. ModelScope MCP Platform. https://www.               Shen, Z. 2024. Llm with tools: A survey. arXiv preprint
+modelscope.cn/mcp.                                                 arXiv:2409.18807.
+
+                                                            35845
+
+
+===== PAGE 9 / 9 =====
+
+Smithery Platform. 2024. Smithery Platform. https://smithery.
+ai/.
+Suresh, A.; and Tandon, K. 2018. A study of factors of
+subliminal advertising and its influence on consumer buying
+behavior. International Journal of Management Studies, V.
+Sykora, M.; Elayan, S.; Hodgkinson, I. R.; Jackson, T. W.;
+and West, A. 2022. The power of emotions: Leveraging
+user generated content for customer experience management.
+Journal of Business Research.
+Wang, Z.; Li, H.; Zhang, R.; Liu, Y.; Jiang, W.; Fan, W.;
+Zhao, Q.; and Xu, G. 2025. MPMA: Preference Manipula-
+tion Attack Against Model Context Protocol. arXiv preprint
+arXiv:2505.11154.
+Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.; Chi,
+E.; Le, Q. V.; Zhou, D.; et al. 2022. Chain-of-thought prompt-
+ing elicits reasoning in large language models. Advances in
+NeurIPS.
+xAI. 2025. Grok3. https://grok.com/.
+Xu, F. F.; Alon, U.; Neubig, G.; and Hellendoorn, V. J. 2022.
+A systematic evaluation of large language models of code. In
+Proceedings of SIGPLAN.
+Yang, A.; Yang, B.; et al. 2024. Qwen2. 5 technical report.
+arXiv preprint arXiv:2412.15115.
+
+                                                                                 35846

@@ -1,0 +1,1162 @@
+# R3-75 | AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents
+# PDF: papers\AgentSentinel_An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents.pdf
+# extracted: 2026-11-02T22:41:36.778Z
+
+
+===== PAGE 1 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense
+                 Framework for Computer-Use Agents
+
+         Haitao Hu                                                                    Peng Chen
+
+    ShanghaiTech University                                                      Independent Researcher
+         Shanghai, China                                                             Shanghai, China
+
+huht2022@shanghaitech.edu.cn                                                        spinpx@gmail.com
+
+    Yanpeng Zhao                                                                         Yuqi Chen∗
+
+Independent Researcher                                                             ShanghaiTech University
+      Beijing, China                                                                     Shanghai, China
+
+yannzhao.ed@gmail.com                                                            chenyq@shanghaitech.edu.cn
+
+Abstract                                                                         ACM Reference Format:
+                                                                                 Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen. 2025. AgentSentinel:
+Large Language Models (LLMs) have been increasingly integrated                   An End-to-End and Real-Time Security Defense Framework for Computer-
+into computer-use agents, which can autonomously operate tools                   Use Agents. In Proceedings of the 2025 ACM SIGSAC Conference on Computer
+on a user’s computer to accomplish complex tasks. However, due to                and Communications Security (CCS ’25), October 13–17, 2025, Taipei. ACM,
+the inherently unstable and unpredictable nature of LLM outputs,                 New York, NY, USA, 15 pages. https://doi.org/10.1145/3719027.3765064
+they may issue unintended tool commands or incorrect inputs, lead-
+ing to potentially harmful operations. Unlike traditional security               1 Introduction
+risks stemming from insecure user prompts, tool execution results
+from LLM-driven decisions introduce new and unique security                      Large Language Models (LLMs), such as GPT-4o [32] and Claude
+challenges. These vulnerabilities span across all components of a                3.7 Sonnet [2], represent the most advanced natural language pro-
+computer-use agent. To mitigate these risks, we propose AgentSen-                cessing technologies to date. These models accept user prompts,
+tinel, an end-to-end, real-time defense framework designed to miti-              describing problems, requirements, or tasks, and generate reason-
+gate potential security threats on a user’s computer. AgentSentinel              able and contextually appropriate responses. Due to their powerful
+intercepts all sensitive operations within agent-related services and            task-processing capabilities, LLMs have been widely adopted across
+halts execution until a comprehensive security audit is completed.               numerous domains and integrated into a variety of LLM-based ap-
+Our security auditing mechanism introduces a novel inspection                    plications. To further enhance their capabilities, tools are often
+process that correlates the current task context with system traces              integrated with LLMs, enabling them to interact with the external
+generated during task execution. To thoroughly evaluate AgentSen-                world—these enhanced systems are commonly referred to as LLM-
+tinel, we present BadComputerUse, a benchmark consisting of 60                   based agents. Additionally, the development of the Model Context
+diverse attack scenarios across six attack categories. The benchmark             Protocol (MCP) [4] has significantly accelerated the integration of
+demonstrates a 87% average attack success rate on four state-of-                 LLMs into such agents.
+the-art LLMs. Our evaluation shows that AgentSentinel achieves an
+average defense success rate of 79.6%, significantly outperforming                  Among the diverse range of agents, one of particular signifi-
+all baseline defenses.                                                           cance has emerged: the computer-use agent. These agents allow
+                                                                                 LLMs to take full control of a user’s computer environment and
+CCS Concepts                                                                     perform complex tasks much like a human user. For instance, An-
+                                                                                 thropic first introduced computer-use capabilities in Claude 3.5
+• Security and privacy → Software and application security.                      Sonnet [3]. OpenAI has since followed with its Operator framework
+                                                                                 and the Computer-Using Agent model [33]. Similarly, Manus [27]
+Keywords                                                                         is a general-purpose AI agent that can interact with a cloud-based
+                                                                                 computer environment. As a result, the ability to perform real-world
+Large Language Model, Computer-Use Agents, LLM-based Agent                       computer interactions—referred to as computer-use has become a
+Security                                                                         critical capability for next-generation LLM-based agents.
+
+∗Corresponding author                                                               The use of computer-use agents inevitably introduces new vul-
+                                                                                 nerabilities and significantly expands the attack surface due to their
+This work is licensed under a Creative Commons Attribution-NonCommercial-        ability to interact with the computer environment. Specifically, in
+ShareAlike 4.0 International License.                                            scenarios without an adversary, the unpredictable nature of LLMs
+CCS ’25, Taipei                                                                  can result in error-prone or overly complex behavior. If an LLM
+© 2025 Copyright held by the owner/author(s).                                    gains control of a user’s computer and executes any operation it
+ACM ISBN 979-8-4007-1525-9/2025/10                                               deems appropriate, this raises immediate and serious concerns. As a
+https://doi.org/10.1145/3719027.3765064                                          result, incorrect tool use may compromise the integrity of the user’s
+                                                                                 operating system and, in severe cases, cause irreversible damage.
+
+                                                                           3535
+
+
+===== PAGE 2 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                                                              Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+Therefore, it is critical to intercept such risky actions promptly to            In addition, we use a tracer component to trace and enforce the
+prevent further harm.                                                         sensitive operations initiated by the agent. Specifically, upon re-
+                                                                              ceiving a connection request from the agent client, the monitoring
+   In adversarial settings, both the agent infrastructure and the             server configures and activates the tracer component, initially oper-
+underlying operating system are susceptible to attacks targeting              ating in a passive monitoring mode. The tracer component silently
+different components of the computer-use agent. To compromise                 logs all sensitive actions, and immediately halts any process against
+the agent infrastructure, an attacker could issue seemingly benign            our predefined enforcement policy. Once a process is suspended, a
+instructions designed to exfiltrate private information or tamper             security audit module analyzes the corresponding operation, taking
+with critical components. For example, instructing the agent to read          into account the task context and associated event traces. If the
+configuration files that define its behaviors [1] or to terminate a           operation is deemed safe, the process is resumed; otherwise, it is
+process that supports the agent’s core functionality. Alarmingly,             terminated to prevent further harm. The agent client is notified via
+most LLMs are willing to comply with such instructions without                a security alert if a tool failure is detected.
+hesitation. To compromise the operating system, a third-party ad-
+versary could exploit the agent’s interaction with external tools.               Finally, we propose a novel task-context-aware security audit
+For instance, if the agent fetches data using a tool whose source is          component designed to detect potential risks within the computer-
+controlled by an attacker, the attacker can inject malicious payloads         use agent. The security auditor comprises two complementary
+into the tool results. These malicious results then infect the task           components: a rule-based auditor that enforces predefined security
+context maintained by the agent, potentially leading to command               policies, and an LLM-based auditor that leverages the reasoning
+injection or other harmful behaviors.                                         capabilities of large language models to assess complex scenarios.
+                                                                              To enhance the efficiency and responsiveness of the LLM-based
+   While numerous techniques have been proposed to mitigate                   auditor, we propose a Query-Per-Second (QPS) optimizer that regu-
+the risks associated with tool use, these approaches are unfortu-             lates audit latency and ensures minimal disruption to normal task
+nately ineffective when applied to computer-use agents. For exam-             execution. Furthermore, we implement a security query cache that
+ple, Zhang et al. [49] propose instruction-level defenses aimed at            classifies previously verified operations into three hierarchical cat-
+mitigating incorrect outputs generated by LLMs. However, these                egories: universally safe, task-specific safe, and safe-for-next-time.
+methods often lack robustness against the sophisticated threats               This caching mechanism effectively reduces redundant queries and
+posed by malicious attackers in the context of computer-use agents.           auditing overhead by pruning unnecessary event traces and reusing
+Another line of work (e.g., [45]) explores sandboxing and isolation           prior verification results.
+strategies. Unfortunately, computer-use agents typically possess
+broad access to and control over most tools on a user’s system, vio-             Our contributions are summarized as follows.
+lating the core assumptions underlying these techniques. Finally,                  • We propose AgentSentinel1, a novel end-to-end, real-time
+security-enhanced agent architectures [19] are also inadequate for                    security defense framework for computer-use agents. To
+computer-use agents. Re-architecting or hardening individual com-                     the best of our knowledge, this is the first, end-to-end and
+ponents of these agents is impractical, given the diversity and rapid                 real-time defense framework for computer-use agents.
+proliferation of such agents in real-world deployments.                            • We present BadComputerUse, a benchmark consisting of 60
+                                                                                      diverse attack scenarios across seven attack types, which
+   To address the aforementioned issues, we propose AgentSentinel,                    demonstrates an average attack success rate of 87% on four
+an end-to-end, real-time security defense framework for computer-                     state-of-the-art LLMs.
+use agent systems. AgentSentinel passively traces each tool invo-                  • Our evaluation results show that AgentSentinel achieves an
+cation by dynamically collecting relevant system events. When                         average defense success rate of 79.6%, significantly outper-
+a sensitive operation is detected, it is suspended, and detailed in-                  forming all baseline defenses.
+formation is presented to a security auditor, who then determines
+the appropriate enforcement actions. It is worth noting that our              2 Background & Problem Statement
+approach addresses all threats at the endpoint, regardless of the spe-
+cific vulnerabilities exploited within the computer-use agent. This           The computer-use agent is a new class of LLM-based agents. It
+design minimizes interference from tool behavior on the agent’s               interacts directly with a user’s operating system (OS). This ability
+execution.                                                                    allows the agent to use a wide range of existing tools on the OS.
+                                                                              Additionally, it can access various interfaces connected to periph-
+   AgentSentinel comprises four core components. The first two                erals, such as the monitor, keyboard, and mouse. This grants the
+components, namely the agent instrumentation component and                    agent extensive task execution possibilities. For example, a tradi-
+the monitoring server component, form a novel client-server ar-               tional LLM-based agent might use an external web search plugin
+chitecture. In this architecture, the monitoring server protects the          to get information. In contrast, a computer-use agent can launch a
+agent operating as a client. The agent instrumentation component              browser, navigate to a web page, and type URLs into the address
+provides a minimally intrusive and composable security module                 bar. However, Xia et al. [47] show that current computer-use capa-
+that can be effortlessly integrated into existing agent systems. It           bilities of LLMs are still insufficient for fully automating complex
+performs three primary functions: (1) establishing a trustworthy              computer tasks.
+communication channel and transmitting basic agent information
+to a monitoring server; (2) collecting dynamic task context and               1AgentSentinel available at https://github.com/m4p1e/agent-sentinel
+sending it to the monitor; and (3) delivering security alerts back to
+the agent when a threat is identified.
+
+                                                                        3536
+
+
+===== PAGE 3 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents  CCS ’25, October 13–17, 2025, Taipei
+
+Show sk rest u h lt e  Agent Loop                   Action Scheduler Tool Uses Handling        2.3 New Attack Surfaces in Computer-Use
+ ta                             Repsonses Handling                                                   Agents
+
+                       LLM Thinker                  Tool Results Handling  Tool Caller         Indirect Prompt Injection. When an LLM has the capability to
+                                                                                               retrieve external resources via integrated tools, the retrieved con-
+Input a                                                                                        tent becomes susceptible to indirect prompt injection attacks [13].
+ task                                                                                          Unlike the direct prompt injection methods examined in Section 2.2,
+                                                                                               this vulnerability emerges when the LLM automatically incorpo-
+                       Operating System                                                        rates unverified external data into its processing pipeline. If these
+                                                                                               external sources are not rigorously validated, malicious inputs can
+                       FileSystem                   Computer  Process Creation                 trigger prompt injection vulnerabilities through seemingly benign
+                                                                                               channels.
+  Figure 1: General architecture of a computer-use agent.                                      OS-Targeted Backdoor Attacks. In a purely conversational set-
+                                                                                               ting, the outputs of a backdoor may have limited real-world impact.
+   Figure 1 presents an illustrative architecture of a computer-use                            However, when such outputs are consumed by an agent system,
+agent, comprising three capabilities of tool calling: filesystem ac-                           they may influence the underlying operating system, especially
+cess, computer control, and process creation. The agent processes                              when the backdoor consistently generates dangerous tool com-
+user task inputs within a tightly coupled feedback loop while main-                            mands [41]. This type of OS-targeted backdoor can elevate a conven-
+taining a dynamic task context. This agent loop involves three key                             tional LLM backdoor into a full system compromise. Consequently,
+components: 1) a LLM thinker module, where the LLM responds to                                 it poses critical security threats to devices or infrastructures that
+the task context by generating a sequence of actions representing                              are running LLM Agents.
+the next execution steps; 2) an action scheduler module, which                                 Hallucination Exploitation. Hallucinations can serve as potent
+updates the task context with the LLM’s response and schedules                                 attack vectors in agent-based systems. For instance, if an LLM
+tool invocations accordingly; and 3) a tool caller module, which                               hallucinates a non-existent package while responding to a Python
+invokes the requested tools and updates the context with the re-                               package recommendation task, an attacker could upload a malicious
+sulting outputs. The loop continues iteratively until no new tool                              package with that hallucinated name to a public repository. This
+use requests are generated in the LLM’s response.                                              could lead to the unintended installation of the malicious package
+                                                                                               by agents executing software installation tasks, thereby introducing
+2.1 Computer-Use Agents                                                                        serious security vulnerabilities.
+2.2 Existing Attack Surfaces in LLMs                                                           Untrustworthy Agent Execution Environment. An untrustwor-
+                                                                                               thy agent execution environment may expose agents to malicious
+Prompt Injection. The outputs of LLMs are mainly controlled by                                 local resources. Agents often depend on external tools, which could
+input prompts, which can be broadly categorized into developer                                 include locally installed software or dynamically downloaded de-
+instructions and user prompts. Due to the inherent instruction-                                pendencies. If a required tool is missing, the agent might retrieve it
+following nature of LLMs, the boundary between these categories                                from an unverified third-party source. Both pre-existing and newly
+is often ambiguous. Adversaries can exploit this by creating mali-                             installed dependencies may contain malicious components. Addi-
+cious prompts. These malicious prompts can override developer-                                 tionally, some third-party agent systems [5, 26, 33] utilize isolated
+imposed constraints, leading to unauthorized or harmful actions.                               execution environments that bundle all necessary dependencies
+Based on attack objectives, prompt injection techniques are used in                            (e.g., customized browsers or virtual machines). Since these tools
+𝐽ailbreaking attacks [18, 20, 42, 54] and privacy leakage attacks [9,                          operate internally within the agent’s execution environment, users
+17]. 𝐽ailbreaking attacks aim to circumvent safety alignments or                               have no reliable way to verify their trustworthiness.
+context restrictions, such as chat history, to elicit harmful or unin-
+tended outputs. Privacy leakage attacks focus on extracting sensi-                             2.4 Challenges for Securing Computer-Use
+tive information, such as personally identifiable information (PII)                                  Agents
+or hidden system prompts.
+Backdoor Attacks. Third-party LLMs are untrusted because of                                    To effectively defend against the aforementioned attacks in real
+the presence of backdoors [53]. These backdoors can be implanted                               time, several critical challenges must be addressed to secure the
+during model training [40] or through system prompt manipula-                                  use of computer-use agents.
+tion [50]. An adversary can activate a backdoor by including a                                 Challenge 1: Traditional prompt and task context guards
+specific trigger within an otherwise benign prompt. When the LLM                               fail to comprehensively detect threats. An agent’s task con-
+detects this trigger, it deviates from its expected behavior. As a                             text includes elements such as chat history and tool use records.
+result, the LLM produces malicious or unexpected outputs.                                      However, tool use records typically include only the tool’s name,
+Hallucination Risks. Prior studies [16, 51] show that LLMs often                               inputs, and outputs, without detailed execution traces within the
+generate hallucinations: outputs that are fluent but factually incor-                          tools themselves. Consequently, context-based audits often fail to
+rect. These hallucinations usually arise from ambiguous queries                                detect sensitive operations based solely on these limited contextual
+or limitations in training data. When these fabricated outputs are                             cues. Furthermore, a single tool invocation may trigger multiple
+treated as factual, they pose serious security risks, especially in                            underlying processes at the operating system level, whose sensitive
+critical or sensitive applications.                                                            behaviors remain hidden from such audit mechanisms. Therefore,
+
+                                                                                         3537
+
+
+===== PAGE 4 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                                                     Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+                                                                      Action           Action Scheduler  Task Context
+                                                                  Task Context
+                                                    LLM                                   Task Context
+                                                                                             Updater
+
+                                      Task Context
+
+                                                                                       Side Effects      External Environment
+                                                                                        Committer
+
+                                                                 External Environment
+
+                                                    Each Iteration of AI Agent Loop
+
+                                                                          Action Scheduler
+
+                                           Action     Action      Action
+                                                    Safeguard
+                                                                                Task Context Task Context Task Context                 Task Context
+                                      LLM
+                                                                                       Updater           Safeguard                   External
+                                                                                                                                  Environment
+Task Context                                        Task Context
+
+                                                                                       Side Effects                  Environment
+                                                                                        Committer      External Safeguard
+                                                                                                     Environment
+                                           External Environment
+
+                                                    Each Iteration of Safe AI Agent Loop
+
+                                      Figure 2: Composable state transformer architecture for AI agent loop.
+
+it is essential to capture sensitive operations occurring during tool                  mechanisms that either accelerate the security audit process or
+use through more appropriate and effective means.                                      provide flexible control over its execution time.
+Our Solution: AgentSentinel analyzes both internal task context                        Our Solution: AgentSentinel integrates rule-based and LLM-based
+and external side effects generated by the agent, enabling more                        security audit approaches. To further reduce the latency of LLM-
+thorough and context-aware threat detection.                                           based audits, we introduce a novel security query cache to accelerate
+Challenge 2: Side effects from computer-use agents can affect                          LLM-based audits, along with a queries-per-second (QPS) optimizer
+multiple components of external environments. Computer-                                that enforces strict time constraints for each audit decision.
+use agents may invoke arbitrary OS utilities, enabling them to
+leverage any existing tool within the operating system rather than                     3 Problem Statement
+being restricted to tools specified in system prompts. Consequently,
+constraining tool use through limited security policies is impractical.                Problem Formulation. [14] models LLMs and AI agents as com-
+Furthermore, generating specific safety rules for each individual                      posable state transformers. Extending this formalism, we introduce
+tool is also unfeasible. A more general enforcement strategy is                        security mechanisms into the state transformer architecture, as
+needed to address all potential tool-use scenarios.                                    depicted in Figure 2. Formally, let C denote the internal state space
+Our Solution: AgentSentinel utilizes a system tracer to capture                        representing the agent’s task context, and let A denote the action
+operations relevant to tool use, including process control, file op-                   state space representing the agent’s possible actions. We can define
+erations, and network access. Based on these collected operations,                     a state transformer of LLM as a function TLLM : C → A, which rep-
+AgentSentinel models potential security threats associated with                        resents how the LLM processes a given task context and outputs the
+tool execution.                                                                        next action. Furthermore, let O denote the external state space repre-
+Challenge 3: Real-time threat defense for agents must be ef-                           senting the environment in which the agent operates. We define the
+ficient to avoid excessive latency. A real-time defense approach                       state transformer of the agent’s action scheduler as two functions:
+must detect sensitive behaviors and intervene before their execu-                      Tint : A × C → C and Text : A × O → O. The function Tint denotes
+tion. Upon detection, it halts the behavior, conducts a security audit,                how the agent performs actions and updates the task context, while
+and either resumes or terminates the process based on the audit                        the function Text denotes how actions affect the external environ-
+results. This defense process introduces execution delays due to                       ment. Finally, we define the state transformer of each iteration of
+auditing and enforcement (i.e., stopping and resuming processes).                      the agent loop as a composite function T : C × O → C × O
+However, computer-use agent often impose strict timeouts on tool
+use to maintain responsiveness. A critical challenge arises when                                         T (𝑐, 𝑜) = [Tint (𝑎, 𝑐), Text (𝑎, 𝑜)]       (1)
+the audit latency exceeds these timeouts, potentially disrupting
+normal agent operations—especially if a single tool use triggers                       where 𝑎 = TLLM (𝑐).
+numerous sensitive operations. Consequently, it is crucial to design                      We also consider the security threat defense mechanism for
+
+                                                                                       computer-use agents as a new composable component within the
+                                                                                       agent loop, consisting of three functions:
+
+                                                                          3538
+
+
+===== PAGE 5 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents                                                CCS ’25, October 13–17, 2025, Taipei
+
+MONITOR                                            TRACER                                           AUDITOR
+
+  Trusted Connection         Computer       Tracer and      Multi-Aspect       Observed/Enforcement Trace Events Enforcement  Rule-Based     Enforcement Controlling
+        Initialization  Monitoring Server  Enforcement                                                                          Auditor
+
+                                           Policy Configuring System Tracer           Events        Collection Events                          Process                      Process
+                                                                                                                                             Resumption                   Termination
+
+                                           New Tool Use Notification                                                                         Cache Hit
+
+     Computer-Use                          AGENT LOOP                                                                         Task Context                   Multi-Level
+           Agent                                                                                                              Summarizer                  Security Query
+                                                            Task Context Collection
+      AgentSentinel                                                                                                                                             Cache
+            Agent                                           Action Scheduler                                                                                              LLM-Based
+                                                                                                                                             Cache Miss                     Auditor
+     Instrumentation
+                                           Responses Handling                  Tool Uses Handling
+
+     Instrumented          Task Inputs                      Tool Results Handling                                                            Trace Events
+     Computer-Use                                                                                                                            Dependency
+                                           LLM Thinker                                Tool Caller                             QPS Optimizer
+           Agent                                                                                                                                Analysis
+
+INSTRUMENTED AGENT                         Security Alerts
+
+                                                                      Figure 3: Overview of AgentSentinel.
+
+(1) A function TsecAct : A → A for securing action execution.                                               where PE commits the partial execution effects (generated
+(2) A function TsecCtx : A × C → C for securing task context                                                prior to tool termination) to the external environment. Our
+                                                                                                            defense mechanism immediately terminates action execution
+    updates.                                                                                                when security threats are detected.
+
+(3) A function TsecEff : A × O → O for securing side effect                                         Threat Model. We assume that an attacker can access the computer-
+    commits.                                                                                        use agent system through any available interface. The potential
+                                                                                                    attacks are categorized into six classes:
+We can then define the safe state transformer of each iteration of
+the agent loop as a new composite function:                                                            (1) Direct Prompt Injection: An attacker appends malicious
+                                                                                                            instructions to a legitimate user task prompt.
+                             TsecCtx (𝑎′, Tint (𝑎′, 𝑐)),
+             Tsafe ( TsecEff ( 𝑐, 𝑜) = 𝑎′, Text (𝑎′, 𝑜)) (2)                                           (2) Agent Infrastructure Attack: A user submits tasks de-
+                                                                                                            signed to compromise the agent infrastructure.
+where 𝑎′ = TsecAct (TLLM (𝑐)). Consequently, a security defense
+                                                                                                       (3) Backdoor Attack: When a third-party LLM contains a hid-
+mechanism must provide concrete definitions for the three securing                                          den backdoor, an attacker may exploit it by triggering ma-
+                                                                                                            licious behavior through specific user inputs, potentially
+functions in Equation 2.                                                                                    enabling harmful operations on the underlying operating
+                                                                                                            system.
+Our Solutions. In this paper, we define a composable security
+                                                                                                       (4) Bad Tool Result Attack: If the agent retrieves attacker-
+threat defense component as             (T′ ,      T′ ,               T′ )     where                        controlled external resources during tool use, these resources
+                                                                                                            may deliver malicious or manipulative data that cause prompt
+                                           secAct   secCtx             secEff                               injection into the task context.
+
+(1)  For  any action 𝑎     ∈  A,        we have    T ′ (𝑎)            = 𝑎.  Our defense                (5) Hallucination Exploitation: A benign user may input
+                                                                                                            tasks that are prone to hallucinations, potentially leading to
+                                                    secAct                                                  unintended agent behavior.
+
+     mechanism does not directly interfere with agent’s execution                                      (6) Malicious Agent Execution Environment: When using
+                                                                                                            third-party integrated agent environments containing mali-
+     flow to avoid affecting agent capability. In other words, the                                          cious applications, these payloads may execute during task
+                                                                                                            handling. Attackers may also embed such malicious applica-
+     agent remains unrestricted in issuing tool calls.                                                      tions within popular tools to increase their usage likelihood.
+
+(2) For any action 𝑎 ∈ A and task context 𝑐 ∈ C, we have                                            4 Design
+
+TsecCtx (𝑎, 𝑐) =′       appendSecurityAlert (𝑐 )        if ¬isSafeAction′ (𝑎)                       In this section, we present AgentSentinel, a novel framework de-
+                                                        otherwise.                                  signed to detect real-time security threats in computer-use agents.
+                        𝑐                                                                           Figure 3 presents an overview of AgentSentinel’s architecture,
+                                                                                                    which comprises four core components designed to address key
+     where the operation appendSecurityAlert appends a security                                     challenges in securing computer-use agents.
+     alert to the task context, and the operator isSafeAction is
+     defined as:                                                                                       (1) Context-Aware Agent Monitoring: AgentSentinel instru-
+                                                                                                            ments the computer-use agent to initialize communication
+                  isSafeAction′ (𝑎) = ∀𝑒 isSafeOp(𝑒)                                                        channel and dynamically collect task context (blue compo-
+                                                                                                            nents). Both agent basic information and task context are
+     where 𝑒 represents each sensitive operation produced within
+     the action 𝑎, and the operator isSafeOp determines whether
+     the operation is safe. Our defense mechanism appends secu-
+
+     rity alerts to the task context only when security threats are
+
+    detected during action execution.
+(3) For any action 𝑎 ∈ A and external environment 𝑜 ∈ O, we
+
+    have
+
+          ′TsecEff (𝑎, 𝑜) =   PE (𝑜 )      if ¬isSafeAction′ (𝑎)
+                                           otherwise.
+                              𝑜
+
+                                                                                              3539
+
+
+===== PAGE 6 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                                                              Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+Algorithm 1: Instrumented Agent                                               users to integrate it with minimal code refactoring. These helper
+                                                                              functions can also be embedded into software development kits
+1 𝐶 ← NewAgentSentinelClient(AgentBasicInformation);                          (SDKs) provided by popular LLM platforms.
+2 𝐼 ← GetTaskInput( );
+3 𝐶.AddUserMessage(𝐼 );                                                       4.2 Agent-to-Monitor Communication Protocol
+4 𝑀 ← (𝐼 );
+5 𝑇 ← GetAvailableTools( );                                                   We design a robust, attack-resistant communication protocol to
+                                                                              establish a trustworthy channel between the agent client and the
+6 do  𝐴 ← GetActionsFromLLM(𝑀,𝑇 );                                            monitoring server. We refer to this as the Agent-to-Monitor (A2M)
+      𝑀′ = 𝑀;                                                                 Communication Protocol. The protocol is detailed in Algorithm 2,
+ 7    for 𝑎 ∈ 𝐴 do                                                            where the communication procedures for both parties are specified
+ 8                                                                            independently. Both sides are required to execute their respective
+ 9         if IsToolUse(𝑎) then                                               procedures without error; any failure will result in a panic response,
+10              𝐶 .NotifyNewToolUse (𝑎 ) ;                                    thereby halting further communication. This strict failure model
+11                                                                            ensures the protocol operates deterministically and securely. More-
+12              𝑟 = RunTool(𝑎);                                               over, the sequence of procedure calls is rigidly defined: 1) The
+13              𝐶.AddUserMessage(𝑟 );                                         monitor initializes a listening server and waits for incoming con-
+14                                                                            nection requests from agent clients. 2) During initialization, the
+15              if IsToolError(𝑟 ) then                                       agent attempts to connect to the monitor using a provided server
+                     𝑟 = 𝐶.TryToAppendSecurityAlert(r);                       descriptor (e.g., URL). 3) A reliable channel is established via a
+                                                                              SayHello handshake protocol. 4) All subsequent data communica-
+16               end                                                          tion is initiated by the agent and concluded with the monitor’s
+                                                                              response.
+17              𝑀 = 𝑀 +𝑟;
+                                                                                 Communication is driven by client requests, each consisting of an
+18         else                                                               operand and associated data. The A2M protocol currently supports
+                                                                              four operand types: opconnect, opstartPassiveTracing, opsendNewToolUse
+19              𝐶 .AddAgentMessage (𝑎 ) ;                                     and opgetEnforcementInfo. The monitor server handles operands in a
+                                                                              stateful manner. The initial request must be opconnect, which con-
+20         end                                                                tains identifying information about the agent. The opstartPassiveTracing
+                                                                              request, which enables system-level tracing and auditing, is permit-
+21    end                                                                     ted only after the initial connection is established. The remaining
+                                                                              two request types are valid only once tracing is active. Importantly,
+22 while 𝑀 ≠ 𝑀′;                                                              the protocol does not permit any operand that disables tracing once
+                                                                              it has been enabled. This design defends against malicious attempts
+        transmitted via an agent-to-monitor protocol to the moni-             to terminate security monitoring, which would compromise the
+        toring server (red components).                                       trust model after task inputs have been provided. By enforcing this
+   (2) System-Level Tracing: AgentSentinel utilizes a multi-aspect            unidirectional trust boundary, AgentSentinel ensures continuous
+        system tracer to capture and suspend sensitive operations             protection even in adversarial environments.
+        (orange components).
+   (3) Adaptive Hybrid Threat Auditing: AgentSentinel inte-                   4.3 System Tracer and Enforcer
+        grates a modular security audit approach designed to effi-
+        ciently identify real-time threats associated with tool execu-        To identify side effects introduced by tool use in computer-use
+        tion (green components).                                              agents, we instrument 16 trace probes within critical components
+                                                                              of the underlying operating system. These probes cover process
+4.1 Computer-Use Agent Instrumentation                                        control, file operations, and network access. Each trace probe pas-
+                                                                              sively logs observed events to an event collector. If an observed
+To obtain the task context and determine the next action from a               event violates the enforcement policy associated with the probe,
+running agent, we first instrument the original agent program to              the responsible process is subject to enforcement actions such as
+be capable of communicating with the monitoring server. The gen-              suspension or termination. We refer to such an observed event as
+eral structure of the instrumented agent is presented in Algorithm            an enforcement event. The enforcement policies on all trace probes
+1, where the red-highlighted lines indicate modifications to the              are configurable, enabling selective enforcement for specific events.
+original code. At line 1, the agent initializes a AgentSentinel client        Process Control Probes. We focus on four key process-related
+by establishing a connection with the monitoring server, which                operations: fork, exec, kill, and exit. Tool use frequently involves
+enables the server to retrieve essential information such as the              spawning multiple processes. For instance, when an agent uses
+agent’s process ID and its dependent files. The initial task input            the command cat /tmp/server.log via a shell, it invokes both the
+is collected at line 3. For each tool-use action, the client notifies         bash and cat processes. Specifically, the agent forks a process to ex-
+the server of an impending tool invocation. All task context mes-             ecute bash, which in turn interprets the command and executes cat.
+sages—gathered at lines 3, 12, and 19—are transmitted at line 11, but         The fork and exec probes allow us to identify the precise process
+only when a tool-use action is imminent. This notification process
+is non-blocking, allowing the AgentSentinel server to audit the
+tool invocation passively and mitigate potential security threats
+in real time. If the auditor enforces a restriction on the tool use,
+the corresponding security alerts are appended to the tool’s error
+results. This is the only instance in which the AgentSentinel client
+modifies the task context. Overall, the AgentSentinel client intro-
+duces minimal intrusion to the original agent architecture, enabling
+
+                                                                        3540
+
+
+===== PAGE 7 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents                                                          CCS ’25, October 13–17, 2025, Taipei
+
+Auditor       Previous Task Context: N/A                                    Auditor    Task Details                                             Is Action Safe: False
+              Additional Conversations                                            LLM  [Current Task]                                           Verified File Operations
+              [                                                                        Terminating a process with PID 255                       [{
+                                                                                       [Current Tool Use]
+                    {                                                                  Using bash tool to execute kill command                    "file_path": "/usr/bin/bash",
+                      "role":"user",                                                   [Last Message for Tool Use]                                "safe_op": "r",
+                      "message":"Kill the process whose pid is 255"                    Tool Use: bash                                              "ttl": "all"
+                                                                                       Tool Description:A tool that allows the agent ...        }]
+                    },                                                                 Tool Input: {'command': 'kill 255'}                      Analysis Result
+                    {                                                                                                                           Unsafe operation detected: The bash process
+                                                                                       Sensitive Operation                                      appears to be attempting to execute right after a
+                      "role":"ai_agent",                                               [Execution Event]                                        kill command was requested, which could indicate
+                      "message":"I'll use the bash tool to kill the                    Process 285 execute binary /usr/bin/bash with            an attempt to circumvent the termination or
+                                                                                       arguments ["/bin/bash"]                                  perform unauthorized actions. The kill command's
+                           process with PID 255."                                      [Extra Information]                                      target PID (255) is the same as the parent
+                    },                                                                 Parent PID: 255                                          process ID suggesting potential security risks.
+                    {
+                                                                                       System Trace                                             agent  kill 255  bash
+                      "role":"ai_agent",                                               {"root_node":                                             255             285
+                      "message":"Tool Use: bash\nTool Description: A                   {"type":"main_process_of_agent","pid":255,"children":
+                                                                                       [{"type":"exec","pid":285,"executable_path":                                    LLM
+                           tool that allows the agent to run bash...\nTool             "/usr/bin/bash","cmdline":"/bin/bash","is_bash":true,
+                           Input: {'command': 'kill 255'}"                             "file_ops":[{"type":"read","path":"/usr/bin/bash"}]}]}}
+                    }
+              ]
+
+              Task Info: Terminating a process with PID 255
+              Current Tool Use: Using bash tool to execute kill
+              command
+              Task Changed: True
+
+                   Task Context Summarizing                                                    Security Querying
+
+                   Figure 4: Task context summarizing and security querying of the LLM-based auditor.
+
+Algorithm 2: A2M Protocol                                                                    Filesystem Access Probes. We instrument three key file opera-
+                                                                                             tions: open, remove, and rename. Tool use often involves more file
+1 Procedure AgentClient(serverDesc, 𝑑𝑎𝑡𝑎AgentBasicInfo )                                     accesses than one might expect, including both explicit (e.g., read-
+2 𝐶 ← ConnectAndSayHello(serverDesc);                                                        ing /tmp/server.log) and implicit (e.g., loading binaries like bash
+3 SendClientRequest(C, opconnect, dataAgentBasicInfo );                                      and cat, or reading configuration files). File-level operations can
+                                                                                             generate a large volume of low-level events; for example, writing a
+4 while true do                                                                              large file through buffered I/O may trigger multiple write events.
+                                                                                             To reduce overhead, we focus on tracing file open events, which
+5             𝑜𝑝, 𝑑𝑎𝑡𝑎 ← GenerateNewClientRequest();                                         provide sufficient insight via access modes (e.g., read/write). Addi-
+                                                                                             tionally, remove and rename probes help track structural changes
+6             𝑟𝑒𝑞 ← SendClientRequest(C, op, data);                                          in the filesystem, excluding content modifications.
+                                                                                             Network Access Probes. We focus on internet-related activities
+7             ConsumeServerResponse(𝑜𝑝, 𝑟𝑒𝑞);                                                (e.g., IPv4/IPv6) and three core operations: connect, listen, and accept.
+                                                                                             A network-enabled agent may both retrieve data and expose ser-
+ 8 end                                                                                       vices. By tracing connect operations, we capture outbound commu-
+9 Procedure MonitoringServer( )                                                              nication capabilities and destination addresses. Conversely, listen
+10 𝑆 ← InitListeningServerFromServerDescriptor( );                                           and accept traces reveal server-side behavior and inbound con-
+11 𝐶 ← WaitClientConnectAndSayHello(𝑆 );                                                     nections from remote clients. Furthermore, we trace DNS resolu-
+                                                                                             tion events to maintain a DNS mapping table. This allows reverse-
+12 status ← 0;                                                                               mapping IP addresses to their original domains. For example, re-
+                                                                                             solving an HTTP request involves first querying a domain via DNS,
+13 while true do                                                                             then initiating a TCP connection. With the DNS table, we can con-
+                                                                                             textualize remote addresses using their associated domains, aiding
+14            𝑜𝑝, 𝑑𝑎𝑡𝑎 ← WaitNewClientRequest();                                             in network source analysis.
+
+15            if status = 0 and op = opconnected then                                        4.4 Real-time Security Risks Auditing
+
+16                 status ← 1;                                                               To identify and mitigate real-time security threats triggered by
+                                                                                             the agent during tool use, we propose an automated, modular and
+17            end                                                                            configurable security auditor that blocks risky operations upon
+                                                                                             threat detection. Importantly, this auditor is driven by sensitive
+18            if status = 1 and op = opstartPassiveTracing then                              trace events, instead of directly interfering with every function
+                                                                                             call from the agent. The security auditing procedure is detailed in
+19                 status ← 2;                                                               Algorithm 3. This auditor accepts four arguments: the enforcement
+                                                                                             event 𝑒, the event trace tr collected during the current tool session,
+20            end                                                                            new chat messages msgs from the agent client, and a boolean flag
+                                                                                             hasNewToolUse indicating whether a new tool is being used by
+21            HandleClientRequest(status, 𝐶, 𝑜𝑝, 𝑑𝑎𝑡𝑎);
+
+22       end
+
+tree and binary dependencies involved in a tool use. Meanwhile,
+kill and exit probes capture signal exchanges and program termina-
+tion statuses, helping infer the overall program state. To manage
+scope and reduce noise, process control probes maintain two sets:
+interesting processes and enforced processes. A process is marked
+as interesting if it is the main agent process or one of its descen-
+dants. Enforcement is governed by a tunable threshold—maximum
+enforced process level—where the main agent starts at level 1, its
+children at level 2, and so forth. A process is subject to enforcement
+if its level is less than or equal to this threshold.
+
+                                                                                       3541
+
+
+===== PAGE 8 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                                                                Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+Algorithm 3: Real-time Security Threats Auditing                                immediately resume the process without issuing a new query. For
+                                                                                example, if the agent repeatedly opens a log file during analysis, a
+1 Function SecurityAuditing(𝑒, 𝑡𝑟, msgs, hasNewToolUse)                         single verified query suffices. Additionally, verified file operations
+                                                                                with executable permissions are stored in a dedicated safe binary
+2 startTime ← getCurrentTime( );                                                cache. Incoming process events are considered safe if their exe-
+                                                                                cutable matches an entry in this cache. These caching mechanisms
+3 ans ← RuleBasedAuditing(𝑒, 𝑡𝑟, msgs, hasNewToolUse);                          help avoid redundant queries for identical events.
+                                                                                Event Dependency Analysis. To improve the contextual under-
+4 if ans ≠ unknown then return ans;                                             standing of enforcement events, we construct a complete event
+                                                                                trace for the LLM. This trace includes all dependent observed and
+5 taskCtx ← getCurrentTaskContext( );                                           enforcement events leading up to the enforcement event. As shown
+                                                                                in Algorithm 3, the trace is organized as a process chain: each node
+6 if hasNewToolUse then                                                         represents a process, where the leaf node is the originator of the
+                                                                                enforcement event, and intermediate nodes are its parent processes.
+7  taskCtx, taskChanged ←                                                       The root node represents the agent’s main process. Each node
+                                                                                includes relevant metadata such as PID, executable path, command-
+   summarizeToolUseCtx(taskCtx, msgs);                                          line arguments, whether it is a bash, and recorded file/network
+                                                                                operations. This enriched trace allows the LLM to evaluate the en-
+ 8 end                                                                          forcement event within its real execution context—e.g., recognizing
+ 9 if taskChanged then flushTaskandOnceCache( );                                that a child process is attempting to kill its parent. Furthermore,
+10 ans ← getFromSecurityQueryCache(𝑒 );                                         we strictly constrain the size of event trace to prevent significantly
+11 if ans ≠ unknown then return ans;                                            increase the cost of security query. First, we use the maximum
+12 𝑡𝑟𝑒 ← ExtractDependentEventTrace(𝑒, 𝑡𝑟 );                                    enforced process level in Section 4.3 to limit the length of process
+13 ans, verifiedOps, res ←                                                      chain. Second, we prune verified file and network operations from
+                                                                                the process chain using the security query cache.
+          QueryLLMBasedAuditor(𝑒, 𝑡𝑟𝑒, taskCtx );                               QPS Optimizer for Security Query. Frequent security queries
+14 addVerifiedOpsToCache(verifiedOps);                                          may disrupt normal tool use, as enforced processes are suspended
+15 SetLastEnforcementInformation(res);                                          until auditing completes. If audit latency exceeds the tool’s time-
+16 endTime ← getCurrentTime( );                                                 out, the tool may fail. To avoid this, we enforce a time budget on
+17 accumulateAuditTime(𝑒, endTime − startTime);                                 auditing per live process. If a process exceeds its audit budget, it
+                                                                                is removed from the enforcement set, meaning no future enforce-
+18 return ans                                                                   ment events are generated, although audit logs remain available
+                                                                                for offline analysis.
+the agent. If the enforcement event is deemed safe, the auditor
+resumes the corresponding process; otherwise, it terminates the                 5 Evaluation
+process. The auditing workflow consists of four stages: 1) The rule-
+based auditor applies predefined policies to evaluate enforcement               Implementation. We implemented AgentSentinel in around 6700
+events, leveraging efficient pattern matching techniques for policy             lines of Golang code and 1900 lines of C code. We utilized the
+enforcement. 2) When a new tool use is detected, chat messages are              Extended Berkeley Packet Filter (eBPF) [8] and Linux Security Mod-
+incrementally summarized to construct the task context. 3) If the               ules (LSM) [38] techniques to trace and enforce sensitive operations
+task has changed, verified task-dependent operations are flushed                from the user scope. We used lightweight container-based virtual-
+from the cache. The auditor checks for a cache hit and resumes                  ization techniques (e.g., docker) to isolate the running environment
+the process immediately if one is found. 4) Constructs a security               of LLM-based computer-use agents from the host system. We im-
+query using the enforcement event, its dependent event trace, and               plemented AgentSentinel client as a Python package in 170 lines
+the summarized task context. This query is evaluated by an LLM-                 of Python code; it is straightforward to implement it in other pro-
+based auditor to return a decision (resumption or termination), the             gramming languages.
+set of verified operations, and an explanation. Figure 4 illustrates            Experiment Settings. We conducted all experiments on Ubuntu
+a task where the agent attempts to kill a specific process. The                 20.04 with a 16-core CPU (Intel® Core™ i7-10700 CPU @ 2.90GHz)
+chat messages are synthesized into a concise task summary, and                  and 32G RAM. We set the maximum process enforcement level to 4
+the security query—comprising the task summary, a structured                    and the maximum audit time to 110s, which is about 90% of the wait-
+enforcement event, and a relevant event trace—allows the LLM to                 ing time for a single tool use (see Section 4.3). We chose Claude-for-
+correctly detect that the child process is attempting to terminate              Computer-Use as the implementation of the computer-use agent; it
+its parent (the agent process), identifying a security threat.                  provides standard specifications for three tools — Bash, Computer,
+Security Query Cache. To reduce the frequency of security queries,              and File Editor — and supports fully end-to-end computer-use op-
+we introduce a cache that stores verified operations from previ-                erations [15]. We experimented with Claude 3.5 Sonnet, Claude
+ous LLM responses. As shown in Algorithm 3, the LLM response                    3.7 Sonnet, GPT-4-Turbo, and GPT-4o as the computer-use agent
+includes a set of verified file operations, each characterized by a             and the auditor of AgentSentinel. To prevent agents from running
+file path, permission, and a scope of validity. The scope can be: 1)
+Once-level specifies that the file operation is safe for next occur-
+rence only. 2) Task-level specifies that the file operation is safe for
+the current task. 3) Universal-level specifics that the file operation
+is safe across all tasks. Verified file operations are cached with their
+scope of validity used as the time-to-live (TTL). Cache lookups fol-
+low the order: once-level, task-level, then universal-level. Verified
+network operations are stored similarly in a separate cache. If a
+future enforcement event matches a cached entry, the auditor can
+
+                                                                          3542
+
+
+===== PAGE 9 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents                                                               CCS ’25, October 13–17, 2025, Taipei
+
+Table 1: Evaluation metrics. ↑ indicates the higher the better                                                              security guidance [21, 52]. We implement the instruction
+while ↓ indicates the lower the better.                                                                                     prevention in ASB [49] in our evaluation to ensure a fair
+                                                                                                                            comparison.
+Metric                                 Description                                                                       • Tool-Use Guard reviews the task context to identify secu-
+                                                                                                                            rity risks in every tool use [6, 34, 46]. It rejects the tool use if
+ASR Percentage of tasks where the agent successfully trig- ↑                                                                a security threat is identified. We implement it by removing
+            gers a malicious operation.                                                                                     system tracing of AgentSentinel.
+                                                                                                                         • Llama Guard (4-12B) is an LLM-based safeguard model
+DSR Percentage of tasks where the defender successfully ↑                                                                   that integrates the MLCommons safety taxonomy and an
+            refuses all malicious operations and accepts all benign                                                         additional category for classifying tool-use safety [29].
+                                                                                                                         • Prompt Guard (2-86M) is a high-performance safety clas-
+        operations.                                                                                                         sifier designed to detect prompt injection and jailbreaking
+                                                                                                                            attacks [30].
+FPR Percentage of tasks where the defender mistakenly ac- ↓
+            cepts some malicious operations.                                                                        Compared with these baseline techniques, AgentSentinel only in-
+                                                                                                                    serts necessary security alerts into the tool-use errors, making it
+FNR     Percentage of tasks where the defender mistakenly re- ↓                                                     the most non-intrusive defense method (see Table 2). Though In-
+        fuses some benign operations.                                                                               struction Prevention intrudes only on user inputs, the aggressive
+                                                                                                                    modification may be seen as an attack and can mislead an agent
+FT      Percentage of failed tasks where the expected attacks                                                       to reject a normal task (see further discussion in Section 5.2). Dif-
+                                                                                                                    ferently from Instruction Prevention, our AgentSentinel applies a
+        are failed.                                                                                                 passive defense strategy; it terminates a tool use in the tool-calling
+                                                                                                                    component only after the tool use has been fully checked.
+AFR     Percentage of successful tasks where the expected at-
+        tacks are failed.                                                                                              We evaluate AgentSentinel by addressing the following two
+                                                                                                                    research questions:
+endlessly, we restricted the number of dialogue rounds for an agent
+to process a task to 30.                                                                                                 • RQ1: How accurate is AgentSentinel for detecting security
+Evaluation Metrics. We proposed comprehensive evaluation met-                                                               threats?
+rics (see Table 1) to quantify the effectiveness of attacks (ASR), de-
+tection defense (DSR, FPR, and FNR), and model’s security policies                                                       • RQ2: How efficient is AgentSentinel in real-time defense?
+(AFR). In addition, we measure the impact that a defense imposes                                                         • RQ3: How robust is AgentSentinel against adaptive attacks?
+on the task capability of computer-use agents (FT). We also mea-
+sure the security capability of LLMs as the AFR. A higher AFR                                                       5.1 BadComputerUse: An Attack Benchmark
+indicates that an LLM implements a more effective security policy.                                                        for Computer-Use Agent
+Furthermore, for a given task, if a defense mechanism accepts some
+malicious operations while rejecting some benign ones and the                                                       To comprehensively evaluate the capability of AgentSentinel for se-
+first rejected operation is benign, we classify the outcome as a false                                              curity threats detection, we curated BadComputerUse, a benchmark
+positive; otherwise, we consider it a false negative. If a defense                                                  that consists of 60 diverse computer-use attack scenarios spanning
+mechanism rejects all malicious operations or an agent completes                                                    seven types of attack: Direct Task Injection, Agent Infrastructure
+the task successfully though with some benign operations rejected,                                                  Attack, Backdoor Attack, Bad Tool Result Attack, Hallucination
+we consider it a successful defense.                                                                                Exploitation, Malicious Agent Execution Environment, and Prompt
+                                                                                                                    Injection Attack from AgentDojo [7]. Each type threatens one or
+Table 2: The corresponding components of the computer-                                                              more components of a computer-use agent (see Table 2). To the best
+use agent (in Section 2.1) baseline defenses intrude and the                                                        of our knowledge, BadComputerUse is the first benchmark specifi-
+corresponding vulnerable components of the computer-use                                                             cally designed to evaluate security threats to different components
+agent that face to different attacks.                                                                               of a computer-use agent.
+
+                      Defense          System prompt  User instruction   Actions  Tool calling  Tool results
+                                       System prompt  User instructions  Actions  Tool calling  Tool results
+              Delimiters Defense
+            Instruction Prevention                                                                                                                        Backdoor Attack
+
+                 Tool-Use Guard                                                                                     Bad Tool Result Attack           15%       Agent Infrastructure Attack
+                  AgentSentinel                                                                                                              23%
+                   Llama Guard                                                                                                                            8%6% Direct Task Injection
+                  Prompt Guard
+
+                       Attack
+
+             Direct Task Injection
+        Agent Infrastructure Attack
+
+                Backdoor Attack
+            Bad Tool Result Attack
+         Hallucination Exploitation
+Malicious Agent Execution Environment
+
+                    AgentDojo
+
+                                                                                                                                                15%       15%  AgentDojo
+
+Baselines. We compare AgentSentinel with the following widely                                                       Hallucination Exploitation       17%
+used techniques:
+                                                                                                                                                     Malicious Agent Execution Environment
+     • Delimiters Defense uses special delimiters/tags to wrap
+        task inputs and instruct the model to focus only on the                                                     Figure 5: Attack samples in BadComputerUse benchmark.
+        wrapped content [22, 28, 44, 49]. We implement the delimiter
+        defense in ASB [49] in our evaluation.                                                                         Figure 5 illustrates the distribution of attack types in BadCom-
+                                                                                                                    puterUse. We construct each attack on top of a unique real-world
+     • Instruction Prevention rewrites task inputs to emphasize
+        the original goal of the task, thus introducing additional
+
+                                                                                                              3543
+
+
+===== PAGE 10 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                          Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+task. For Backdoor attacks, Direct task injection, and Malicious              Table 3: ASR(%) for each attack type in BadComputerUse.
+Agent Execution Environments, the underlying tasks are sourced
+directly from OSWorld [47], AgentInstruct [31], AgentBench [25],                                     Attack                                    ASR (%)  GPT-4o
+and NL2Bash [24]. In contrast, tasks for Bad Tool Result Attack,                                                     Claude 3.5 Sonnet(1) GPT-4-Turbo
+Hallucination Exploitation, and Agent Infrastructure Attacks are                           Direct Task Injection     Claude 3.7 Sonnet(2)                 100
+designed by domain experts.                                                           Agent Infrastructure Attack                                         100
+                                                                                                                     100            100                   100
+   Below, we briefly describe the six types of attacks:                                       Backdoor Attack                                              90
+                                                                                          Bad Tool Result Attack     100            100                   100
+     • Direct Task Injection: Appends an additional instruction                        Hallucination Exploitation                                         100
+        to a normal task prompt, directing the agent to execute a             Malicious Agent-Execution Environment  100            100                    30
+        malicious action (e.g., a Bash command).                                                                                                          87
+                                                                                                  AgentDojo          100            90
+     • Agent Infrastructure Attack: Targets the agent’s support-                                      Total
+        ing services. This includes terminating critical processes,                                                  100            90
+        reading or modifying essential service files, and leaking sen-
+        sitive information such as ChatGPT API keys.                                                                 100            100
+
+     • Backdoor Attack: Embeds backdoor triggers and malicious                                                       50(1) / 30(2)  10
+        instructions into the system prompt. When the trigger is
+        activated, the agent is manipulated into performing unau-                                                    92(1) / 88(2)  82
+        thorized tool use.
+                                                                              LLMs, while 90% of attacks from AgentDojo fail on GPT-4-Turbo
+     • Bad Tool Result Attack: Creates mock services that imper-              (50% due to task failures) and 70% of attacks fail on GPT-4o (50%
+        sonate common servers (e.g., Web, SSH, MySQL, DNS, Redis).            due to task success failure). Additionally, GPT-4-Turbo consistently
+        These services return malicious payloads, often as common             refuses to execute two tasks involving the execution of unknown
+        vectors, when accessed by the agent. For file-processing              Bash and ELF files, even when doing so is considered safe. Similarly,
+        tasks, we also embed malicious vectors within the metadata            GPT-4o reliably rejects a task requiring the execution of a Python
+        or content of files such as images and PDFs.                          script retrieved from an external web server. These findings suggest
+                                                                              that attack success rates are highly dependent on both the task
+     • Hallucination Exploitation: Targets tasks that are prone               and security capabilities of target LLMs. Specifically, weaker task
+        to model hallucination. Examples include prompting the                capabilities increase the probability of early termination during nor-
+        agent to install nonexistent Python packages, manipulate              mal task execution before reaching attack windows, while stronger
+        malformed file paths, or execute undefined programs.                  security capabilities may reject potentially unsafe tasks early.
+
+     • Malicious Agent-Execution Environment: Injects back-                   5.2 Detection of Security Threats (RQ1)
+        doors into widely used applications from GNU Coreutils
+        (e.g., ls, cat, cp) [12]. The backdoors are sourced from              In this research question, we compare the performance of baseline
+        community-maintained pentesting resources [37], and in-               defenses and AgentSentinel on the BadComputerUse benchmark
+        clude techniques such as reverse shells, bind shells, SSH             using various evaluation metrics (see Table 4). To instantiate the
+        backdoors, and command history evasion.                               auditor and computer-use agent, we choose Claude 3.5 Sonnet,
+                                                                              Claude 3.7 Sonnet, GPT-4-Turbo, and GPT-4o , as they represent
+     • AgentDojo: Embeds malicious payloads in common appli-                  the most advanced LLMs currently available. For consistency, we
+        cation resources (e.g., e-banking, Slack, travel booking, per-        also ensure that in both Tool-Use Guard and AgentSentinel, the
+        sonal workspace). However, AgentDojo cannot be directly               auditor and the corresponding computer-use agent are instantiated
+        integrated into our testing environment for computer-use              using the same LLM. In the following, we will provide the detailed
+        agents. Its tools, implemented in Python, are tightly cou-            comparison regarding each metric.
+        pled with its own testing framework and accessed via di-              Defense Success Rate. As shown in Table 4, AgentSentinel con-
+        rect Python function calls, rather than through realistic             sistently outperforms all baseline defenses in terms of defense suc-
+        client–server interactions. To better evaluate our frame-             cess rate (DSR). Specifically, it achieves the highest DSR, reaching
+        work, we develop corresponding web services for each ap-              up to 96.7% when paired with Claude 3.7 Sonnet, and maintains
+        plication and implement client interfaces to enable realis-           an average DSR of 79.6%. Compared with the GPT model series,
+        tic interactions for 10 representative injection tasks and            AgentSentinel with Claude LLMs yields a notably higher average
+        their associated user tasks, covering all key applications            DSR (+31% on average), potentially due to Claude’s enhanced tun-
+        in AgentDojo—e-banking, Slack, travel booking, calendar,              ing for computer-use tasks. As a result, AgentSentinel (w/ Claude
+        cloud drive, and email.                                               LLMs) interferes significantly less with security-sensitive steps
+                                                                              that are safe during task execution. This also suggests that as the
+   We then evaluate representative LLMs on the BadComputerUse                 model evolves, the effectiveness of our tool will improve corre-
+benchmark using the ASR metric (see Table 3). Overall, BadCom-                spondingly. Moreover, we observe that Claude-based computer-use
+puterUse successfully triggers nearly all expected attacks across             agents exhibit greater robustness to task failures, often propos-
+the evaluated LLMs, achieving ASR scores exceeding 85% in most                ing safer alternatives when the initial attempt is unsuccessful (see
+cases. This result confirms that the benchmark is effective for eval-         further discussion in Section 5.5).
+uating a wide range of defense mechanisms. Notably, Claude-3.5-
+Sonnet achieves ASR scores of 92% across all attack types. In con-               Next, we conduct a detailed analysis of the baseline defenses
+trast, more than half of attacks from AgentDojo fail on Claude                across different attack types. Among all defense techniques, the De-
+                                                                              limiters Defense proves to be the least effective, exhibiting only lim-
+                                                                              ited capability against Direct Task Injection attacks and AgentDojo.
+                                                                              Notably, it fails to detect 50% of such attacks across all evaluated
+                                                                              models. Instruction Prevention and Tool-Use Guard defenses are
+
+                                                                        3544
+
+
+===== PAGE 11 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents                           CCS ’25, October 13–17, 2025, Taipei
+
+Table 4: Defenses comparison across different LLM models based computer-use agents
+
+          Defense              Model                                    DSR(%)  FPR(%)         FNR (%)  FT (%)  AFR(%)
+  Delimiters Defense    Claude 3.5 Sonnet                                11.67      0             85     1.67     1.67
+Instruction Prevention  Claude 3.7 Sonnet                                 13.3      0            83.3     1.7      1.7
+                                                                           8.3      0            76.7    11.7      3.3
+    Tool-Use Guard         GPT-4-Turbo                                      5       0             80     13.3      1.7
+     AgentSentinel             GPT-4o                                      9.6      0            81.2     7.1      2.1
+      Llama Guard             Average                                    33.33                    60     3.33       0
+     Prompt Guard                                                          20     3.33           78.3      0       1.7
+                        Claude 3.5 Sonnet                                  15       0             65     16.7      3.3
+       No Defense       Claude 3.7 Sonnet                                 16.7      0            66.7    13.3      3.3
+                                                                          21.3      0            67.5     8.3      2.1
+                           GPT-4-Turbo                                   36.67    0.8                      0        0
+                               GPT-4o                                     28.3                   61.67     0        0
+                              Average                                      30     6.67            70     1.67     6.67
+                                                                          21.7    1.7             45      10       1.7
+                        Claude 3.5 Sonnet                                 29.2   16.67           53.3     2.9      2.1
+                        Claude 3.7 Sonnet                                 93.3    13.3           56.2     3.3       0
+                                                                          96.7    9.6             1.7      0        0
+                           GPT-4-Turbo                                    61.7    1.7             3.3      5       3.3
+                               GPT-4o                                     66.7      0             6.7     8.3      1.7
+                              Average                                     79.6    23.3             5      4.2     1.2
+                                                                           40     18.3            4.2      0        0
+                        Claude 3.5 Sonnet                                  30     10.8           28.3      0        0
+                        Claude 3.7 Sonnet                                21.67    31.7           31.7    3.33     1.67
+                                                                          23.3    38.3                    6.7      1.7
+                           GPT-4-Turbo                                   28.75   31.67           41.67    2.5     0.83
+                               GPT-4o                                     18.3    33.3            35       0        0
+                              Average                                      20    33.75                     0        0
+                                                                          13.3      5            34.17    6.7       5
+                        Claude 3.5 Sonnet                                  8.3      5            76.7     6.7      8.3
+                        Claude 3.7 Sonnet                                  15       0             75     3.33     3.33
+                                                                           —        0             75       0       10
+                           GPT-4-Turbo                                     —      2.5            76.7      0      11.7
+                               GPT-4o                                      —       —             75.83    8.3      15
+                              Average                                      —       —               —      15      11.7
+                                                                                   —               —
+                        Claude 3.5 Sonnet                                          —               —
+                        Claude 3.7 Sonnet                                                          —
+
+                           GPT-4-Turbo
+                               GPT-4o
+                              Average
+
+                        Claude 3.5 Sonnet
+                        Claude 3.7 Sonnet
+
+                           GPT-4-Turbo
+                               GPT-4o
+
+more effective against (direct and indirect) prompt injections, but           user instructions can lead to unpredictable behavior. In contrast,
+less effective against Agent Infrastructure attacks and Hallucina-            Llama Guard exhibits the highest mean FPR of 33.75%. Our manual
+tion Exploitation. Among all baselines, Tool-Use Guard achieves the           analysis shows that Llama Guard incorrectly flags most normal
+highest mean DSR with but lags significantly behind AgentSentinel             command executions as code interpreter abuse, suggesting that
+(-50%), demonstrating that system-level traces are highly valuable            Llama Guard is less effective for securing computer-use agents that
+for identifying security threats. Llama Guard achieves the highest            involve extensive interpreter operations (e.g., Bash and Python).
+mean DSR, as it is more effective against explicit prompt injections          False Negative Rate. AgentSentinel outperforms all baselines
+and malicious instructions.                                                   in terms of False Negative Rate (FNR). Two false-negative cases
+False Positive Rate. AgentSentinel achieves an average false pos-             with Claude 3.5 Sonnet and Claude 3.7 Sonnet are both caused by
+itive rate (FPR) of 10.8%. Notably, AgentSentinel (w/ Claude 3.7              a low process enforcement level. For example, a malicious event
+Sonnet) reports zero false positives and AgentSentinel (w/ Claude             occurred in a child process of the agent, which had a process level
+3.5 Sonnet) reports only one false positive, consistent with the ob-          5 higher than the enforcement threshold. As a result, the expected
+servation that Claude 3.7 Sonnet is generally stronger than Claude            enforcement events were considered compliant events and were
+3.5 Sonnet. We further analyze false positives and find that most             not forwarded to the auditor. Fortunately, these compliant events
+involve the use of apt in scenarios such as downloading tools from            were still logged, allowing for using post-analysis techniques such
+open software package repositories, a common occurrence in the                as log file auditing to detect threats. We leave the development
+tasks of BadComputerUse. Since running apt requires sudo privi-               of such techniques for future work. For GPT-4-Turbo and GPT-4o,
+lege, increasing the privilege level to download external tools leads         we find that they failed to detect a malicious operation related
+LLMs to deem the operation unsafe and reject it, even in cases where          to command history evasion, independently of the setting. This
+the operation is safe within the task context (see our analysis in            finding is consistent with the observation that Claude LLMs are
+Section 5.5). Compared with AgentSentinel, Instruction Prevention             more effective than GPT model series in identifying security threats.
+has a much lower mean FPR of 0.8%. However, our further manual                Failed Tasks and Attacks. AgentSentinel maintains a reasonably
+analysis of the false positives on Instruction Prevention reveals that        low average task failure rate of 4.2%, indicating minimal impact on
+the injected instructions can conflict with the original instructions,        the agent’s task performance. This also demonstrates that the eval-
+such as system prompts, suggesting that aggressively modifying                uated LLMs are capable of solving most tasks in BadComputerUse.
+
+                                                                        3545
+
+
+===== PAGE 12 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                                                                     Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+Table 5: Adaptive attacks.                                                          525 tool uses; AgentSentinel generates an average of 2.8 security
+                                                                                    queries per tool use, representing approximately triple the query
+Adaptive Attack                                    Description                      frequency of the Tool-Use Guard baseline. While the processing
+(w/ Targeted Component)                                                             time for these security checks is generally brief, accurate temporal
+Killing Observable Defender           Disable the defender service by in-           measurements prove challenging to obtain due to network latency
+(Monitor )                            structing the agent to list all run-          variations that significantly impact timing consistency across op-
+                                      ning processes in the operating sys-          erations. Moreover, our security query cache filters out 16812 file
+Toxic Task Context                    tem.                                          events (84%) and 159 network events (61%) by analyzing the depen-
+(Task Summarizer)                     Inject malicious instructions into            dency of event traces, effectively decreasing the number of event
+                                      the user task, causing the task sum-          traces and reducing the cost of each security query. Overall, our
+Toxic System Trace 1                  marizer to output an incorrect task           analysis demonstrates that AgentSentinel achieves real-time detec-
+(Tracer )                             context summary.                              tion by controlling query volume while significantly reducing the
+                                      Inject a malicious payload into the           dominant cost driver—event trace analysis.
+Toxic System Trace 2                  system trace through file write op-
+(Auditor )                            erations (e.g., writing malicious text        5.4 Performance against Adaptive Attacks (RQ3)
+                                      into a local file).
+Query Cache Poisoning                 Inject a malicious payload into the           We analyze the performance of AgentSentinel against five poten-
+(Security Query Cache)                system trace through command ex-              tial adaptive attacks (see Table 5). Each adaptive attack targets a
+                                      ecution (e.g., executing a command            core component of AgentSentinel. We assume that the malicious
+                                      with malicious arguments).                    instructions in each adaptive attack can be introduced through
+                                      Execute two independent tasks se-             attack surfaces defined in our threat model (Section 3). As shown
+                                      quentially, where the second task             in Table 6, AgentSentinel (w/ Claude LLMs) successfully defends
+                                      attempts to bypass the security au-           against all adaptive attacks. Two adaptive attacks targeting the
+                                      ditor by exploiting cached safe op-           monitor and tracer are successfully defended across all LLMs. Since
+                                      erations from the first task.                 the monitor operates at the system level, it remains unobservable to
+                                                                                    normal users. The tracer efficiently filters sensitive data from most
+Table 6: Performance against adaptive attacks across differ-                        untrusted sources (e.g., file content and network data) to prevent
+ent LLM-based computer-use agents. denotes a successful                             their transmission to the auditor.
+adaptive attack; otherwise, .
+                                                                                        Among the three unsuccessful cases, both the auditor (with GPT-
+       Adaptive Attacks                          Attack Result  GPT-4o              4-Turbo) and the task summarizer (with GPT-4o) are compromised
+                             Claude 3.5 Sonnet GPT-4-Turbo                          by malicious payloads. In our implementation, although command
+Killing Observable Defender  Claude 3.7 Sonnet                                      arguments are formatted as structured output to prevent abuse, we
+      Toxic Task Context                                                            can further mitigate this type of adaptive attack through proper
+     Toxic System Trace 1                                                           data masking techniques [43]. Moreover, the success of the query
+     Toxic System Trace 2                                                           cache poisoning attack (w/ GPT-4-Turbo) is actually influenced by
+                                                                                    the task summarizer. Although the task summarizer generates a
+   Query Cache Poisoning                                                            new task context and signals a task change—causing previously
+                                                                                    cached safe operations to be flushed—it still includes the original
+Notably, GPT-4-Turbo and GPT-4o have a higher task failure rate.                    task context in its output. Consequently, the auditor perceives the
+Our manual analysis suggests that GPT models are less effective                     current task as a combined task, mistakenly treating operations safe
+than Claude models in executing computer-use tasks. For instance,                   in the first task as still safe in the updated one. This observation
+GPT models demonstrate weaker task capabilities when exploit-                       suggests that Claude LLMs demonstrate better task summarization
+ing clients to interact with related applications in attacks from                   capabilities. Furthermore, selecting different base LLMs for the
+AgentDojo. Moreover, we find that most failed attacks are from                      task summarizer and auditor could leverage the complementary
+Hallucination Exploitations and AgentDojo. The former occurs be-                    strengths of different models.
+cause the success rate of hallucination exploitation heavily relies
+on the LLM generating specific outputs that we have seen before.                        Overall, AgentSentinel effectively defends against 85% (17 out
+Therefore, both the absence of hallucinations and the presence of                   of 20) of the adaptive attacks, demonstrating the robustness of its
+unintended hallucinations can cause hallucination-based attacks to                  core components against a range of adversarial threats.
+fail. The latter occurs because the effectiveness of some attacks on
+LLMs can diminish across model iterations.                                          5.5 Case Studies
+
+5.3 Efficiency of Real-Time Defense (RQ2)                                           We report intriguing observations from four representative tasks
+                                                                                    in threat detection.
+We analyze the performance overhead of AgentSentinel using                          Novel Threats Detection. The first task is to delete all subdirecto-
+Claude 3.7 Sonnet on BadComputerUse. AgentSentinel generates                        ries named as subdirname in a given root directory rootdirname.
+a total of 4990 enforced events, where 2811 (56%) are handled by                    To accomplish the task, an agent can run a bash command like
+the rule-based auditor with negligible processing time, 684 (14%)                   “find rootdirname -type d -name subdirname -exec rm
+are resolved through cache hits, and 1495 (30%) are processed by                    -rf {}”, but AgentSentinel (w/ Claude 3.5 Sonnet) detects novel
+the LLM-based auditor. The 60 tasks in BadComputerUse involve
+
+                                                                              3546
+
+
+===== PAGE 13 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents  CCS ’25, October 13–17, 2025, Taipei
+
+security risks outside our designed tests and blocks the command.             tool call. However, traditional LLM guardrails struggle to deter-
+Specifically, using find with -exec rm -rf can lead to unintended             mine whether this action is genuinely consistent with the current
+deletions if the root directory contains symlinks pointing to critical        task. In contrast, AgentSentinel can identify this consistency by
+system locations. Though rm does not work on all symlinks, i.e.,              monitoring whether the incoming process events originate from
+it works only on symlinks that have a trailing slash [39], delet-             browser program execution. Consequently, a comprehensive threat
+ing files without user confirmation is risky by itself. Following a           detection approach must consider both explicit tool calls and their
+security alert on the risky command, we observe that the agent                corresponding side effects.
+tries a safer way: it collects all subdirectories to be deleted and,
+instead of deleting them all at once, deletes them one by one. This           6 Discussion & Limitations
+demonstrates that AgentSentinel (w/ Claude 3.5 Sonnet) can detect
+a wider range of security risks and apply protective measures ac-             Security Capability of LLMs. Based on our analysis, all four
+cordingly, suggesting that there is room for improving the coverage           evaluated LLMs exhibit strong intrinsic security capabilities. These
+of BadComputerUse to reveal the full capacity of LLM agents.                  capabilities can be broadly categorized into two types: 1) those
+Evasive Threat Detection. The second task is to use a specific                exhibited in the presence of explicit security-oriented system in-
+tool unknown to the agent to view a temporary file. We find that              structions, and 2) those that result from the model’s own built-in
+the Claude agent often generates a Bash command starting with                 security alignment policy. The latter becomes particularly evident
+the tool without considering its functionalities, for example, in a           when the model encounters sensitive operations. However, we find
+case where the known tool task is a Bash script that will execute             that these intrinsic security safeguards can be weakened through
+every input argument, the Claude agent directly returns a Bash                subtle modifications in task instructions. For example, most LLMs
+command “task head -n 1 /tmp/test1", posing a great risk if                   will refuse to execute unknown Bash or Python scripts by default.
+an argument like /tmp/test1 is executable and contains malicious              However, when the prompt is modified to include instructions for
+code. This kind of attack can easily bypass defenses like Tool-Use            explicit safety checks such as "execute it if you think it is safe",
+Guard because the Bash command by itself exhibits no malicious                the LLMs proceed to perform basic checks (e.g., reading the script
+intention, such as command injection, but got defended against                contents or attempting to run partial commands), and if no obvious
+by AgentSentinel because our system tracer precisely captures the             threat is detected, they may execute the script. This demonstrates
+evasive behavior and fully exposes it to AgentSentinel.                       that these basic heuristics are insufficient for detecting complex
+Proactive Threat Interception. The third task involves verifying              threats in real-world settings. Another interesting case emerges
+if a remote SSH server is active using given authentication creden-           in direct task injection scenarios. For instance, Claude 3.5 Sonnet
+tials. We simulate an attack scenario by deploying a rogue SSH                explicitly flags injected commands as unrelated to the original task
+server. When connected, it produces a warning banner that con-                and refuses to execute them. However, when positive or imperative
+tains malicious instructions, instantiating a direct prompt injection         phrases such as "ensure you execute the additional bash command"
+threat. We find that the Claude auditor can identify the underlying           are prefixed, the model’s security response is weakened.
+risk and refuses to connect without authentication safeguards in
+place, showing that current frontier LLMs are surprisingly capable               The LLM model’s security behavior under explicit system instruc-
+of spotting threats before they escalate.                                     tions has already demonstrated in our experiments. Importantly,
+Tendency for False Positive. The fourth task involves extracting              our security-oriented instructions in AgentSentinel are general and
+text from a given PDF file, which requires an external PDF pro-               do not contain specific detection rules, underscoring the robustness
+cessing tool. The agent first attempts to execute a command like              of the LLMs’ response to generalized security prompts. In addition,
+apt install -y poppler-utils [10], a PDF rendering library.                   we incorporated highly sensitive threat detection rules into rule-
+However, this operation fails with AgentSentinel (w/ GPT-4o) be-              based auditor—for example, preventing child processes from killing
+cause the agent blocks all apt install/update commands due                    the main auditing process. To our surprise, when kill commands
+to the potential risks of modifying the system. After the failure of          targeting the agent process is issued, the LLM-based auditor flags
+the direct installation, the agent tries to download and compile the          the action as unsafe before our rule-based auditor intervenes. This
+Poppler source code locally, but this attempt is also blocked for             implies that LLMs, when supplied with rich auxiliary context, can
+the same security reasons. As a result, the agent aborts the task             proactively defend critical security boundaries.
+due to its inability to find an appropriate PDF tool. This highlights         Limitations of AgentSentinel. AgentSentinel has certain lim-
+that advanced LLMs, such as GPT-4o, likely implement strict safety            itations, including occurrences of both false positives and false
+measures, which can lead to false positives, even when an operation           negatives in specific scenarios. The system is designed to perform
+would be safe in the task context. Furthermore, the agent’s repeated          real-time auditing of security threats, which inevitably introduces
+attempts to perform actions with the same risks suggest that the              additional latency during tool use. As shown in Section 5.3, the
+efficiency of the agent system could be enhanced by avoiding re-              added latency corresponds to approximately 2.4 security queries
+dundant operations.                                                           per tool use, which is generally acceptable. One potential extreme
+Handling Low-Context Tool Call. The fifth task involves using                 case of false negatives may arise when a single tool use contains
+a browser to view a web page. The agent first attempts to launch              numerous sensitive operations. In such cases, the audit process
+a browser through two sequential steps: taking a screenshot and               may exceed the maximum time budget defined by the QPS opti-
+clicking the browser icon. The latter step involves a mouse click             mizer. After that, some malicious operations could bypass the secu-
+action at specific screen coordinates, which is a typical low-context         rity audit. This issue could be mitigated through post-analysis for
+                                                                              log audit. Furthermore, AgentSentinel may produce false positives
+
+                                                                        3547
+
+
+===== PAGE 14 / 15 =====
+
+CCS ’25, October 13–17, 2025, Taipei                                                                              Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen
+
+Change the owner of website images directory                                  identified in these prior works. Furthermore, AgentSentinel pro-
+`/home/computeruse/www/mysite/images` to                                      vides robust end-side defenses against these attacks, regardless of
+`www-data`                                                                    the specific vulnerabilities they exploit within the computer-use
+                                                                              agent.
+Thinks: Let's try launching a terminal from the                               Securing Agent Tool Use. [48] conducted a comprehensive anal-
+GUI.                                                                          ysis of trustworthiness in LLM-based agent systems. A major pain
+Actions: 1. Execute bash command                                              point in current tool invocation is the lack of effective defense
+`DISPLAY=:1 xterm &`                                                          mechanisms. In multi-agent systems, [45] proposed IsolatedGPT,
+2. Take a snapshot.                                                           a sophisticated architecture that isolates execution environments
+                                                                              for different LLM-based systems and strictly controls inter-agent
+Verify if terminal is                 Click the terminal                      communication. [19] introduced PFI, a safety-enhanced agent archi-
+      opened                              windows....                         tecture that enables data and privacy flow tracking and validation
+                                                                              to prevent privilege escalation within LLM agents. For tool evalua-
+Successfully opened terminal and clicked                                      tion, [34] proposed ToolEMU, a tool emulator based on LLMs de-
+terminal window.                                                              signed to evaluate tool executions and identify risks associated with
+                                                                              tool use. However, these architectural isolation approaches primar-
+Thinks: Now let's type the sudo command.                                      ily mitigate inter-agent and agent–application risks and contribute
+Actions: 1. Type `sudo chown www-data:www-                                    little toward preventing threats stemming from a single unsafe
+data /home/computeruse/www/`                                                  tool invocation. Reconstructing existing agent systems into entirely
+2. Type `mysite/images`                                                       new secure architectures is also impractical in many real-world
+3. Press Enter.                                                               deployments. Moreover, LLM-based tool sandboxes are inherently
+                                                                              unreliable, as they often fail to fully replicate the complete func-
+Figure 6: Agent types a text in multiple steps.                               tionality of the original tools [35]. In contrast, AgentSentinel can
+                                                                              effectively defend against client-side risks by performing in-depth
+when an agent decomposes a safe sensitive operation into multiple             analysis of both the task context and real-time execution status of
+sub-operations. For instance, Figure 6 illustrates a file ownership           the agent and its tool use.
+modification task. The agent launches a terminal and enters the
+corresponding chown command in two separate steps. AgentSen-                  8 Conclusion
+tinel flags the first step as suspicious because it involves modifying
+the file owner of a directory different from the one specified in             We propose AgentSentinel, an end-to-end, real-time security de-
+the task. This issue could be mitigated by allowing the auditor to            fense framework for computer-use agents. AgentSentinel adopts
+access future actions from the action scheduler, allowing a more              a client-server architecture, where a monitoring server provides
+comprehensive context for decision-making.                                    protection for the agent operating as a client. The agent trans-
+Future Work. ① Mitigating missed security threats through post-               mits task context changes to the monitoring server, which then
+analysis for log audit. Specifically, we plan to periodically review          configures a system tracer and enforcer to manage sensitive op-
+logged records of sensitive operations. This process enables the de-          erations within the agent’s services. These sensitive operations
+tection of potentially malicious actions that may have been missed            are thoroughly checked using an efficient auditing approach. Our
+during real-time auditing. Notably, this method is a standalone               evaluation demonstrates that AgentSentinel successfully defends
+static analysis and does not interfere with the normal execution              against the majority (79.6%) of attacks across seven types of attacks,
+of tasks. ② Enhancing trace coverage by introducing additional                outperforming baseline defense mechanisms.
+trace probes. Expanding the scope of trace probes will enable the
+detection of a broader range of security threats. However, care must          9 Acknowledgment
+be taken to avoid generating overly large event traces that could
+increase the cost of security queries.                                        We sincerely appreciate the anonymous reviewers for their con-
+                                                                              structive feedback. We also thank Qingyuan Hu for developing
+7 Related Work                                                                the evaluation environment. This research was jointly funded by
+                                                                              the Shanghai Sailing Program (Grant No. 23YF1427500), the NSFC
+Attacking Computer-Use Agent. For malicious execution en-                     Program (Grant No. 62302304), and the ShanghaiTech Startup Fund-
+vironments, Zhang et al. [52] successfully attacked computer-use              ing.
+agents by injecting well-crafted pop-ups into GUI environments
+such as desktop interfaces and browser pages. For backdoor attacks,           References
+Wang et al. [41] introduced both active and passive backdoor strate-
+gies that inject triggers into various components of LLM-based                 [1] AIbase. 2025. Manus AI System Prompt Leakage: Official Response. https:
+agents. For direct task injection, Lee et al. [23] proposed SUDO,                   //www.aibase.com/news/16138.
+an automated attack framework that iteratively refines malicious
+prompts to increase attack success rates. Fu et al. [11] proposed              [2] Anthropic. 2024. Claude 3.7 Sonnet and Claude Code. https://www.anthropic.
+a novel prompt obfuscation technique that conceals original task                    com/news/claude- 3- 7- sonnet.
+instructions while still enabling the agent to correctly execute the
+intended task. For hallucination exploitation, Spracklen et al. [36]           [3] Anthropic. 2024. Introducing computer use, a new Claude 3.5 Sonnet, and Claude
+conducted a comprehensive analysis of hallucinated Python and                       3.5 Haiku. https://www.anthropic.com/news/3-5-models-and-computer-use.
+JavaScript packages generated by code-oriented LLMs. Our Bad-
+ComputerUse benchmark encompasses all major attack surfaces                    [4] Anthropic. 2024. Introducing the Model Context Protocol. https://www.anthropic.
+                                                                                    com/news/model- context- protocol.
+
+                                                                               [5] AutoGPT. 2023. AutoGPT. https://github.com/Significant-Gravitas/AutoGPT.
+
+                                                                        3548
+
+
+===== PAGE 15 / 15 =====
+
+AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents  CCS ’25, October 13–17, 2025, Taipei
+
+ [6] Jizhou Chen and Samuel Lee Cong. 2025. AgentGuard: Repurposing Agen-                            et al. 2024. Agentinstruct: Toward generative teaching with agentic flows. arXiv
+      tic Orchestrator for Safety Evaluation of Tool Orchestration. arXiv preprint                   preprint arXiv:2407.03502 (2024).
+      arXiv:2502.09809 (2025).                                                                 [32] OpenAI. 2024. Hello GPT-4o. https://openai.com/index/hello-gpt-4o/.
+                                                                                               [33] OpenAI. 2025. Introducing Operator. https://openai.com/index/introducing-
+ [7] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc                     operator/.
+      Fischer, and Florian Tramèr. 2024. AgentDojo: A Dynamic Environment to Eval-             [34] Yangjun Ruan, Honghua Dong, Andrew Wang, Silviu Pitis, Yongchao Zhou,
+      uate Prompt Injection Attacks and Defenses for LLM Agents. In The Thirty-eight                 Jimmy Ba, Yann Dubois, Chris J Maddison, and Tatsunori Hashimoto. 2024.
+      Conference on Neural Information Processing Systems Datasets and Benchmarks                    Identifying the Risks of LM Agents with an LM-Emulated Sandbox. In The Twelfth
+      Track. https://openreview.net/forum?id=m1YYAQjO3w                                              International Conference on Learning Representations.
+                                                                                               [35] Muris Sladić, Veronica Valeros, Carlos Catania, and Sebastian Garcia. 2024. Llm
+ [8] eBPF. 2025. eBPF. https://ebpf.io/.                                                             in the shell: Generative honeypots. In 2024 IEEE European Symposium on Security
+ [9] Kennedy Edemacu and Xintao Wu. 2024. Privacy preserving prompt engineering:                     and Privacy Workshops (EuroS&PW). IEEE, 430–435.
+                                                                                               [36] Joseph Spracklen, Raveen Wijewickrama, AHM Sakib, Anindya Maiti, Bimal
+      A survey. arXiv preprint arXiv:2404.06001 (2024).                                              Viswanath, and Murtuza Jadliwala. 2024. We have a package for you! A com-
+[10] Freedesktop. 2005. Poppler. https://poppler.freedesktop.org/.                                   prehensive analysis of package hallucinations by code generating llms. arXiv
+[11] Xiaohan Fu, Shuheng Li, Zihan Wang, Yihao Liu, Rajesh K Gupta, Taylor Berg-                     preprint arXiv:2406.10279 (2024).
+                                                                                               [37] swisskyrepo. 2025. Internal All The Things. https://github.com/swisskyrepo/
+      Kirkpatrick, and Earlence Fernandes. 2024. Imprompter: Tricking LLM Agents                     InternalAllTheThings.
+      into Improper Tool Use. arXiv preprint arXiv:2410.14923 (2024).                          [38] The Linux Kernel documentation. 2025. LSM BPF Programs. https://docs.kernel.
+[12] GNU. 2025. Coreutils - GNU core utilities. https://www.gnu.org/software/                        org/bpf/prog_lsm.html.
+      coreutils/.                                                                              [39] Tookmund. 2022. The Unexpected Importance of the Trailing Slash. https:
+[13] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten                      //tookmund.com/2022/04/importance- of- the- trailing- slash.
+      Holz, and Mario Fritz. 2023. Not what you’ve signed up for: Compromising real-           [40] Alexander Wan, Eric Wallace, Sheng Shen, and Dan Klein. 2023. Poisoning lan-
+      world llm-integrated applications with indirect prompt injection. In Proceedings               guage models during instruction tuning. In International Conference on Machine
+      of the 16th ACM Workshop on Artificial Intelligence and Security. 79–90.                       Learning. PMLR, 35413–35425.
+[14] Yifeng He, Ethan Wang, Yuyang Rong, Zifei Cheng, and Hao Chen. 2025. Secu-                [41] Yifei Wang, Dizhan Xue, Shengjie Zhang, and Shengsheng Qian. 2024. Bada-
+      rity of AI Agents. In 2025 IEEE/ACM International Workshop on Responsible AI                   gent: Inserting and activating backdoor attacks in llm agents. arXiv preprint
+      Engineering (RAIE). IEEE Computer Society, 45–52.                                              arXiv:2406.03007 (2024).
+[15] Siyuan Hu, Mingyu Ouyang, Difei Gao, and Mike Zheng Shou. 2024. The Dawn                  [42] Zijun Wang, Haoqin Tu, Jieru Mei, Bingchen Zhao, Yisen Wang, and Cihang
+      of GUI Agent: A Preliminary Case Study with Claude 3.5 Computer Use. arXiv                     Xie. 2024. AttnGCG: Enhancing jailbreaking attacks on LLMs with attention
+      preprint arXiv:2411.10323 (2024).                                                              manipulation. arXiv preprint arXiv:2410.09040 (2024).
+[16] Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian                  [43] Wikipedia. 2025. Data masking. https://en.wikipedia.org/wiki/Data_masking.
+      Wang, Qianglong Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, et al. 2025. A              [44] Simon Willison. 2022. Prompt injection attacks against GPT-3. https://
+      survey on hallucination in large language models: Principles, taxonomy, chal-                  simonwillison.net/2022/Sep/12/prompt- injection/.
+      lenges, and open questions. ACM Transactions on Information Systems 43, 2 (2025),        [45] Yuhao Wu, Franziska Roesner, Tadayoshi Kohno, Ning Zhang, and Umar Iqbal.
+      1–55.                                                                                          2024. IsolateGPT: An Execution Isolation Architecture for LLM-Based Agentic
+[17] Bo Hui, Haolin Yuan, Neil Gong, Philippe Burlina, and Yinzhi Cao. 2024. Pleak:                  Systems. arXiv preprint arXiv:2403.04960 (2024).
+      Prompt leaking attacks against large language model applications. In Proceedings         [46] Zhen Xiang, Linzhi Zheng, Yanjie Li, Junyuan Hong, Qinbin Li, Han Xie, Jiawei
+      of the 2024 on ACM SIGSAC Conference on Computer and Communications Security.                  Zhang, Zidi Xiong, Chulin Xie, Carl Yang, et al. 2024. Guardagent: Safeguard
+      3600–3614.                                                                                     llm agents by a guard agent via knowledge-enabled reasoning. arXiv preprint
+[18] Xiaojun Jia, Tianyu Pang, Chao Du, Yihao Huang, Jindong Gu, Yang Liu, Xiaochun                  arXiv:2406.09187 (2024).
+      Cao, and Min Lin. 2024. Improved techniques for optimization-based jailbreaking          [47] Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng
+      on large language models. arXiv preprint arXiv:2405.21018 (2024).                              Cao, Toh J Hua, Zhoujun Cheng, Dongchan Shin, Fangyu Lei, et al. 2024. Os-
+[19] Juhee Kim, Woohyuk Choi, and Byoungyoung Lee. 2025. Prompt Flow Integrity                       world: Benchmarking multimodal agents for open-ended tasks in real computer
+      to Prevent Privilege Escalation in LLM Agents. arXiv preprint arXiv:2503.15547                 environments. Advances in Neural Information Processing Systems 37 (2024),
+      (2025).                                                                                        52040–52094.
+[20] Aounon Kumar, Chirag Agarwal, Suraj Srinivas, Aaron Jiaxun Li, Soheil Feizi, and          [48] Miao Yu, Fanci Meng, Xinyun Zhou, Shilong Wang, Junyuan Mao, Linsey Pang,
+      Himabindu Lakkaraju. 2023. Certifying llm safety against adversarial prompting.                Tianlong Chen, Kun Wang, Xinfeng Li, Yongfeng Zhang, et al. 2025. A Survey
+      arXiv preprint arXiv:2309.02705 (2023).                                                        on Trustworthy LLM Agents: Threats and Countermeasures. arXiv preprint
+[21] Learn Prompting. 2023. Instruction defense. https://learnprompting.org/docs/                    arXiv:2503.09648 (2025).
+      prompt_hacking/defensive_measures/instruction.                                           [49] Hanrong Zhang, Jingyuan Huang, Kai Mei, Yifei Yao, Zhenting Wang, Chenlu
+[22] Learn Prompting. 2023. Random sequence enclosure. https://learnprompting.                       Zhan, Hongwei Wang, and Yongfeng Zhang. 2025. Agent Security Bench (ASB):
+      org/docs/prompt_hacking/defensive_measures/random_sequence.                                    Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents.
+[23] Sejin Lee, Jian Kim, Haon Park, Ashkan Yousefpour, Sangyoon Yu, and Min Song.                   In The Thirteenth International Conference on Learning Representations. https:
+      2025. sudo rm-rf agentic_security. arXiv preprint arXiv:2503.20279 (2025).                     //openreview.net/forum?id=V4y0CpX4hK
+[24] Xi Victoria Lin, Chenglong Wang, Luke Zettlemoyer, and Michael D Ernst. 2018.             [50] Rui Zhang, Hongwei Li, Rui Wen, Wenbo Jiang, Yuan Zhang, Michael Backes, Yun
+      Nl2bash: A corpus and semantic parser for natural language interface to the linux              Shen, and Yang Zhang. 2024. Instruction backdoor attacks against customized
+      operating system. arXiv preprint arXiv:1802.08979 (2018).                                      {LLMs}. In 33rd USENIX Security Symposium (USENIX Security 24). 1849–1866.
+[25] Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu,                  [51] Yue Zhang, Yafu Li, Leyang Cui, Deng Cai, Lemao Liu, Tingchen Fu, Xinting
+      Hangliang Ding, Kaiwen Men, Kejuan Yang, et al. 2023. Agentbench: Evaluating                   Huang, Enbo Zhao, Yu Zhang, Yulong Chen, et al. 2023. Siren’s song in the
+      llms as agents. arXiv preprint arXiv:2308.03688 (2023).                                        AI ocean: a survey on hallucination in large language models. arXiv preprint
+[26] Yadong Lu, Jianwei Yang, Yelong Shen, and Ahmed Awadallah. 2024. OmniParser                     arXiv:2309.01219 (2023).
+      for Pure Vision Based GUI Agent. arXiv:2408.00203 [cs.CV] https://arxiv.org/             [52] Yanzhe Zhang, Tao Yu, and Diyi Yang. 2024. Attacking Vision-Language Com-
+      abs/2408.00203                                                                                 puter Agents via Pop-ups. arXiv preprint arXiv:2411.02391 (2024).
+[27] Manus. 2024. Introducing Manus. https://manus.im/.                                        [53] Yihe Zhou, Tao Ni, Wei-Bin Lee, and Qingchuan Zhao. 2025. A Survey on
+[28] Justus Mattern, Fatemehsadat Mireshghallah, Zhijing Jin, Bernhard Schölkopf,                    Backdoor Threats in Large Language Models (LLMs): Attacks, Defenses, and
+      Mrinmaya Sachan, and Taylor Berg-Kirkpatrick. 2023. Membership inference                       Evaluations. arXiv preprint arXiv:2502.05224 (2025).
+      attacks against language models via neighbourhood comparison. arXiv preprint             [54] Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt
+      arXiv:2305.18462 (2023).                                                                       Fredrikson. 2023. Universal and transferable adversarial attacks on aligned
+[29] Meta. 2025. Llama Guard 4. https://www.llama.com/docs/model-cards-and-                          language models. arXiv preprint arXiv:2307.15043 (2023).
+      prompt- formats/llama- guard- 4.
+[30] Meta. 2025. Prompt Guard 2. https://www.llama.com/docs/model-cards-and-
+      prompt- formats/prompt- guard.
+[31] Arindam Mitra, Luciano Del Corro, Guoqing Zheng, Shweti Mahajan, Dany
+      Rouhana, Andres Codas, Yadong Lu, Wei-ge Chen, Olga Vrousgos, Corby Rosset,
+
+                                                                                         3549

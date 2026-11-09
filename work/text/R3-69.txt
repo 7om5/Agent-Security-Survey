@@ -1,0 +1,1357 @@
+# R3-69 | Make Agent Defeat Agent: Automatic Detection of Taint-Style Vulnerabilities in LLM-based Agents
+# PDF: papers\Make Agent Defeat Agent_Automatic Detection of Taint-Style Vulnerabilities in LLM-based Agents.pdf
+# extracted: 2026-11-02T22:28:02.796Z
+
+
+===== PAGE 1 / 21 =====
+
+Make Agent Defeat Agent: Automatic Detection of
+  Taint-Style Vulnerabilities in LLM-based Agents
+
+      Fengyu Liu, Yuan Zhang, Jiaqi Luo, Jiarun Dai, Tian Chen, Letian Yuan,
+    Zhengmin Yu, Youkun Shi, Ke Li, and Chengyuan Zhou, Fudan University;
+
+                      Hao Chen, UC Davis; Min Yang, Fudan University
+
+           https://www.usenix.org/conference/usenixsecurity25/presentation/liu-fengyu
+
+         This paper is included in the Proceedings of the
+                   34th USENIX Security Symposium.
+
+                             August 13–15, 2025 • Seattle, WA, USA
+
+                                                     978-1-939133-52-6
+
+                                      Open access to the Proceedings of the
+                       34th USENIX Security Symposium is sponsored by USENIX.
+
+
+===== PAGE 2 / 21 =====
+
+Make Agent Defeat Agent: Automatic Detection of Taint-Style Vulnerabilities in
+                                       LLM-based Agents
+
+    Fengyu Liu†, Yuan Zhang†, Jiaqi Luo†, Jiarun Dai†, Tian Chen†, Letian Yuan†, Zhengmin Yu†,
+                       Youkun Shi†, Ke Li†, Chengyuan Zhou†, Hao Chen‡, Min Yang†
+                             †Fudan University ‡University of California, Davis
+
+                        Abstract                                 mode involves deployment on local devices such as desk-
+                                                                 top software [12], where users can interact directly with the
+Large Language Models (LLMs) have revolutionized software        agent to intelligently operate the device. Alternatively, agents
+development, enabling the creation of AI-powered applica-        may be deployed on centralized remote servers and accessed
+tions known as LLM-based agents. However, recent studies         through websites, allowing users to engage with the agent
+reveal that LLM-based agents are highly susceptible to taint-    remotely [24]. These agents typically handle essential tasks,
+style vulnerabilities, which allow malicious prompts to exploit  such as executing code and processing sensitive data. For
+security-sensitive operations. These vulnerabilities pose se-    instance, LLM platforms like Coze and GPT host a variety
+vere threats to the security of agents, potentially allowing     of agents [4, 7], attracting millions of users [78] and storing
+attackers to take over the entire agent remotely.                vast amounts of user privacy data, underscoring the growing
+                                                                 importance of their security.
+   In this paper, we propose a novel directed greybox fuzzing
+approach, called AgentFuzz, the first fuzzing framework for         However, sadly, existing studies reveal that these LLM-
+detecting taint-style vulnerabilities in LLM-based agents.       based agents are vulnerable to serious security threats (e.g.,
+AgentFuzz consists of three key phases. First, AgentFuzz         prompt injection [75]), which could potentially cause infor-
+leverages the LLM to generate functionality-specific seed        mation leakage, malicious code execution, and so on. Among
+prompts in the form of natural language. Second, AgentFuzz       these, taint-style vulnerabilities [49, 54], a well-established
+utilizes a multifaceted feedback design to assess seed quality   concern in traditional code security research [46, 51], are un-
+from both semantic and distance levels, prioritizing seeds with  doubtedly among the most critical types that require attention.
+higher quality. Finally, AgentFuzz employs functionality and     These vulnerabilities stem from developers’ over-reliance
+argument mutator to refine seeds and trigger vulnerabilities     on LLM outputs and failure to sanitize harmful content be-
+effectively. In our evaluation against 20 widely-used open-      fore passing it to security-sensitive operations (SSO). This
+source agent applications, AgentFuzz identified 34 high-risk     oversight allows malicious payloads embedded in prompts to
+0-day vulnerabilities, achieving 33 times higher precision than  flow into SSOs, triggering vulnerabilities like code injection
+the state-of-the-art approach. These vulnerabilities encompass   and allowing attackers to achieve local privilege escalation
+serious threats like code injection, impacting 14 open-source    or even gain remote control of the agent. While recent stud-
+agents, with 7 of them having over 10,000 stars on GitHub.       ies [49] have shed light on detecting taint-style vulnerabilities
+To date, 23 CVE IDs have been assigned.                          in agents, their approaches such as using static analysis to
+                                                                 identify source-to-sink call chains still suffer from high false-
+1 Introduction                                                   positive and false-negative rates.
+
+Large Language Models (LLMs) have demonstrated remark-              Therefore, in this work, we are highly motivated to design
+able advancement in various downstream tasks, such as code       a vulnerability detection approach that can effectively vet
+generation [41,43], question answering [29,39,60], etc. Nowa-    the security of real-world popular LLM-based agents against
+days, developers are actively integrating LLMs to build AI-      taint-style vulnerabilities. Considering the fact that taint-style
+powered applications, which are widely known as LLM-             vulnerabilities can only be triggered at specific sinks, directed
+based agents [65, 68]. These emerging LLM-based agents           fuzzing has long been embraced for its ability to target testing
+could understand natural language instructions, perceive exter-  efforts towards given code locations, thereby increasing the
+nal environments, and intelligently carry out various actions.   likelihood of discovering taint-style vulnerabilities. Hence,
+                                                                 it should be an appealing solution to migrate conventional
+   Currently, the ecosystem of LLM-based agents has rapidly      directed fuzzing techniques to LLM-based agents. However,
+evolved and demonstrates various product forms. A common
+
+USENIX Association                                               34th USENIX Security Symposium 3767
+
+
+===== PAGE 3 / 21 =====
+
+it is definitely a non-trivial task, due to the complex nature of  method and class names within these chains, thereby generat-
+LLM-based agents (detailed as follows):                            ing functionality-specific seed prompts. In the second phase,
+                                                                   AgentFuzz evaluates seed quality through a multifaceted feed-
+• C1: How to generate functionality-specific seeds in the form     back strategy, prioritizing seed based on its execution traces,
+  of natural language? Unlike traditional applications with        semantic consistency, and CFG distances to the sink. This ap-
+  structured inputs, LLM-based agents receive natural lan-         proach helps efficiently focus on the most promising seed for
+  guage prompts, which the LLM interprets to invoke specific       triggering vulnerabilities. In the third phase, AgentFuzz em-
+  functionalities. Traditional fuzzing techniques are designed     ploys functionality and argument mutators to refine the seed.
+  for structured data and struggle to generate natural language    It autonomously selects the most suitable mutator based on
+  seed prompts for the diverse functionalities of agents.          runtime feedback, thus generating semantically-correct and
+                                                                   constraint-valid seed prompts. After the mutation, AgentFuzz
+• C2: How to prioritize high-quality seeds during the fuzzing      uses predefined oracles to determine whether the mutated
+  procedure to boost the fuzzing efficiency? Prioritizing high-    prompts successfully trigger the vulnerabilities.
+  quality seeds more likely to trigger the sink can improve
+  fuzzing efficiency. Traditional fuzzing techniques use met-         To demonstrate the effectiveness and performance of
+  rics like CFG distances to prioritize seeds, assuming seeds      AgentFuzz, we evaluated it on 20 widely used open-source
+  closer to the sink are more promising. However, this heuris-     agent applications that provide web services, which are more
+  tic faces challenges in agents due to flexible code features,    prone to attacks due to their exposure and potential impact
+  and distance alone fails to capture the semantic gap between     when exploited. Our evaluation shows that AgentFuzz suc-
+  seeds, making it less reliable for evaluating seed quality.      cessfully identified 34 0-day taint-style vulnerabilities (24 of
+                                                                   which were undetected by existing approaches), achieving
+• C3: How to effectively mutate seeds to trigger the taint-        a precision rate of 100%, outperforming the state-of-the-art
+  style vulnerability? Once high-quality seeds are selected,       approach LLMSmith [49] by 33 times. These vulnerabilities
+  the next step is to mutate them to trigger the vulnerabil-       include high-risk issues such as code injection and SQL injec-
+  ity. To achieve this, the seed must possess specific natural     tion, affecting 14 open-source agents, 7 of which have over
+  language semantics to invoke functionality containing the        10k stars on GitHub. All 34 vulnerabilities were confirmed
+  sink. Traditional mutators, however, are designed for byte-      to be exploitable. The discovered vulnerabilities pose severe
+  level mutations and fail to adjust the semantics of the seed.    security risks, enabling attackers to take full control of the
+  Moreover, various constraints are typically present along        servers and potentially causing significant financial losses.
+  the path to the sink in the agent’s code. Identifying and        Considering the substantial security impact, we responsibly
+  mutating the specific parts of the prompt that can satisfy       reported them to the developers of the affected agents. As of
+  these constraints presents a significant challenge.              now, 23 CVE IDs have been assigned.
+
+   In this paper, we propose a novel directed greybox fuzzing         In summary, the paper makes the following main contribu-
+approach, called AgentFuzz, the first fuzzing framework for        tions:
+detecting taint-style vulnerabilities in LLM-based agents. Our
+approach is motivated by several key insights that help ad-        • We propose the first directed fuzzing approach to detect
+dress the proposed challenges. First, agents use various com-        taint-style vulnerabilities for LLM-based agents.
+ponents (e.g., tools) to process actions. The class and method
+names of these components encompass rich natural language          • We have developed a prototype of this approach, named
+semantics that reflect their functional purpose, helping gener-      AgentFuzz, which effectively detects taint-style vulnerabil-
+ate functionality-specific seed prompts. Second, high-quality        ities in real-world agent applications.
+seeds share semantics aligned with the functionality of the vul-
+nerable component and meet the necessary code constraints,         • We evaluated AgentFuzz on 20 real-world popular agent
+enabling the agent to invoke specific vulnerable components          applications. AgentFuzz successfully identified 34 0-day
+and trigger the vulnerability. Third, the semantics embedded         vulnerabilities. As of now, these vulnerabilities have been
+in the method and class names of vulnerable components               assigned 23 CVE IDs.
+serve as guidance for functionality mutations. Additionally,
+the overlap between the user prompt and the runtime argu-          2 Problem Statement
+ment of the vulnerable component helps identify the specific
+section of the prompt that needs mutation to meet constraints,     In this section, we present an overview of the LLM-based
+enabling deterministic mutations.                                  agents (in §2.1) and define the taint-style vulnerabilities
+                                                                   within them (in §2.2).
+   Based on these insights, we design AgentFuzz with three
+main phases. In the first phase, AgentFuzz extracts call           2.1 LLM-based Agents
+chains leading to predefined sinks such as SQL injection and
+code injection. It then employs an LLM-assisted approach           With the rapid advancement of LLMs, LLM-based agents
+to interpret the natural language semantics embedded in the        have undergone significant development. By leveraging the
+
+3768 34th USENIX Security Symposium                                USENIX Association
+
+
+===== PAGE 4 / 21 =====
+
+Calculate the result          Agent's Web Service    ..., response in          Attack Prompt Payload
+      of "1+1"                                        JSON format.         Use Elasticsearch for a similarity search with permission
+                                LLM-based Agent
+      1. User Prompt    2. Assemble                2. Prompt                  checks to find documents with 'source_doc:print(1)'.
+                      System Prompt
+      4.Result          3. Parse and               3. Response
+                      Execute Actions
+User                                                            LLM    1 Tools = [ ElasticSearch(), WebSearch()，
+                                                                                                 ElasticsearchPermissionCheck() ]
+      calc("1+1")                                    {"tool": "calc",
+                                                    "param": "1+1"}
+
+Figure 1: Simplified workflow of LLM-based agents.                     2 @router.post('/chat')
+
+                                                                       3 def assistant_agent(prompt):                 # User input ①
+
+                                                                       4 resp = llm.invoke(OpenAI(), prompt) # LLM response ②
+
+                                                                           # tool = ElasticsearchWithPermissionCheck()
+
+powerful generative abilities of LLMs and various compo-               5 tool = Tools.get(resp["tool"])               # Get tool
+nents such as externally provided tools, agents can com-
+prehend end users’ natural language instructions (i.e., user               # resp["content"] = "source_doc:print(1)"
+prompts) and handle more complex tasks beyond the capabili-
+ties of a standalone LLM [31]. In practice, LLM-based agents           6 result = tool.run(resp["content"]) # Invoke tool with
+are frequently employed to perform critical tasks like execut-
+ing code, handling sensitive data, and automating business                                                            # indirect call ③
+workflows [65], all of which involve invoking various sensi-
+tive functions. A notable example is DB-GPT [70], which han-           7 Class ElasticsearchPermissionCheck():
+dles data processing tasks and accesses substantial amounts
+of user data, enabling it to achieve complex data analysis.            8 def similarity_search(self, content):
+
+   Figure 1 illustrates the workflow of LLM-based agents.                  # content = "source_doc:print(1)"
+Specifically, (1) end users interact with the agent through user
+prompts, e.g., “calculate the result of 1+1.” (2) The agent pro-       9   if "source_doc" in content:
+cesses the user prompt and assembles it with system prompts
+defined by the developer. The system prompt typically speci-           10  return eval(content.split(':')[1]) # eval('print(1)') ④
+fies the return format for the LLM, enabling the agent to effec-
+tively interpret the LLM’s response. The assembled prompt              Figure 2: A real-world vulnerability example from a popular
+is then sent to the LLM to interpret the user’s intent and plan        open-source agent (the vulnerability has been patched).
+the corresponding actions. (3) The agent leverages the out-
+put parser component to analyze the response according to              to the agent via the web service in lines 2-3 (i.e., source), a
+the agreed-upon format and extract the action planned by the           portion of which is returned by the LLM and directly passed
+LLM. It then adheres to these instructions to invoke specific          to the eval function in line 10 (i.e., sink) without adequate
+components and execute the intended action, e.g., invoking             sanitization, resulting in code injection.
+the calc tool to compute 1+1. (4) Finally, the agent returns
+the result of the action to the user.                                     Technically, the whole vulnerability exploitation process
+                                                                       involves four steps. ❶ The attacker sends an HTTP request
+2.2 Taint-style Vulnerability in Agents                                with a crafted prompt to the agent via its web API (lines
+                                                                       2-3), e.g., http://agent/chat?prompt=${prompt}. ❷ The
+Taint-style vulnerabilities are a widespread type of flaw in           agent forwards the attack prompt to the LLM, which plans
+traditional applications and consistently rank high on the             and generates the appropriate actions for the agent to ex-
+OWASP Top Ten list [14, 15]. These vulnerabilities typi-               ecute (line 4). Given that the intent of the attack prompt
+cally occur when malicious user input is passed into security-         is to search a document with permission checks, the LLM
+sensitive operations without proper validation, potentially            selects the ElasticsearchPermissionCheck tool from the
+leading to critical issues such as code and SQL injection.             three tools defined in line 1 and sends it back to the agent.
+                                                                       ❸ The agent processes the LLM’s response and executes the
+2.2.1 Real-world Example                                               specified action. As shown in line 6, the agent invokes the
+                                                                       ElasticsearchPermissionCheck tool via an indirect call
+We use a real-world code injection vulnerability (i.e., CVE-           (i.e., run method). ❹ The ElasticsearchPermissionCheck
+2024-5**93, anonymized for ethical reasons) that we dis-               tool executes with “source_doc:print(1)” as its argu-
+covered in a popular open-source agent to demonstrate the              ment, which actually is a specific string in the user prompt
+proposed taint-style vulnerability in agents. Figure 2 presents        and parsed from the LLM response. As illustrated in lines
+a simplified code snippet illustrating the vulnerability. To ex-       9-10, since the argument meets the if-condition, it is pro-
+ploit this vulnerability, the attacker sends a malicious prompt        cessed by the split method and flows into the sink, i.e.,
+                                                                       eval(“print(1)”), triggering a code injection vulnerability.
+
+                                                                       2.2.2 Threat Model
+
+                                                                       In our threat model, we assume agents and their developers
+                                                                       are benign and assume their running environments are not
+                                                                       compromised. We consider attackers to be malicious users
+
+USENIX Association                                                         34th USENIX Security Symposium 3769
+
+
+===== PAGE 5 / 21 =====
+
+who possess the capability to interact with an agent under           variables representing user inputs as sources and parameters
+normal operational conditions. By sending crafted prompts to         of security-sensitive operations as sinks. They then perform
+the agent, an attacker could control the execution of a sensi-       dataflow analysis to detect potential vulnerabilities by iden-
+tive function (i.e., sink) and gain unauthorized privileges. The     tifying source-to-sink paths. However, these methods have
+threat model covers two kinds of attackers: remote attackers         significant limitations. Firstly, they cannot generate proofs of
+and local attackers. Remote attackers interact with the agent        concept (PoC) to verify exploitability, leading to a high rate
+through its web service, using web APIs to input malicious           of false positives. Secondly, agents are typically developed
+prompts and gain control of the server by executing harmful          in Python, a dynamically typed language that allows devel-
+code. Such web services are common in LLM-based agents.              opers to use indirect calls and other advanced techniques to
+For example, popular agents like AutoGPT [2] and Dify [6]            implement complex functionalities more easily. While these
+provide users with web APIs to input prompts. Local attack-          features enhance flexibility, they complicate static analysis,
+ers operate on the same device as the agent, gaining local           increasing false positives and missed detections.
+access to interact with high-privilege agents through mali-
+cious prompts. These prompts can trigger sensitive functions            Existing dynamic approaches [1,37,40,58,61], on the other
+in locally deployed agents (e.g., MobileAgent [64]), leading         hand, typically employ fuzzing techniques to detect vulner-
+to privilege escalation and other malicious activities.              abilities (i.e., fuzzers). Specifically, fuzzers generate initial
+                                                                     seeds that conform to the target application’s input format
+   Note that though an agent may run in an isolated environ-         and mutate them using mutation strategies such as bitflip [1].
+ment (e.g., deployed in a Docker container), taint-style vul-        They then leverage evidence within the code (e.g., distance
+nerabilities still pose significant security risks. On one hand,     to sink [32]) to narrow the exploration space and generate
+the attacker could leverage a code execution vulnerability to        seeds that reach the target sink, triggering the vulnerability.
+steal sensitive data within the agent’s running environment          However, unlike traditional applications with structured in-
+(e.g., the LLM API key used by the agent may be leaked to            puts, agent inputs are prompts that lack a fixed structure and
+allow unauthorized requests to the LLM, causing financial            encompass the entire spectrum of natural language. These
+losses to the maintainers of the agent). On the other hand,          prompts carry rich natural language semantics, empowering
+the attacker could use these vulnerabilities to further compro-      the agent to invoke various functionalities intelligently. Obvi-
+mise the agent’s integrity and availability. For example, the        ously, traditional fuzzers like AFL [1] cannot generate inputs
+attacker could access the database and delete critical user data,    with specific semantics or mutate their meaning, thereby fail-
+or launch a DoS attack to disrupt the agent’s functionality.         ing to explore the diverse functionalities within agents.
+
+3 Related Work                                                       4 Overall Idea
+
+In this section, we review related works in taint-style vulnera-     The rapid development of agents and the gaps in existing
+bility detection and summarize their limitations to motivate         works within this field further highlight the urgent need for
+our research.                                                        an effective approach to detect taint-style vulnerabilities in
+Vulnerability Detection of LLM-based Agents. Taint-style             agents. Fuzzing techniques, with their high precision and abil-
+vulnerabilities pose a significant threat to the security of         ity to generate PoCs for vulnerability verification, have greatly
+agents, highlighting the critical need for effective detection       attracted our interest. Moreover, taint-style vulnerabilities are
+and mitigation strategies. However, to the best of our knowl-        characterized by a fixed sink in the vulnerable code, meaning
+edge, no existing research has introduced a fully automated          their detection is fundamentally a directed fuzzing task.
+and accurate approach to detect taint-style vulnerabilities in
+LLM-based agents. The most relevant work, LLMSmith [49],                Therefore, in this paper, we utilize the Directed Greybox
+applies static analysis techniques to identify call chains that      Fuzzing (DGF) [32] technique to address the problem of
+start from user-level APIs and terminate at sink callsites,          taint-style vulnerability detection in agents. In this section,
+reporting these chains as vulnerabilities. Nevertheless, its         we illustrate the challenges encountered and present our key
+coarse-grained call graph analysis, along with the prevalence        insights (in §4.1). Then, we introduce our approach overview
+of indirect calls in Python, leads to high false positive and false  for detecting vulnerability within agents (in §4.2).
+negative rates. Other studies mainly emphasized threats such
+as prompt leaking [45, 47, 55] and jailbreaking [56, 71, 72, 79],    4.1 Challenges & Insights
+which represent entirely different vulnerability patterns.
+Taint-Style Vulnerability Detection. In fact, taint-style            Traditional DGF techniques [1, 32, 73] typically comprise the
+vulnerability detection has been studied extensively for             following three modules. The seed generation module creates
+decades [46]. Existing works can be broadly categorized into         and adds valid seeds to the seed pool. The scheduling module
+static and dynamic approaches.                                       selects a seed from the seed pool for mutation, after which
+                                                                     the mutation module modifies it and updates the seed pool,
+   Existing static analysis approaches [30, 46, 48, 51] treat        thereby iterating through the entire fuzzing loop.
+
+3770 34th USENIX Security Symposium                                  USENIX Association
+
+
+===== PAGE 6 / 21 =====
+
+Given the success of existing fuzzing techniques, adapt-        than those invoking WebSearch, highlighting the inadequacy
+ing these well-established approaches to LLM-based agents          of distance-based evaluation in agent contexts.
+seems an appealing idea. However, we argue that directly
+applying them to agents presents significant challenges.              Solution: Therefore, to evaluate seed quality in the context
+Challenge I: How to generate functionality-specific seeds          of agents, we propose a multifaceted feedback strategy that
+in the form of natural language? Traditional fuzzing tech-         assesses seed quality from both semantic and distance levels.
+niques primarily target structured inputs and rely on public       At the semantic level, a high-quality seed must align with the
+seed datasets [32, 33], which clearly cannot generate the natu-    functionality of the vulnerable component in terms of natural
+ral language prompts required by agents. While LLM-driven          language semantics, thereby ensuring LLM can interpret the
+methods have shown promise for seed generation [52, 69],           prompt’s intent and invoke the target vulnerable component.
+existing works fail to produce functionality-specific prompts      At the distance level, the execution trace of high-quality seeds
+needed to adequately explore the diverse functionalities of        should reach blocks closer to the sink callsite. As illustrated
+agents (e.g., chat, code generation), thus limiting their effec-   in Figure 2, the attack prompt (1) invokes the vulnerable
+tiveness in fuzzing agent applications.                            component through its specific semantics, and (2) reaches
+                                                                   blocks closer to the sink. Unlike existing approaches [49] that
+   Solution: To address this, we propose an LLM-assisted           rely on statically constructing complete call chains, which
+seed generation approach. The key insight is that, as outlined     may fail due to indirect calls. Our approach leverages the call
+in Langchain [9], agents utilize various components (e.g., vec-    chain semantics to schedule prompts that dynamically reach
+tor storage and tools) to process actions based on the prompt’s    the sink. This direct fuzzing strategy mitigates indirect call
+intent. Developers typically convey the functional purpose         issues and increases the chance of triggering the sink.
+of components through their class and method names, allow-         Challenge III: How to effectively mutate seeds to trig-
+ing the LLM to interpret their functionality and, based on         ger the taint-style vulnerability? With high-quality seeds
+the user prompt’s intent, invoke the appropriate component.        in hand, triggering vulnerabilities requires the seed prompt
+As shown in Figure 2, the ElasticsearchPermissionCheck             to (1) include specific semantics that invoke the vulnerable
+component’s name conveys clear natural language seman-             component (e.g., ElasticsearchPermissionCheck) among
+tics that describe its functionality. Therefore, we leverage       various agent components, and (2) satisfy multiple constraints
+LLM’s advanced natural language understanding capabilities         for the component’s arguments (e.g., ensuring the content
+to interpret the semantics embedded in components, thereby         argument includes the string source_doc:).
+generating functionality-specific seed prompts.
+Challenge II: How to prioritize high-quality seeds during             However, traditional mutators [1, 32, 73] are unable to ad-
+the fuzzing procedure to boost the fuzzing efficiency? Seed        dress these requirements. On the one hand, they primarily
+scheduling strategies [1, 32, 73] prioritize high-quality seeds    focus on random byte-level transformations (e.g., bit flips [1])
+from a vast number of candidates, significantly enhancing          rather than mutating the natural language semantics of seed
+fuzzing efficiency. Common directed fuzzing approaches sug-        prompts, thus failing to generate prompts with the specific
+gest that CFG distances could serve as valuable feedback for       semantics required to invoke vulnerable components. On the
+seed scheduling [32]. That is, seeds whose execution traces        other hand, while traditional mutators can solve constraints,
+have shorter distances towards the sink are more likely to         they cannot identify which specific section of the prompt
+trigger the vulnerability, making them higher quality. At first    needs mutation to enable the component’s argument, derived
+glance, distance-based scheduling seems applicable to agent        from the LLM’s response, to satisfy constraints.
+fuzzing, as taint-style vulnerabilities are triggered at specific
+sinks, and seeds closer to these sinks should be prioritized.         Solution: To address this challenge, we designed two mu-
+However, we argue that it is not directly applicable to LLM        tators. ❶ The functionality mutator refines the seed’s natural
+agents. The key reasons are two-fold.                              language semantics using the call chain of the vulnerable
+                                                                   component, helping mitigate indirect call issues and generate
+   ❶ Indirect calls. Indirect calls are pervasive in agents,       prompts that effectively invoke components with the desired
+making it difficult to construct a complete call graph, let        functionality. ❷ The argument mutator solves constraints and
+alone a control flow graph. Consequently, static analysis tech-    matches the argument’s value to the user prompt through run-
+niques cannot reliably assess the distance to the sink, making     time substring matching, thereby determining which section
+distance-based seed quality evaluation unfeasible. ❷ Semantic      of the prompt requires alteration to satisfy these constraints.
+proximity. Even if the distance to the sink is accurately deter-   This design is based on our observation that, to perform a spe-
+mined, relying solely on distance still fails to reflect the true  cific task, a user prompt typically comprises two key elements:
+quality of the seed. As shown in Figure 2, although the CFG        the action and associated data to be processed. The LLM inter-
+distance to the sink may be the same for both ElasticSearch        prets the action from the prompt and provides the associated
+and WebSearch, ElasticSearch is semantically closer to             data as arguments to the component, thereby completing the
+ElasticsearchPermissionCheck, which contains the sink.             task. By modifying specific sections of the user prompt, we
+Thus, seeds invoking the ElasticSearch are of higher quality       can control the arguments passed to the component and adjust
+                                                                   the value of related variables.
+
+USENIX Association                                                 34th USENIX Security Symposium 3771
+
+
+===== PAGE 7 / 21 =====
+
+Algorithm 1: Fuzzing Loop                                          • LLM-assisted Seed Generation (§5.1) generates seed
+                                                                      prompts with natural language semantics.
+ Input: Agent Code, C
+ Output: Vulnerability PoCs, P                                     • Feedback-driven Seed Scheduling (§5.2) evaluates seed
+                                                                      quality based on the multifaceted feedback.
+1 S ← ExtractSinkCallsites(C)
+                                                                   • Sink-guided Seed Mutation (§5.3) uses two mutators to
+2 for sink_callsite in S do                                           mutate and generate higher-quality seed.
+
+3 seed_pool ← 0/                                                   5.1 LLM-assisted Seed Generation
+
+4 call_chains ← StaticAnalyze(sink_callsite)                       In this phase, AgentFuzz uses static analysis techniques to
+                                                                   extract call chains of each sink callsite, and employs the LLM
+5 for call_chain in call_chains do                                 to generate seed prompts with natural language semantics.
+
+6   initial_seed ← GenerateSeed(call_chain)                        5.1.1 Sink Callchain Extraction
+
+7   f eedback ← Execute(initial_seed)                              As outlined in our insights (§4.1), the class and method names
+                                                                   of a component provide crucial natural language semantics
+8   seed_pool ← seed_pool ∪ {seed, f eedback}                      that enable the LLM to infer its functionality. Consequently,
+                                                                   AgentFuzz identifies sink callsites within the agent and traces
+9 while not Timeout do                                             the call chain backward, following the callers and extracting
+                                                                   class and method names along the way.
+10  seed, f eedback ← SelectSeed(seed_pool)
+                                                                      Specifically, we manually construct a predefined set of
+11  mutator ← SelectMutator(seed, f eedback)                       sinks, each sink defined by a unique method signature, i.e.,
+                                                                   <package, class, method, parameters>. These predefined
+12  new_seed ← Mutate(mutator, seed)                               sinks, as listed in Table 5 of Appendix C, encompass com-
+                                                                   mon types of security-sensitive operations recognized in
+13  f eedback ← Execute(new_seed)                                  the OWASP Top Ten [14, 15], such as code injection, com-
+                                                                   mand injection, and SSRF. After that, AgentFuzz employs
+14  seed_pool ← seed_pool ∪ {new_seed, f eedback}                  a depth-first approach to traverse the call graph, iteratively
+                                                                   tracing backward from the sink callsites to identify the
+15  if VulnOracle(new_seed) == Success then                        callers, thereby extracting all call chains that can reach a
+                                                                   specific sink callsite. For each call chain, AgentFuzz termi-
+16  P ← P ∪ {new_seed}                                             nates the backward tracing once no further callers can be
+                                                                   identified in the constructed call graph. Take Figure 2 as an
+17  break                                                          example, AgentFuzz starts the backward tracing from the
+                                                                   eval function, and the final extracted call chain is eval→
+4.2 Approach Overview                                              ElasticsearchPermissionCheck.similarity_search.
+
+Drawing on the above ideas, we introduce a novel directed          5.1.2 LLM-assisted Seed Prompt Generation
+greybox fuzzing approach to effectively detect taint-style vul-
+nerabilities within agents. As outlined in Algorithm 1, the        Next, AgentFuzz leverages the one-shot learning [62] tech-
+overall fuzzing loop is primarily divided into three phases:       nique with Chain of Thought (CoT [66]) reasoning strategy
+seed generation, seed scheduling, and seed mutation.               to guide the LLM in generating seed prompts based on the se-
+                                                                   mantics of the extracted call chain. A given callsite may have
+   Specifically, in the first phase, our approach identifies sink  multiple call chains, so we generate a distinct seed prompt for
+callsites within the agent (line 1), with each callsite repre-     each one. The prompt example is presented in Figure 4.
+senting a separate fuzzing loop (line 2). Our approach then
+extracts all call chains leading to the sinks and inputs them      • One-shot learning enables the LLM to imitate reasoning
+into LLM, using the CoT [66] reasoning strategy to generate           logic from an example to perform similar tasks [62]. In
+functionality-specific seeds (lines 4–6). In the second phase,        AgentFuzz, the example consists of the call chain to the
+our approach inputs the generated seed prompts into the agent         sink, a sample prompt that triggers the sink, and the reason-
+for execution and adds them to the seed pool (lines 7-8). Then,       ing process behind generating this sample prompt based on
+our approach scores each seed based on three factors (seman-          the call chain. This enables LLM to understand and imitate
+tic score, distance score, and penalty score) and prioritizes         the process of inferring natural language semantics from the
+the seed with the highest score for further mutation (line 10).       call chain and generating functionality-specific prompts.
+In the third phase, our approach uses two mutators to mutate
+selected seeds (line 12). For mutator scheduling, our approach
+leverages the LLM to autonomously select the appropriate
+mutator (line 11). After mutation, our approach executes the
+mutated seeds in the agent and uses predefined vulnerabil-
+ity oracles to determine if they trigger the sink, outputting
+successful prompts as vulnerability PoCs (lines 13-17).
+
+5 AgentFuzz Design
+
+In this section, we provide the design details of our approach,
+called AgentFuzz. As shown in Figure 3, AgentFuzz primar-
+ily consists of three phases.
+
+3772 34th USENIX Security Symposium                                USENIX Association
+
+
+===== PAGE 8 / 21 =====
+
+① LLM-assisted                                               ② Feedback-driven         Agent Runtime
+                      Seed Generation                                                                         Environment
+Agent Source Code                                                                  Seed Scheduling
+Prompt Input URL                                                                                                 Trace Recorder
+                                                                      Seed           Feedback
+     Vulnerabilities                                                 Prompts        Scheduling                  Instrumentation
+
+                      Call Chain            Seeds  Seed Pool                  Execution Trace Selected Seed        Bug Oracles
+
+                                                                     Mutated Seed   Selected Seed
+
+                                  Bug Oracles                        ③ Sink-guided Seed Mutation
+
+                      Code Injection        SSRF                     Functionality                Argument
+                      SQL Injection         SSTI                        Mutator                    Mutator
+
+                                    ......                                    Mutator Scheduling
+
+                                  Figure 3: Architecture of AgentFuzz.
+
+• CoT guides the LLM in refining its logic through step-by-          using the number of times the seed and call chain have been
+  step reasoning [66]. This part involves: (1) inferring the         selected to assess whether the seed has fallen into a local
+  component’s functionality from the call chain, (2) generat-        optimum. Finally, the feedback score of the seed is as follows:
+  ing a prompt aligned with the inferred functionality, and (3)
+  performing self-verification [67] to ensure prompt intent                         Fs = αSs + βDs − Ps                          (1)
+  matches the functionality and modifying it if necessary.
+                                                                     Ss, Ds, and Ps represent the semantic score, distance score,
+       Seed Generation Prompt                                        and penalty score, respectively. α and β are hyper-parameters
+                                                                     that can adjust the weights of these factors. A seed with a
+ You need to craft a prompt that guides the agent to invoke this     higher Fs score indicates higher quality.
+  component. First, infer the component’s functionality from the     Semantic Score. Evaluating the natural language semantic
+  class and function names in the call chain. Second, generate a     quality of a seed prompt solely based on the prompt itself
+  prompt with matching semantics. Finally, verify its semantic       is difficult due to the limited context it provides. To address
+  similarity to the component, and revise it if necessary.           this, AgentFuzz records the execution trace when the agent
+                                                                     executes the seed prompt. It then uses the LLM to analyze
+  Now here is an example you can follow:                             the natural language semantic gap between the name of the
+  INPUT: <CALL CHAIN>: calculator→eval                               methods in the execution trace and the call chain leading
+  OUTPUT: <COT>: (1) The call chain "calculator→eval" sug-           to the vulnerable component, allowing for a more accurate
+  gests that the component is designed to evaluate mathematical      evaluation of the prompt’s semantic score. Our prompts are
+  expressions. (2) The prompt should instruct the LLM to use the     provided in Figure 5.
+  calculator component to perform an evaluation that aligns with
+  the function inferred from the call chain. (3) The prompt should        Scoring Prompt
+  specify an expression for evaluation to ensure it is directly re-
+  lated to the component’s purpose. <PROMPT>: Please use the         You are tasked with evaluating whether the prompt semantics can
+  calculator to evaluate the following expression: 3 * (4 + 5).      correctly trigger the target component. Follow these steps: First,
+                                                                     infer the component’s functionality from the given call chain.
+               Figure 4: Seed generation prompt.                     Second, analyze the execution trace’s semantics to assess how
+                                                                     well it aligns with the target component, and score the prompt.
+5.2 Feedback-driven Seed Scheduling                                  Scoring Criteria:
+                                                                     10 (Fully Aligned): The prompt perfectly triggers the target.
+In this phase, we first introduce our novel multifaceted feed-       8-9 (High Semantic Match): The prompt does not directly trigger
+back design and then explain how AgentFuzz utilizes the              any component in the call chain, but is semantically close.
+feedback to prioritize the seed with higher quality.                 1-3 (Low Semantic Match): ...
+                                                                     0 (Completely Unrelated): The semantics of the triggered execu-
+5.2.1 Multifaceted Feedback Design                                   tion trace are completely unrelated to the target component.
+
+AgentFuzz measures the quality of the seed based on the                                  Figure 5: Scoring prompt.
+following factors: ❶ semantic score, i.e., using an LLM to
+assess the semantic consistency between the prompt and the              Specifically, for a given seed, AgentFuzz first provides the
+vulnerable component, ❷ distance score, i.e., employing the          LLM with its corresponding call chain, helping the LLM to
+distance in CFG to evaluate whether the execution trace of           better understand the vulnerable component’s functionality.
+the seed prompt is closer to the sink. Moreover, to avoid local      Next, AgentFuzz records the execution trace of the prompt
+convergence, AgentFuzz also considers ❸ penalty score, i.e.,         and provides the LLM with key elements such as method and
+
+USENIX Association                                                                  34th USENIX Security Symposium 3773
+
+
+===== PAGE 9 / 21 =====
+
+class names. These elements, rich in natural language seman-       Call Chain ElasticsearchPermissionCheck.similarity_search eval
+tics, help the LLM fully understand the execution results of
+the prompt, enabling it to assess the prompt’s semantic quality.   Seed Pool s1                 s2           s3                           s4
+Finally, AgentFuzz leverages the LLM to evaluate the seman-
+tic score of the prompt, which is based on how closely the                 Seed Prompt                                   Seed Prompt
+natural language semantics of the execution trace align with               Use Elasticsearch                   Use Elasticsearch with permission
+those of the call chain. The greater the alignment, the higher     to find documents with "Agent"            check to find documents with "Agent"
+the semantic score, which ranges from 0 (completely unre-
+lated) to 10 (fully aligned). To ensure more consistent scoring,         Execution Trace                               Execution Trace
+the LLM’s temperature is set to 0, which helps produce more
+uniform responses during evaluation.                                                  ToolBase                                  ToolBase
+Distance Score. The distance score measures how closely                                  run                                       run
+the execution trace of the seed prompt is to the sink callsite,
+serving as a key indicator of seed quality. To evaluate this,        ElasticSearch    Elasticsearch...Check    ElasticSearch    Elasticsearch...Check
+AgentFuzz calculates the shortest control flow path to the sink    similarity_search    similarity_search    similarity_search    similarity_search
+callsite in the CFG for all method calls within the execution
+trace, taking the smallest of these as the overall distance from   Figure 6: An illustration of the seed scheduling process.
+the execution trace to the sink. The smaller the distance to the
+sink, the higher the quality of the seed. Note that a method       to accurately interpret its intent and invoke the target com-
+call absent from the CFG may imply the presence of indirect        ponent, ElasticsearchPermissionCheck. As a result, the
+calls that depend on specific semantics for execution, and as      execution trace of S3 closely aligns with the call chain leading
+such, AgentFuzz treats its distance as infinite. Finally, the      to the vulnerable component in both semantic and distance
+distance score is calculated as:                                   metrics, leading AgentFuzz to assign it a higher score and
+                                                                   select for further mutation. In contrast, S2 lacks the neces-
+Ds(x) = x−k                          (2)                           sary natural language semantics, preventing it from invoking
+                                                                   the vulnerable component and resulting in a less consistent
+where k is the hyper-parameter that can adjust the weight and      execution trace. AgentFuzz thus does not select it.
+x is the shortest distance of the execution trace to the sink
+callsite. We calculate the distance score using an inversely pro-  5.3 Sink-guided Seed Mutation
+portional function because a shorter distance indicates that the
+prompt satisfies the required natural language semantics and       In this phase, we first introduce our functionality and argu-
+successfully triggers the vulnerable component. Conversely,        ment mutators, and then describe how AgentFuzz schedules
+as the distance increases, the semantic alignment weakens,         these mutators to generate higher-quality seeds.
+making the prompt less likely to invoke the target component.
+Thus, as x approaches infinity, Ds asymptotically tends to 0.      5.3.1 Functionality Mutator
+Penalty Score. Selecting the same seed multiple times could
+lead to local convergence, reducing fuzzing efficiency. To         Seed prompts may fail to trigger the vulnerable component
+mitigate this, we decrease the seed’s score each time it or its    due to the semantic gap (e.g., the seed S2 shown in Figure 6
+call chain is selected. The penalty score is calculated as:        lacks the semantic of PermissionCheck, causing the agent
+                                                                   to invoke the incorrect component). Therefore, we employ a
+Ps = γS f + ηCf                      (3)                           self-improvement [44] mechanism to iteratively mutate and
+                                                                   improve the prompts, narrowing the semantic gap between
+where S f and Cf denote the selection counts of the seed and       the prompt and the functionality of the vulnerable component.
+its corresponding call chain, respectively. γ and η are hyper-     Self-Improvement Mechanism. Leveraging the LLM’s con-
+parameters that adjust the weights of these factors.               textual understanding capabilities, AgentFuzz improves the
+                                                                   seed based on successful mutations from previous iterations
+5.2.2 Feedback-driven Seed Scheduling                              while avoiding errors from earlier iterations. Specifically,
+                                                                   AgentFuzz maintains a separate chat session for each seed,
+Then, leveraging the multifaceted feedback scoring strategy,       where it stores the memory of all mutation attempts associ-
+AgentFuzz selects high-quality seeds from the seed pool            ated with that seed. This memory includes details such as the
+for mutation. We visualize this scheduling process in Fig-         newly generated prompt, its reasoning process, the execution
+ure 6. For the call chain ElasticsearchPermissionCheck             trace, and the corresponding feedback score from previous
+.similarity_search→eval, there are four corresponding              iterations. Drawing on the stored context, when a seed re-
+seeds in the seed pool. For S3, its prompt contains the seman-     quires mutation, AgentFuzz interacts with the LLM through
+tic of search, permission, and check, enabling the LLM             the corresponding chat session, iteratively refining the prompt
+                                                                   and updating the memory to guide further mutations. Prompts
+
+3774 34th USENIX Security Symposium                                                                              USENIX Association
+
+
+===== PAGE 10 / 21 =====
+
+for functionality mutator are provided in Figure 7.                 symbolic variables until a solution is found. Besides, since
+                                                                    string operations commonly appear in constraints, AgentFuzz
+       Functionality Mutator Prompt                                 models standard Python string operations [17] (e.g., split,
+                                                                    startswith) as part of the constraint-solving process.
+  You are good at modifying prompts so that their semantics can
+  better help agents understand and invoke specific components.        We use two examples in Figure 2 (line 9 and line 10) to il-
+  First, you need to evaluate the intent of the seed prompt based   lustrate the solving process. For the condition “source_doc”
+  on the execution trace and infer the functionality of the target  in content, AgentFuzz collects the constraint that content
+  component based on the call chain.                                must contain “source_doc”, and solves it by generating a
+  Second, you need to determine which part of the input prompt      value for content that includes the required keyword. For
+  causes the agent to call the incorrect component.                 the sink argument content.split(‘:’)[1], AgentFuzz ex-
+  Third, you need to base your reasoning on the generated prompt    tracts the constraint that the second element after splitting
+  in the history. Don’t make the same mistake again.                content by ‘:’ must match a specific value, and solves it by
+  Finally, based on the previous discovery and your previous rea-   generating a string like “:value” to satisfy the constraint.
+  son, you need to modify the prompt to make the prompt semantics   Prompt-to-Argument Mapping. AgentFuzz then adjusts
+  more similar to the target call chain and ensure that the agent   the original prompt based on the value of the newly solved
+  calls the current component.                                      component argument to satisfy the collected constraints. A
+                                                                    key challenge here is determining which part of the prompt
+            Figure 7: Functionality mutator prompt.                 needs to be modified to meet the constraints. Based on our in-
+                                                                    sights, user prompts for specific tasks generally consist of two
+5.3.2 Argument Mutator                                              main parts: the action and the data to be processed. The LLM
+                                                                    interprets the prompt to invoke the component for performing
+As discussed in §4.1, beyond ensuring natural language se-          the action and utilizes the provided data in the prompt as
+mantic consistency, the seed prompt must ensure that the            arguments for the component. As a result, we can modify the
+component’s argument, derived from the LLM’s response,              data part of the prompt to control the component’s arguments
+meets specific constraints, ultimately reaching the sink. For       and the variable values in the associated constraints.
+example, as shown in Figure 2, the argument content must
+contain the string source_doc: to trigger the vulnerability.           To achieve this, AgentFuzz employs the Longest Common
+To this end, AgentFuzz adopts a concolic execution-based            Substring Matching (LCSM [10]) algorithm to map the vari-
+approach to solve constraints within the agent’s code.              able values in constraints to the specific part of the prompt,
+                                                                    then replacing the solution back into the prompt. Specifically,
+   Specifically, first, AgentFuzz uses static analysis to extract   AgentFuzz extracts the value of variables from the unsat-
+the expected control-flow path to the sink. By comparing it         isfied constraints and uses the LCSM to identify the part
+with the actual execution trace, AgentFuzz locates the first        of the prompt that determines these variable values. Then,
+unsatisfied conditional statement. Second, AgentFuzz initi-         AgentFuzz replaces this part with the solved value that meets
+ates concolic execution from the enclosing component of the         the constraint. As shown in Figure 2, AgentFuzz inserts
+unsatisfied condition, treating each argument as a symbolic         source_doc: into the prompt based on the constraint solution
+variable. During the execution, the bytecode is interpreted in a    for the content argument, thereby triggering the sink.
+custom symbolic environment [34], which runs with concrete
+values but collects the symbolic expressions of each vari-          5.3.3 Mutator Scheduling
+able. When the execution reaches the unsatisfied conditional
+statement or the final sink function, AgentFuzz generates the       AgentFuzz employs the LLM to schedule two mutators and
+constraints that the condition variable or the argument of          autonomously select the appropriate mutator based on the ex-
+the sink function should meet based on their symbolic ex-           ecution context of the seed prompt. Specifically, AgentFuzz
+pressions. Third, AgentFuzz applies Constraint Solving to           provides the LLM with the following factors. (1) AgentFuzz
+generate satisfying inputs for the component’s symbolic ar-         compares the execution trace with the control flow path to
+guments. Finally, AgentFuzz applies Prompt-to-Argument              the sink and identifies the conditional statement closest to the
+Mapping to map and replace the solved values back into the          sink that is shared by both paths. It then provides the entire
+original prompt, thus generating a new prompt for testing. In       condition of this statement to the LLM. (2) AgentFuzz ex-
+the following, we clarify the details of Constraint Solving and     tracts the runtime values of variables used in these conditions
+Prompt-to-Argument Mapping.                                         and provides them to the LLM, helping to determine whether
+Constraint Solving. To solve the collected constraints,             the seed prompt encounters unsolved variable constraints. (3)
+AgentFuzz uses the Z3 solver [27] to compute a satisfy-             AgentFuzz provides a detailed feedback score to the LLM,
+ing value for the symbolic variables (i.e., arguments of the        aiding in the evaluation of potential semantic inconsistencies
+component). In this process, AgentFuzz first keeps one vari-        with the target component. Note that the CFG is typically
+able symbolic but substitutes the others with their concrete        incomplete due to indirect calls, resulting in cases where the
+values; if solving fails, it gradually increases the number of
+
+USENIX Association                                                  34th USENIX Security Symposium 3775
+
+
+===== PAGE 11 / 21 =====
+
+execution trace does not overlap with the control flow to the           files [18] and parsed by Python scripts for further processing.
+sink callsite. This indicates the natural language semantics            The predefined sink set is shown in Table 5 of Appendix C.
+of the prompt are insufficient to guide the LLM to invoke
+the target component through indirect calls. Therefore, in                 Dynamic Fuzzing. The dynamic fuzzing component con-
+these cases, AgentFuzz prioritizes the functionality mutator            sists of 5,796 lines of Python code, primarily comprising
+to bridge the semantic gap rather than attempting to solve              three parts: fuzzing, instrumentation, and concolic execution.
+constraints. Mutator scheduling prompt shown in Figure 8.               The fuzzing part of AgentFuzz mainly includes the schedul-
+                                                                        ing and mutation modules in §5. We referred to existing
+       Mutator Scheduling Prompt                                        work [42, 63] that evaluates AgentFuzz on a subset of our
+                                                                        evaluation dataset to determine the hyper-parameter values. In
+  You are a scheduling system tasked with determining which             experiments, we used the following values: α = 0.5, β = 0.5,
+  mutator is required to mutate the seed so that it triggers the sink.  γ = 0.2, η = 0.1, and k = 1.0. Similar to existing work [42],
+  We provide you with the following information:                        these parameters are adjustable and can be further explored.
+  Conditional Statement: The last conditional statement encoun-
+  tered and its current state during the agent’s execution.                The instrumentation part serves two main purposes: feed-
+  Variable: The variable names and values within the conditions.        back collection and bug oracle. For feedback collection,
+  Feedback: The previous evaluation result of the seed, including       AgentFuzz uses Python’s inspect module [8] to capture
+  the semantic score and distance score.                                the agent’s stack frame, thereby calculating the distance to the
+                                                                        sink. For bug oracle, we draw on principles from prior work
+  Here is the information about the mutators:                           [40, 61, 63]. Specifically, AgentFuzz employs sys.settrace
+  Functionality Mutator: Designed to narrow the natural language        and sys.addaudithook to hook sinks in Table 5, enabling it
+  semantic gap between the prompt and the target component.             to monitor whether attack payloads flow into the sink at the
+  Argument Mutator: Designed to ensure the LLM’s response               AST level. Our bug oracle supports various vulnerabilities
+  satisfies specific code constraints.                                  like SQL injection, code injection, SSRF, and SSTI.
+
+  The OUTPUT format needs to meet:                                         For the concolic execution part, existing techniques [58,74]
+ <Functionality Mutator> or <Argument Mutator>                          mainly target binaries rather than agents, which are typically
+                                                                        written in Python. To address this gap, we build an engine
+             Figure 8: Mutator scheduling prompt.                       on top of an existing interpreter-based concolic execution
+                                                                        framework [16], and integrate Python’s inspect module [8]
+   What’s more, once the sink is triggered, no further mutators         to extract runtime value for constraint construction.
+are invoked; instead, a Proof of Concept (PoC) payload is di-
+rectly inserted into the seed prompt. Specifically, AgentFuzz              Agent Framework. AgentFuzz uses the LangChain frame-
+leverages instrumentation to capture the parameter values               work [9] to interact with LLMs. By perceiving the re-
+of the sink and applies the Prompt-to-Argument Mapping                  quired information from the target agent, AgentFuzz can au-
+technique to locate the section of the prompt that flows into           tonomously plan and adapt its actions, enabling it to function
+the sink. Depending on the sink type, AgentFuzz replaces                as an effective agent for vulnerability detection.
+the part of this section that is unrelated to the solved con-
+straints with a corresponding payload (e.g., print(1) for               7 Evaluation
+eval() or 127.0.0.1 for requests.get()), and then dy-
+namically tracks whether the tainted payload reaches the                7.1 Experimental Setup
+sink. Take Figure 2 as an example, if the data flowing into
+the sink is source_doc:test, AgentFuzz replaces it with                 Experiments. Our evaluation seeks to answer the following
+source_doc:print(1).                                                    four research questions:
+
+6 Implementation                                                        • RQ1: How effective and efficient is AgentFuzz at detecting
+                                                                          taint-style vulnerabilities in real-world agents?
+The implementation of AgentFuzz can be divided into static
+and dynamic parts, each playing a crucial role in enhancing             • RQ2: How many of the vulnerabilities detected by
+the overall effectiveness of the fuzzing process. In total, the           AgentFuzz are practically exploitable?
+entire prototype consists of 5,796 lines of Python code and
+521 lines of CodeQL code. Details are presented below.                  • RQ3: How does AgentFuzz perform compared to state-of-
+                                                                          the-art approaches?
+   Static Analysis. AgentFuzz uses CodeQL [22] for static
+analysis, identifying sink callsites and building call/control          • RQ4: How do the different components of AgentFuzz con-
+flow graphs via the FunctionInvocation and BasicBlock                     tribute to its success?
+APIs. Analysis results are stored in CodeQL’s SARIF
+                                                                        Dataset. In all, our dataset consists of 20 open-source LLM-
+                                                                        based agents. We provide detailed information about these ap-
+                                                                        plications in Table 1. Specifically, these agents were collected
+                                                                        from popular open-source repositories (e.g., GitHub [23])
+                                                                        following the steps outlined below: 1) We searched for ap-
+
+3776 34th USENIX Security Symposium                                     USENIX Association
+
+
+===== PAGE 12 / 21 =====
+
+plications on GitHub using the keywords (e.g., “LLM”, “AI         Table 1: Details of the 20 agents in our dataset. Agents with
+Agent”) and sorted the search results in descending order         detected vulnerabilities are highlighted in gray.
+based on the number of stars. 2) We selected applications
+based on their star count, ensuring that each application had     Applications Stars  LoCs CVEs / Vulns Total. Avg.
+over 1,000 stars in its respective repository, confirming their                                                     Time Cost TTE
+popularity. 3) We manually analyzed each application to de-
+termine whether it provided a web service, as such server-side    AutoGPT 168,793 19,036   2/3      1.47 29.43
+agents tend to present more significant security risks and have
+a more pronounced impact when exploited, making them              Dify.AI 53,770 117,752   0        3.00  /
+more easily recognized as potential targets. As a result, we
+collected 20 open-source LLM-based agents, 13 of which            LangFlow 37,032 45,075   2/3      8.13 162.58
+have over 10,000 stars, while the remaining 7 have over 1,000
+stars. Most of these agents are highly renowned and have been     Quivr  36,814 3,282      0        6.00  /
+utilized in existing research [38, 49, 54, 70, 77]. We believe
+this dataset is highly representative and reliable.               Chatchat 32,272 14,098   2/2      2.33 69.89
+Environment. In our evaluation, we used GPT-4o [24] as the
+base model for both AgentFuzz and the tested agents, with         RagFlow 24,647 31,593    1/2      5.21 156.32
+temperature set to 0 for consistent outputs. All experiments
+ran on a 64-core Intel CPU with 256 GB memory.                    JARVIS 23,759 5,303      0        2.50  /
+
+7.2 RQ1: Vulnerability Detection                                  Devika 18,551 2,762      1/1      0.77 46.13
+
+In this part, we evaluated the effectiveness and efficiency of    SuperAGI 15,541 14,003   2/3      7.32 146.45
+AgentFuzz in detecting vulnerabilities across the dataset.
+Experimental Setup. We run AgentFuzz on each agent in             Chuanhu 15,294 8,558     0        2.58  /
+our dataset. For each agent, we manually instrument it and
+specify the web API of its input prompt as AgentFuzz’s in-        DB-GPT 13,858 84,323     3/3      4.46 89.20
+put. Additionally, unlike traditional application fuzzing, agent
+fuzzing involves token costs. Therefore, we set a 5 minute        PandasAI 13,629 13,774   0        3.58  /
+timeout for each sink callsite. That means, the time limit for
+fuzzing each agent application differs. Agents with more sink     Vanna  12,163 6,095      0        2.75  /
+callsites require more fuzzing time.
+                                                                  Bisheng 8,931 49,816     4/7      8.42 72.17
+   In the following, we evaluate AgentFuzz’s effectiveness by
+reporting the number of discovered vulnerabilities, precision     XAgent 8,195 10,365      0/1      2.33 139.80
+and recall rates. For efficiency, we present the CPU hours con-
+sumed in each phase of fuzzing an agent, the token cost, and      TaskingAI 6,235 31,269   0/1      2.14 128.39
+the time-to-exposure (TTE) for discovering a vulnerability.
+Result Overview. Overall, AgentFuzz identified a total of         Taskweaver 5,377 9,833   1/1      1.17 70.21
+828 sink callsites across the entire dataset and reported 34 po-
+tential vulnerabilities, including SQL injection, command and     AgentScope 5,368 13,627  3/4      3.58 53.70
+code injection, SSTI, and others. For the CPU hours, as shown
+in the "Total. Time Cost" column of Table 1, AgentFuzz spent      Agent-Zero 4,937 3,424   1/1      1.08 64.78
+a total of 69.01 CPU hours fuzzing 20 applications, averaging
+3.45 per application. The Seed Prompt Generation, Schedul-        OpenAgents 4,013 15,441  1/2      0.19  5.72
+ing, and Mutation phases accounted for 39%, 5%, and 56% of
+the total time, respectively. Among them, the Generation and      Total  /            /    23 / 34  69.01 121.78
+Mutation phases take more time, as they involve static analy-
+sis and concolic execution. For the TTE, as shown in the "Avg.    GPT-4o token pricing as of January 2025 [25]).
+TTE" column of Table 1, AgentFuzz required 121.8 minutes          False Positive Analysis. After manually reviewing each re-
+to discover a vulnerability. The main bottleneck lies in the      port, we verified that all 34 vulnerabilities were true positives,
+interaction between the tested agent and the LLM, which con-      achieving a precision rate of 100%. This remarkable precision
+sumes a significant amount of time. For the LLM token cost,       is primarily attributed to our robust bug oracle. We present the
+AgentFuzz used an average of 0.69 million tokens per agent,       vulnerability details in Table 1 and Table 4 of Appendix B.
+corresponding to a maximum cost of 6.9 dollars (based on the      False Negative Analysis. To evaluate the recall rate of
+                                                                  AgentFuzz, we attempted to collect known vulnerabilities
+                                                                  matching our threat model from vulnerability platforms like
+                                                                  NVD [13]. However, despite our best efforts, we could not
+                                                                  find a sufficient number of PoC for disclosed taint-style vul-
+                                                                  nerabilities in agents to construct a ground truth set. Besides,
+                                                                  manually reviewing all 828 sink callsites to label vulnera-
+                                                                  bilities as ground truth proved infeasible [36, 40]. Thus, we
+                                                                  randomly selected 10% (i.e., 83) callsites that AgentFuzz
+                                                                  identified as non-vulnerable and reviewed the code to deter-
+                                                                  mine whether any of them were actually vulnerable.
+
+                                                                     After a thorough analysis, we classified these sink callsites
+                                                                  into three main categories: ❶ 93.98% of them were uncon-
+                                                                  trollable by the user, meaning that attack payloads could not
+                                                                  be injected into the sink via prompts. These sinks, therefore,
+                                                                  were not vulnerable. ❷ 4.82% of them were protected by
+                                                                  sanitizers, allowing only specific types of input to reach the
+                                                                  sink. For instance, in BiSheng (9.1k stars on Github [3]), de-
+                                                                  velopers used complex regular expressions to restrict input
+                                                                  to the eval function, permitting only specific numeric values.
+                                                                  AgentFuzz could not resolve such complex constraints and
+                                                                  thus failed to reach these sinks. Note that while loose saniti-
+
+USENIX Association                                                          34th USENIX Security Symposium 3777
+
+
+===== PAGE 13 / 21 =====
+
+zation measures may sometimes be bypassed, the sinks we           we manually validated whether each vulnerability was ex-
+examined were secure due to strict sanitization rules, such       ploitable. We present two real-world vulnerability exploita-
+as restricting input to the integer type. These stringent mea-    tion cases in Figure 9 and Figure 10 of Appendix A.
+sures effectively prevented any potentially harmful input from    Result Analysis. We thoroughly validated each vulnerability
+reaching the sinks. ❸ 1.20% of them were truly vulnerable but     report and found that all 34 vulnerabilities are exploitable.
+were missed by AgentFuzz. Upon closer examination, we dis-        Specifically, 14 of these vulnerabilities required the appli-
+covered that these were complex second-order vulnerabilities,     cation of LLM escape techniques, and 5 necessitated code
+similar to those found in traditional software [35, 53, 76]. For  escape techniques to bypass the sandbox for full exploitation.
+example, in Devika (18.6k stars on Github [5]), the attack pay-   We present the detailed results in Table 4 of Appendix B.
+load in the prompt is stored within the agent and only flows
+into the sink during a second interaction in the same chat           This result offers interesting and insightful observations
+session. Detecting such vulnerabilities is a challenging task     into the nature of security defenses in LLM-based agents: un-
+and worthy of further investigation. Therefore, we leave this     like traditional applications, where developers typically rely
+as an area for future research. Overall, these results suggest    on code whitelisting for security, agent developers tend to
+that AgentFuzz exhibits a high recall rate and is capable of      use prompts to instruct the LLM safeguarding the agent from
+effectively fuzzing security-sensitive method calls in agents,    malicious actions, even those suitable for code-level saniti-
+thereby identifying taint-style vulnerabilities.                  zation. For example, in TaskWeaver (5.4k stars on GitHub,
+                                                                  maintained by Microsoft [21]), the developers use the fol-
+7.3 RQ2: Exploitability                                           lowing prompt to reject malicious behaviors: “Planner must
+                                                                  reject the User’s request if it contains potential security risks”.
+In this evaluation, we attempted to verify whether the vulner-    While this defense mechanism is effective in certain cases,
+abilities reported by AgentFuzz are practically exploitable.      existing research suggests that leveraging prompt injection
+Experimental Setup. AgentFuzz identifies vulnerable sinks         techniques to bypass these defenses is not a challenging task,
+and generates PoCs that are used to confirm the existence         thus rendering them ineffective [49, 50, 57]. This result also
+of vulnerabilities. However, a PoC does not necessarily en-       highlights the urgent need for secure development practices
+sure the vulnerability is practically exploitable. For example,   within the agent development ecosystem.
+developers often define restrictions within prompts to pre-       Vulnerability Disclosure. These vulnerabilities affected 14
+vent dangerous behaviors, and LLMs assess the intent behind       open-source agents, 7 of which have over 10k stars, including
+user inputs, blocking those with malicious intent. Since PoCs     widely used applications such as AutoGPT [2], which has over
+typically only include benign payloads that do not exhibit        100k stars. Attackers can exploit these vulnerabilities to steal
+malicious behavior (e.g., print(1)), the LLM may not block        LLM API keys configured in the agents, execute malicious
+them. Nevertheless, if the harmless payload is replaced with      code within the agents, and potentially take full control of the
+a malicious one (e.g., reverse shell), the LLM may intercept      server. These security breaches underscore the urgent need
+the prompt and render the vulnerability unexploitable.            for effective vulnerability detection approaches to safeguard
+                                                                  LLM-based agents. Consequently, we swiftly notified the
+   Therefore, we leveraged LLM escape (e.g., prompt injec-        developers of all confirmed vulnerabilities in the affected
+tion) and code escape (e.g., sandbox escape) techniques from      applications. To date, as shown in Table 4 of Appendix B, we
+LLMSmith [49] to bypass the defenses implemented in both          have received 27 CVE identifiers in acknowledgment.
+the LLM and the code runtime environment, aiming to assess
+the actual exploitability of the reports. LLM escape tech-        7.4 RQ3: Comparison
+niques aim to bypass system prompt constraints or the safety
+features of the LLM, allowing the generation of desired out-      In this part, we compare the effectiveness of AgentFuzz with
+puts that would otherwise be restricted. Code escape tech-        the SoTA technique, LLMSmith [49], across the entire dataset.
+niques target the potential predefined sandbox restrictions       Experimental Setup. We followed the instructions in
+typically present in code execution components of the agent.      LLMSmith’s open-source repository [11] to set up the pro-
+                                                                  totype and detect vulnerabilities. Specifically, LLMSmith em-
+   Specifically, following the prompt injection techniques in     ploys static analysis to identify sink callsites within the agent
+LLMSmith (e.g., ignoring instructions, manipulating con-          and checks whether there exists a call chain that begins with
+text), we added simple prompt injection payloads in front         user-level APIs and ends with a sink in the call graph. These
+of the PoCs generated by AgentFuzz. These techniques are          call chains are then reported as vulnerabilities, and LLMSmith
+straightforward to implement for our needs. Next, we replaced     uses predefined prompt payloads [11] to verify them. For the
+the benign payload with malicious one (e.g., substituting         ground truth set construction, to ensure a fair comparison,
+print(1) with __import__(‘os’).system(‘/bin/bash                  we constructed a ground truth aggregating all vulnerabilities
+-i >& /dev/tcp /ip/port 0>&1’)), and employed code                detected by both AgentFuzz and LLMSmith. Ultimately, our
+escape techniques from LLMSmith (e.g., inheritance chain          ground truth set consists of 35 verified vulnerabilities.
+bypass, builtin reload) to bypass the code sandbox. Finally,
+
+3778 34th USENIX Security Symposium                               USENIX Association
+
+
+===== PAGE 14 / 21 =====
+
+Table 2: Comparison between AgentFuzz and LLMSmith.                 Table 3: Ablation study for four variants of AgentFuzz (RQ4).
+
+Baselines TP        FP   FN  Prec(%) Recall(%)                      Baselines  TP FP FN Prec(%) Recall(%)
+
+LLMSmith 10         332  25  2.92%  28.57%                          AgentFuzz-NoGen 19  0  16  100%  54.29%
+                             100%   97.14%                                                     100%  74.29%
+AgentFuzz 34        0    1                                          AgentFuzz-NoSch 26  0  9   100%  77.14%
+                                                                                               100%  71.43%
+                                                                    AgentFuzz-NoSem 27  0  8   100%  97.14%
+
+                                                                    AgentFuzz-NoMut 25  0  10
+
+Result Overview. Table 2 provides a detailed comparison             AgentFuzz  34       0  1
+of the effectiveness of AgentFuzz and LLMSmith across the
+entire dataset. Overall, AgentFuzz demonstrates better per-           bility PoCs along with predefined prompts from SoTA scan-
+formance, surpassing LLMSmith by 33.25 times in precision             ners [26, 28] and LLMSmith as initial seeds.
+rate and detecting 2.4 times more vulnerabilities. More specif-     • AgentFuzz-NoSch. We disabled the Feedback-driven Seed
+ically, when tested against the ground truth, AgentFuzz iden-         Scheduling module and randomly selected seeds from the
+tifies 34 vulnerabilities. In contrast, LLMSmith detects only         seed pool for further mutation.
+10, all of which are a subset of the vulnerabilities identified by  • AgentFuzz-NoSem. We disable the semantic score while
+AgentFuzz, and produces 332 false positives. These results            preserving the distance score within the seed scheduling
+underscore the superior capability of AgentFuzz.                      module. This means AgentFuzz-NoSem prioritizes seeds
+False Positive Analysis. We comprehensively analyzed all              based solely on their proximity to the sink in the CFG.
+the 332 false positives of LLMSmith, and their causes can be        • AgentFuzz-NoMut. We disabled two mutators and relied
+mainly attributed to three aspects. Firstly, the parameters of        solely on the initial seed to detect vulnerabilities, thereby
+the sink callsite are uncontrollable by the user. This is also one    illustrating the crucial role of our mutation strategy.
+of the reasons for false positives mentioned in LLMSmith’s
+paper. Secondly, the coarse-grained static analysis strategy of     Result Analysis. Table 3 provides a breakdown of the com-
+LLMSmith led to incorrectly constructed call edges. Python is       parison results between AgentFuzz and its four variants. A
+a dynamically typed language, and LLMSmith relies on string         detailed analysis of the results is as follows:
+matching to build call edges. This coarse-grained approach ul-      ❶ AgentFuzz-NoGen vs. AgentFuzz. As shown in Table 3,
+timately led to false positives, which is another source of false   AgentFuzz-NoGen missed 16 vulnerabilities and its recall
+positives discussed in LLMSmith’s paper. Thirdly, there are         rate dropped to 54.29% compared to AgentFuzz. This decline
+some developer-customized sanitizers within the agents. As          can be attributed to AgentFuzz-NoGen’s inability to generate
+mentioned in RQ1, developers may enforce strict constraints         functionality-specific seeds in natural language. While our
+to limit the values flowing into the sink. LLMSmith is unable       functionality mutator attempted to mutate the prompt’s seman-
+to identify these constraints, leading to false positives.          tics, AgentFuzz-NoGen still struggled to generate prompts
+False Negative Analysis. For the 25 false negatives, LLM-           that could reach the sink within the available time.
+Smith missed them primarily due to two main reasons. On             ❷ AgentFuzz-NoSch vs. AgentFuzz. As shown in Table 3,
+one hand, 9 false negatives were caused by the inherent lim-        AgentFuzz-NoSch missed 9 vulnerabilities, resulting in a
+itations of Python static analysis. As described in §3, indi-       recall rate drop to 74.29%. These missed vulnerabilities
+rect calls are very common in Python. These indirect calls          stemmed from AgentFuzz-NoSch’s random seed selection
+prevent LLMSmith from establishing call edges between the           strategy, which failed to choose high-quality seeds for mu-
+caller and its corresponding callee, leading to missed detec-       tation. As a result, it became stuck repeatedly mutating un-
+tions. On the other hand, 16 false negatives were caused by         promising seeds in the pool. This inefficient mutation process
+a limited sink list. LLMSmith only considers eval, exec, and        wasted both time and tokens, leading to timeouts. This re-
+subprocess.run as sinks, meaning it fails to detect vulnera-        sult highlights the importance of our scheduling strategy in
+bilities introduced by other security-sensitive functions.          optimizing token usage and improving fuzzing efficiency.
+                                                                    ❸ AgentFuzz-NoSem vs. AgentFuzz. AgentFuzz-NoSem
+7.5 RQ4: Ablation Study                                             missed 8 vulnerabilities, resulting in a 20.6% decrease in
+                                                                    recall compared to AgentFuzz. These missed cases stem
+In this part, we conducted an ablation study to demonstrate         from the limitation of relying solely on distance-based scor-
+the necessity of each key component of AgentFuzz.                   ing, which fails to distinguish between seeds with identi-
+Variants Setup. First, we constructed four variants of              cal distance values but different semantics. As a result, it
+AgentFuzz, each of which disables a key component and uses          cannot prioritize high-quality seeds from a large seed pool
+the rest of the system as is. The details are as follows.           that does not reach the sink. Taking Figure 6 as an exam-
+                                                                    ple, AgentFuzz-NoSem assigned identical distance scores (0
+• AgentFuzz-NoGen. We disabled the LLM-assisted Seed                points) to all four seeds. Thus, it failed to promptly select S3,
+  Generation module and instead used traditional vulnera-           which carries semantics more aligned with the target compo-
+
+USENIX Association                                                             34th USENIX Security Symposium 3779
+
+
+===== PAGE 15 / 21 =====
+
+nent, for further mutation. This led to time wasted on mutating     tively giving less attention to securing the code. Moreover,
+unpromising seeds and resulted in missed vulnerabilities.           although some developers utilize separate Docker containers
+❹ AgentFuzz-NoMut vs. AgentFuzz. AgentFuzz-NoMut can                for code execution tools to ensure environment isolation, other
+not perform mutations and relies solely on the seed genera-         components, such as output parsers, still contain vulnerable
+tion to produce simpler, more straightforward prompts. As a         sinks that could be exploited for remote code execution. These
+result, for vulnerabilities that require specific code constraints  observations reveal a critical gap in the security awareness of
+or complex semantics, AgentFuzz-NoMut failed to generate            current agent developers, leaving agents vulnerable to signifi-
+prompts that met these requirements, leading to missed detec-       cant risks and emphasizing the urgent need to prioritize secure
+tions. This result highlights the necessity of our mutators.        development practices [19] within the agent ecosystem.
+                                                                    Mitigation. The severity of taint-style vulnerabilities in
+8 Case Study                                                        agents emphasizes the urgent need for tailored mitigation
+                                                                    strategies. Based on our evaluation, we propose three mea-
+We showcase two real-world taint-style vulnerabilities to high-     sures to address these risks: ❶ Minimize reliance on security-
+light AgentFuzz’s practical effectiveness.                          sensitive operations. In many cases, the use of such opera-
+Case I: Code Injection in S*** application. The S*** is             tions is unnecessary. For instance, in a calculator function,
+a highly popular agent with over 15k stars on GitHub. For           numexpr.evaluate is a safer alternative to eval for evalu-
+ethical reasons, we anonymized the application names. As            ating expressions. Developers should prioritize in adopting
+depicted in Figure 9 of Appendix A, in the evaluate(),              such secure methods to mitigate potential risks. ❷ Environ-
+the content enclosed within square brackets (i.e., “[]”) in         ment isolation. When the use of security-sensitive operations
+the LLM’s response is extracted (lines 3–5) and flows into          is unavoidable (e.g., code execution functionality), develop-
+eval() (line 6), leading to a code injection vulnerability. At-     ers should isolate these functions within secure, isolated en-
+tackers can craft prompts with specific semantics (i.e., “eval-     vironments, such as Docker containers or Jinja Sandboxes.
+uate the provided task output”) to instruct the agent to in-        Additionally, computational resources allocated to these en-
+voke the TaskOutputHandler component. By employing                  vironments should be restricted to limit potential risks like
+prompt injection techniques (i.e., “ignore what you are told        DoS. ❸ Adequate input sanitization. For functions that must
+above”), attackers can manipulate the agent to overlook the         rely on security-sensitive operations and cannot be easily
+dangerous behavior in the malicious payload (i.e., [__im-           isolated (e.g., allocating Docker containers for each external
+port(‘os’)__.system(‘whoami’)]) and pass it as arguments            request may incur significant overhead), developers should
+to the evaluate(), finally flows into the eval(). Given the         adopt input sanitization commonly used in traditional soft-
+extensive potential damage, we reported this critical issue to      ware development. For example, AutoGPT [2] uses a blacklist
+the developers and received a CVE ID (CVE-2024-5**95).              to prevent the WebSearch from accessing internal network.
+Case II: SSTI in A*** application. The A*** is an open-             Future Work. Detecting higher-order vulnerabilities that re-
+source and widely used LLM-based agent with over 160k               quire a sequence of prompts to exploit is generally a chal-
+stars on GitHub. Figure 10 of Appendix A illustrates an SSTI        lenging problem [35, 59]. Therefore, this paper focuses on
+vulnerability reported by AgentFuzz. A*** dynamically in-           taint-style vulnerabilities triggered by a single prompt. Prior
+vokes the FillTextTemplateBlock.run() to interpret the              work [61] shows that single-step vulnerabilities account for
+LLM’s response based on the semantics of the input prompt.          the majority of taint-style cases. We believe that detecting
+The LLM’s response is rendered using jinja2 (lines 4–5)             high-order vulnerabilities in agents is an important research
+to generate the final output. However, this rendering pro-          topic and regard it as a promising direction for future work.
+cess lacks adequate security safeguards. Attackers can craft
+a prompt with specific semantics to invoke the component            10 Conclusion
+with a malicious payload as its argument. This payload is then
+rendered by from_string() of jinja2 template, resulting in          This paper proposes AgentFuzz, a novel directed fuzzing ap-
+an SSTI vulnerability. This vulnerability allows attackers to       proach that can automatically detect taint-style vulnerabilities
+execute arbitrary code, thereby gaining full control over the       within LLM-based agents. To bridge the gap between tradi-
+server remotely. Given the potential impact, we reported the        tional directed fuzzing and agent vulnerabilities, AgentFuzz
+issue to the developers and received CVE-2024-5**87.                introduces several novel techniques to generate semantically-
+                                                                    correct and constraint-valid seed prompts in the form of natu-
+9 Discussion                                                        ral language. AgentFuzz has been evaluated on 20 real-world
+                                                                    agent applications. Overall, AgentFuzz discovered 34 high-
+Rethinking the Security Landscape of Agents. Through                risk 0-day vulnerabilities, with 23 CVE IDs assigned. We
+an in-depth analysis of the agent’s code and active commu-          believe that AgentFuzz can foster the research of LLM-based
+nication with developers, we observed a notable trend in the        agent security and aid the community in addressing the rising
+development of LLM-based agents: developers prioritize the          threats of agent vulnerabilities.
+evolution and enhancement of complex features, while rela-
+
+3780 34th USENIX Security Symposium                                 USENIX Association
+
+
+===== PAGE 16 / 21 =====
+
+Acknowledgement                                                      [2] AutoGPT on Github. https://github.com/Signifi
+                                                                          cant-Gravitas/AutoGPT.
+We would like to thank the anonymous reviewers for their
+insightful comments that helped improve the quality of the           [3] Bisheng on Github. https://github.com/dataele
+paper. This work was supported in part by the National Nat-               ment/bisheng.
+ural Science Foundation of China (U2436207, 62172105,
+62402116). Yuan Zhang and Min Yang are the corresponding             [4] Coze. https://www.coze.com/.
+authors. Yuan Zhang was supported in part by the Shang-
+hai Pilot Program for Basic Research - FuDan University              [5] Devika on Github. https://github.com/stitionai
+21TQ1400100 (21TQ012). Hao Chen was partially supported                   /devika.
+by UC Noyce Initiative. Min Yang is a faculty of Shanghai In-
+stitute of Intelligent Electronics & Systems, and Engineering        [6] Dify on Github. https://github.com/langgenius/
+Research Center of Cyber Security Auditing and Monitoring,                dify.
+Ministry of Education, China.
+                                                                     [7] GPT Store. https://openai.com/index/introdu
+Ethics Considerations                                                     cing-the-gpt-store/.
+
+Vulnerability Verification Environment. In our evaluation            [8] Inspect library of Python. https://docs.python.or
+part, all of the agents are open-source, and we downloaded and            g/3.13/library/inspect.html.
+conducted static analysis on them locally through AgentFuzz.
+This process did not involve any data related to real user pri-      [9] LangChain. https://www.langchain.com/.
+vacy. Then, after AgentFuzz reported potential vulnerabilities,
+we built these agents on a local server for vulnerability verifi-   [10] LCSM. https://en.wikipedia.org/wiki/Longes
+cation. This process also did not involve any data related to             t_common_substring.
+real users.
+Vulnerability Disclosure. In terms of vulnerability disclosure,     [11] LLMSmith. https://github.com/LLMSmith/LLMS
+all our vulnerability reports have strictly adhered to the time-          mith.
+line of the CVE Numbering Authorities (CNA), along with
+proactive communication with all developers. Specifically,          [12] Monica - ChatGPT AI Assistant. https://monica.i
+after we manually confirmed the vulnerabilities, we immedi-               m/.
+ately contacted the developers, including raising issues in the
+Github repository and via email. We carefully explained to          [13] National Vulnerability Database. https://nvd.nist
+the developers the cause of the vulnerability, the details of vul-        .gov/vuln.
+nerability exploitation, and the corresponding recommended
+solutions for fixing the issues. Although some vulnerabilities      [14] OWASP 2017. https://owasp.org/www-project
+were still being fixed at the time we submitted this paper,               -top-ten/2017/.
+we did not mention any important information about these
+vulnerabilities in the paper and anonymized all vulnerabilities     [15] OWASP 2021. https://owasp.org/Top10/.
+and affected applications. Therefore, the release of this paper
+will not cause any harm to real-world users.                        [16] py-conbyte. https://github.com/spencerwuwu/p
+                                                                          y-conbyte.
+Open Science
+                                                                    [17] Python String Methods. https://docs.python.or
+In alignment with the open science policy, we are committed               g/3/library/stdtypes.html#str.
+to fully following the conference’s artifact evaluation guide-
+lines. We publicly release the source code of AgentFuzz,            [18] SARIF of CodeQL. https://docs.github.com/en
+along with the datasets and baselines used for evaluation in              /code-security/codeql-cli/using-the-advance
+our research [20].                                                        d-functionality-of-the-codeql-cli/sarif-out
+                                                                          put#about-sarif-output.
+References
+                                                                    [19] SDL. https://www.microsoft.com/en-us/securi
+ [1] American Fuzzy Lop. https://github.com/googl                         tyengineering/sdl/practices.
+      e/AFL.
+                                                                    [20] Source Code of AgentFuzz. https://zenodo.org/r
+                                                                          ecords/15590097.
+
+                                                                    [21] TaskWeaver on Github. https://github.com/mic
+                                                                          rosoft/TaskWeaver.
+
+                                                                    [22] The Official Website of CodeQL in Github. https:
+                                                                          //codeql.github.com/.
+
+USENIX Association                                                  34th USENIX Security Symposium 3781
+
+
+===== PAGE 17 / 21 =====
+
+[23] The Official Website of Github. https://github.c           [37] Andrea Fioraldi, Dominik Maier, Heiko Eißfeldt, and
+      om/.                                                            Marc Heuse. {AFL++}: Combining incremental steps
+                                                                      of fuzzing research. In 14th USENIX workshop on
+[24] The Official Website of GPT-4o. https://openai.c                 offensive technologies (WOOT 20), 2020.
+      om/index/hello-gpt-4o/.
+                                                                [38] Dawei Gao, Zitao Li, Xuchen Pan, Weirui Kuang, Zhi-
+[25] The Price of GPT-4o. https://openai.com/api/p                    jian Ma, Bingchen Qian, Fei Wei, Wenhao Zhang, Yuex-
+      ricing/.                                                        iang Xie, Daoyuan Chen, et al. AgentScope: A flex-
+                                                                      ible yet robust multi-agent platform. arXiv preprint
+[26] Wapiti. https://wapiti-scanner.github.io/.                       arXiv:2402.14034, 2024.
+
+[27] Z3Prover. https://github.com/Z3Prover/z3.                  [39] Team GLM, Aohan Zeng, Bin Xu, Bowen Wang, Chen-
+                                                                      hui Zhang, Da Yin, Dan Zhang, Diego Rojas, Guanyu
+[28] ZAP Dev Team. https://www.zaproxy.org/.                          Feng, Hanlin Zhao, et al. ChatGLM: A family of large
+                                                                      language models from GLM-130B to GLM-4 all tools.
+[29] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama                arXiv preprint arXiv:2406.12793, 2024.
+      Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo
+      Almeida, Janko Altenschmidt, Sam Altman, Shyamal          [40] Emre Güler, Sergej Schumilo, Moritz Schloegel, Nils
+      Anadkat, et al. GPT-4 technical report. arXiv preprint          Bars, Philipp Görz, Xinyi Xu, Cemal Kaygusuz, and
+      arXiv:2303.08774, 2023.                                         Thorsten Holz. Atropos: Effective fuzzing of web appli-
+                                                                      cations for server-side vulnerabilities. In Proc. USENIX
+[30] Michael Backes, Konrad Rieck, Malte Skoruppa, Ben                Security Symposium (USENIX), Philadelphia, PA, USA,
+      Stock, and Fabian Yamaguchi. Efficient and flexible             August 2024.
+      discovery of php application vulnerabilities. In Proc.
+      IEEE European Symposium on Security and Privacy           [41] Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai
+      (EuroS&P), pages 334–349, Paris, France, April 2017.            Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Yu Wu,
+                                                                      YK Li, et al. DeepSeek-Coder: When the large lan-
+[31] Yejin Bang, Samuel Cahyawijaya, Nayeon Lee, Wen-                 guage model meets programming – The rise of code
+      liang Dai, Dan Su, Bryan Wilie, Holy Lovenia, Ziwei             intelligence. arXiv preprint arXiv:2401.14196, 2024.
+      Ji, Tiezheng Yu, Willy Chung, et al. A multitask, mul-
+      tilingual, multimodal evaluation of ChatGPT on rea-       [42] Xiangyu Guo, Akshay Kawlay, Eric Liu, and David Lie.
+      soning, hallucination, and interactivity. arXiv preprint        EvoCrawl: Exploring Web application code and state us-
+      arXiv:2302.04023, 2023.                                         ing evolutionary search. In The Network and Distributed
+                                                                      System Security Symposium (NDSS), San Diego, Cali-
+[32] Marcel Böhme, Van-Thuan Pham, Manh-Dung Nguyen,                  fornia, February 2025.
+      and Abhik Roychoudhury. Directed greybox fuzzing. In
+      Proc. ACM SIGSAC Conference on Computer and Com-          [43] Xinyi Hou, Yanjie Zhao, Yue Liu, Zhou Yang, Kailong
+      munications Security (CCS), pages 2329–2344, Dallas             Wang, Li Li, Xiapu Luo, David Lo, John Grundy, and
+      Texas, USA, October 2017.                                       Haoyu Wang. Large language models for software engi-
+                                                                      neering: A systematic literature review. ACM Trans-
+[33] Marcel Böhme, Van-Thuan Pham, and Abhik Roychoud-                actions on Software Engineering and Methodology,
+      hury. Coverage-based greybox fuzzing as Markov chain.           33(8):1–79, 2024.
+      In Proc. ACM SIGSAC Conference on Computer and
+      Communications Security (CCS), pages 1032–1043, Vi-       [44] Jiaxin Huang, Shixiang Shane Gu, Le Hou, Yuexin Wu,
+      enna, Austria, October 2016.                                    Xuezhi Wang, Hongkun Yu, and Jiawei Han. Large
+                                                                      language models can self-improve. arXiv preprint
+[34] Alessandro Disney Bruni, Tim Disney, and Cormac                  arXiv:2210.11610, 2022.
+      Flanagan. A peer architecture for lightweight symbolic
+      execution. Universidad de California, Santa Cruz.         [45] Bo Hui, Haolin Yuan, Neil Gong, Philippe Burlina, and
+                                                                      Yinzhi Cao. Pleak: Prompt leaking attacks against large
+[35] Johannes Dahse and Thorsten Holz. Static detection               language model applications. In Proc. ACM SIGSAC
+      of second-order vulnerabilities in Web applications. In         Conference on Computer and Communications Secu-
+      Proc. USENIX Security Symposium (USENIX), pages                 rity (CCS), pages 3600–3614, Salt Lake City UT, USA,
+      989–1003, San Diego, CA, August 2014.                           October 2024.
+
+[36] Adam Doupé, Ludovico Cavedon, Christopher Kruegel,         [46] Nenad Jovanovic, Christopher Kruegel, and Engin Kirda.
+      and Giovanni Vigna. Enemy of the state: A state-aware           Pixy: A static analysis tool for detecting web application
+      black-box web vulnerability scanner. In Proc. USENIX
+      Security Symposium (USENIX), Bellevue, WA, August
+      2012.
+
+3782 34th USENIX Security Symposium                             USENIX Association
+
+
+===== PAGE 18 / 21 =====
+
+vulnerabilities. In Proc. IEEE Symposium on Security       [55] Zeyang Sha and Yang Zhang. Prompt stealing at-
+      and Privacy (S&P), pages 6–pp., Berkeley, Oakland,               tacks against large language models. arXiv preprint
+      California, May 2006.                                            arXiv:2402.12959, 2024.
+
+[47] Siwon Kim, Sangdoo Yun, Hwaran Lee, Martin Gubri,           [56] Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen,
+      Sungroh Yoon, and Seong Joon Oh. ProPILE: Probing                and Yang Zhang. "Do Anything Now": Characterizing
+      privacy leakage in large language models. In Advances            and evaluating in-the-wild jailbreak prompts on large
+      in Neural Information Processing Systems (NeurlIPS),             language models. In Proc. ACM SIGSAC Conference on
+      volume 36, pages 20750–20762, December 2023.                     Computer and Communications Security (CCS), pages
+                                                                       1671–1685, Salt Lake City UT, USA, October 2024.
+[48] Fengyu Liu, Yuan Zhang, Tian Chen, Youkun Shi, Guan-
+      gliang Yang, Zihan Lin, Min Yang, Junyao He, and Qi Li.    [57] Jiawen Shi, Zenghui Yuan, Yinuo Liu, Yue Huang,
+      Detecting taint-style vulnerabilities in microservice-           Pan Zhou, Lichao Sun, and Neil Zhenqiang Gong.
+      structured web applications. In 2025 IEEE Symposium              Optimization-based prompt injection attack to LLM-
+      on Security and Privacy (SP), pages 934–952. IEEE                as-a-judge. In Proc. ACM SIGSAC Conference on Com-
+      Computer Society, 2025.                                          puter and Communications Security (CCS), pages 660–
+                                                                       674, Salt Lake City UT, USA, October 2024.
+[49] Tong Liu, Zizhuang Deng, Guozhu Meng, Yuekang Li,
+      and Kai Chen. Demystifying RCE vulnerabilities in          [58] Nick Stephens, John Grosen, Christopher Salls, Andrew
+      LLM-integrated apps. In Proc. ACM SIGSAC Confer-                 Dutcher, Ruoyu Wang, Jacopo Corbetta, Yan Shoshi-
+      ence on Computer and Communications Security (CCS),              taishvili, Christopher Kruegel, and Giovanni Vigna.
+      pages 1716–1730, Salt Lake City, UT, USA, October                Driller: Augmenting fuzzing through selective symbolic
+      2024.                                                            execution. In NDSS, volume 16, pages 1–16, 2016.
+
+[50] Xiaogeng Liu, Zhiyuan Yu, Yizhe Zhang, Ning Zhang,          [59] He Su, Feng Li, Lili Xu, Wenbo Hu, Yujie Sun, Qing
+      and Chaowei Xiao. Automatic and universal prompt                 Sun, Huina Chao, and Wei Huo. Splendor: Static de-
+      injection attacks against large language models. arXiv           tection of stored xss in modern web applications. In
+      preprint arXiv:2403.04957, 2024.                                 Proceedings of the 32nd ACM SIGSOFT International
+                                                                       Symposium on Software Testing and Analysis, pages
+[51] Changhua Luo, Penghui Li, and Wei Meng. TChecker:                 1043–1054, 2023.
+      Precise static inter-procedural analysis for detecting
+      taint-style vulnerabilities in PHP applications. In Proc.  [60] Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert,
+      ACM SIGSAC Conference on Computer and Communi-                   Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov,
+      cations Security (CCS), pages 2175–2188, Los Angeles             Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.
+      CA, USA, November 2022.                                          Llama 2: Open foundation and fine-tuned chat models.
+                                                                       arXiv preprint arXiv:2307.09288, 2023.
+[52] Yunlong Lyu, Yuxuan Xie, Peng Chen, and Hao Chen.
+      Prompt fuzzing for fuzz driver generation. In Proceed-     [61] Erik Trickel, Fabio Pagani, Chang Zhu, Lukas Dresel,
+      ings of the 2024 on ACM SIGSAC Conference on Com-                Giovanni Vigna, Christopher Kruegel, Ruoyu Wang,
+      puter and Communications Security, pages 3793–3807,              Tiffany Bao, Yan Shoshitaishvili, and Adam Doupé.
+      2024.                                                            Toss a fault to your witcher: Applying grey-box
+                                                                       coverage-guided mutational fuzzing to detect SQL and
+[53] Oswaldo Olivo, Isil Dillig, and Calvin Lin. Detecting             command injection vulnerabilities. In Proc. IEEE Sym-
+      and exploiting second order Denial-of-Service vulner-            posium on Security and Privacy (S&P), pages 2658–
+      abilities in web applications. In Proc. ACM SIGSAC               2675, San Francisco, CA, May 2023.
+      Conference on Computer and Communications Security
+      (CCS), pages 616–628, Denver Colorado, USA, October        [62] Oriol Vinyals, Charles Blundell, Timothy Lillicrap, ko-
+      2015.                                                            ray kavukcuoglu, and Daan Wierstra. Matching net-
+                                                                       works for one shot learning. In Advances in Neural
+[54] Rodrigo Pedro, Miguel E Coimbra, Daniel Castro, Paulo             Information Processing Systems (NeurlIPS), volume 29,
+      Carreira, and Nuno Santos. Prompt-to-SQL injections in           December 2016.
+      LLM-integrated Web applications: Risks and defenses.
+      In Proc. ACM/IEEE International Conference on Soft-        [63] Chenlin Wang, Wei Meng, Changhua Luo, and Penghui
+      ware Engineering (ICSE), pages 76–88, Ottawa, ON,                Li. Predator: Directed web application fuzzing for ef-
+      Canada, May 2025.                                                ficient vulnerability validation. In Proc. IEEE Sympo-
+                                                                       sium on Security and Privacy (S&P), pages 66–66. IEEE
+                                                                       Computer Society, 2024.
+
+USENIX Association                                               34th USENIX Security Symposium 3783
+
+
+===== PAGE 19 / 21 =====
+
+[64] Junyang Wang, Haiyang Xu, Jiabo Ye, Ming Yan,            [73] Tai Yue, Pengfei Wang, Yong Tang, Enze Wang, Bo Yu,
+      Weizhou Shen, Ji Zhang, Fei Huang, and Jitao Sang.            Kai Lu, and Xu Zhou. EcoFuzz: Adaptive energy-
+      Mobile-Agent: Autonomous multi-modal mobile de-               saving greybox fuzzing as a variant of the adversarial
+      vice agent with visual perception. arXiv preprint             multi-armed bandit. In Proc. USENIX Security Sympo-
+      arXiv:2401.16158, 2024.                                       sium (USENIX), pages 2307–2324, Virtual event, August
+                                                                    2020.
+[65] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang,
+      Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang,     [74] Insu Yun, Sangho Lee, Meng Xu, Yeongjin Jang, and
+      Xu Chen, Yankai Lin, et al. A survey on large language        Taesoo Kim. QSYM: A practical concolic execution
+      model based autonomous agents. Frontiers of Computer          engine tailored for hybrid fuzzing. In Proc. USENIX
+      Science, 18(6):186345, March 2024.                            Security Symposium (USENIX), pages 745–761, August
+                                                                    2018.
+[66] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten
+      Bosma, brian ichter, Fei Xia, Ed Chi, Quoc V Le, and    [75] Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel
+      Denny Zhou. Chain-of-Thought prompting elicits rea-           Kang. Injecagent: Benchmarking indirect prompt in-
+      soning in large language models. In Advances in Neural        jections in tool-integrated large language model agents.
+      Information Processing Systems (NeurlIPS), volume 35,         arXiv preprint arXiv:2403.02691, 2024.
+      pages 24824–24837, New Orleans Convention Center,
+      November 2022.                                          [76] Hang Zhang, Weiteng Chen, Yu Hao, Guoren Li, Yizhuo
+                                                                    Zhai, Xiaochen Zou, and Zhiyun Qian. Statically discov-
+[67] Yixuan Weng, Minjun Zhu, Fei Xia, Bin Li, Shizhu               ering high-order taint style vulnerabilities in os kernels.
+      He, Shengping Liu, Bin Sun, Kang Liu, and Jun Zhao.           In Proc. ACM SIGSAC Conference on Computer and
+      Large language models are better reasoners with self-         Communications Security (CCS), pages 811–824, Vir-
+      verification. In Conference on Empirical Methods in           tual Event, Republic of Korea, November 2021.
+      Natural Language Processing (EMNLP), Resorts World
+      Convention Centre, December 2023.                       [77] Quan Zhang, Binqi Zeng, Chijin Zhou, Gwihwan Go,
+                                                                    Heyuan Shi, and Yu Jiang. Human-imperceptible re-
+[68] Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen              trieval poisoning attacks in LLM-powered applications.
+      Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie            In Proc. ACM International Conference on the Founda-
+      Jin, Enyu Zhou, et al. The rise and potential of large        tions of Software Engineering (FSE), pages 502–506,
+      language model based agents: A survey. arXiv preprint         Porto de Galinhas Brazil, July 2024.
+      arXiv:2309.07864, 2023.
+                                                              [78] Yanjie Zhao, Xinyi Hou, Shenao Wang, and Haoyu
+[69] Chunqiu Steven Xia, Matteo Paltenghi, Jia Le Tian,             Wang. Llm app store analysis: A vision and
+      Michael Pradel, and Lingming Zhang. Fuzz4all: Univer-         roadmap. ACM Transactions on Software Engineering
+      sal fuzzing with large language models. In Proceedings        and Methodology, 2024.
+      of the IEEE/ACM 46th International Conference on Soft-
+      ware Engineering, pages 1–13, 2024.                     [79] Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr,
+                                                                    J Zico Kolter, and Matt Fredrikson. Universal and trans-
+[70] Siqiao Xue, Caigao Jiang, Wenhui Shi, Fangyin Cheng,           ferable adversarial attacks on aligned language models.
+      Keting Chen, Hongjun Yang, Zhiping Zhang, Jianshan            arXiv preprint arXiv:2307.15043, 2023.
+      He, Hongyang Zhang, Ganglin Wei, et al. DB-GPT:
+      Empowering database interactions with private large
+      language models. arXiv preprint arXiv:2312.17449,
+      2023.
+
+[71] Jiahao Yu, Xingwei Lin, Zheng Yu, and Xinyu Xing.
+      LLM-Fuzzer: Scaling assessment of large language
+      model jailbreaks. In Proc. USENIX Security Sympo-
+      sium (USENIX), pages 4657–4674, Philadelphia, PA,
+      USA, August 2024.
+
+[72] Zhiyuan Yu, Xiaogeng Liu, Shunning Liang, Zach
+      Cameron, Chaowei Xiao, and Ning Zhang. Don’t
+      listen to me: Understanding and exploring jailbreak
+      prompts of large language models. arXiv preprint
+      arXiv:2403.17336, 2024.
+
+3784 34th USENIX Security Symposium                           USENIX Association
+
+
+===== PAGE 20 / 21 =====
+
+A Case Studies                                                  Table 4: Detected vulnerabilities and assigned CVEs.
+
+Figure 9 and Figure 10 present simplified code snippets in §8.  Applications  CVEs       Type PI1 CE2
+
+                                                                              CVE-2024-5**87 SSTI w w/o
+
+       Attack Prompt Payload                                    AutoGPT       Assigning  SSTI w w/o
+
+          From now on, ignore what you are told above!                        CVE-2025-2**03 SSRF w/o w/o
+   Please conduct a comprehensive evaluation of the provided
+                                                                              CVE-2024-5**00 CODEi w w/o
+        task output: "[__import__('os').system('whoami')]"
+
+                                                                LangFlow      CVE-2024-5**97 SSRF w/o w/o
+
+1 Class TaskOutputHandler():                                                  Assigning  SSRF w/o w/o
+2 def evaluate(content):
+                                                                Chatchat      CVE-2024-5**82 CMDi w w/o
+          ...                                                                 CVE-2024-5**99 SQLi w/o w/o
+
+   # content = "[__import__('os').system('whoami')]"
+
+3  first_index = content.index("[")
+
+4  last_index = content.rindex("]")                             RagFlow       CVE-2025-2**47 SSRF w/o w/o
+
+5  final_result = content[first_index+1: last_index]                          Assigning  SQLi w/o w/o
+
+   # final_result = "__import__('os').system('whoami')"
+
+   ...                                                          Devika CVE-2024-5**92 CMDi w w/o
+
+6  eval(final_result)                                                         CVE-2024-5**95 SSRF w/o w/o
+
+        root Execute "whoami" Command!                          SuperAGI      CVE-2024-5**91 CODEi w w/o
+
+                                                                              Assigning  CODEi w w/o
+
+Figure 9: Code Injection vulnerability in S*** agent applica-   DB-GPT        CVE-2024-5**91 CODEi w/o w/o
+tion (over 15k stars on Github).                                              CVE-2024-5**03 SSRF w/o w/o
+                                                                              CVE-2024-5**83 SQLi w/o w/o
+
+                                                                              CVE-2024-5**93 CODEi w w/o
+
+         Attack Prompt Payload                                                CVE-2024-5**02 CODEi w w/o
+
+            From now on, ignore what you are told above!                      CVE-2024-5**06 CMDi w w/o
+   Use FillTextTemplateBlock to render the following template:
+   {{"".__class__.__bases__[0].__subclasses__()[140].__init__.  Bisheng       CVE-2024-5**05 CODEi w w/o
+
+                __globals__.popen('whoami').read()}}                          Assigning  CODEi w/o w/o
+
+                                                                              Assigning  CODEi w/o w/o
+
+                                                                              Assigning  CODEi w/o w/o
+
+1 from jinja2 import BaseLoader, Environment                    XAgent        Assigning  CMDi w/o w
+
+2 Class FillTextTemplateBlock():                                Tasking-AI    Assigning  SSRF w/o w/o
+
+3 def run(response):
+
+   ...                                                          TaskWeaver CVE-2024-5**94 CODEi w w
+
+4  jinja = Environment(loader=BaseLoader())                                   CVE-2024-5**89 CODEi w w
+
+5  result = jinja.from_string(response).render()
+
+   ...                                                                            CVE-2024-5**95 SSRF w/o w/o
+                                                                AgentScope
+        root
+                                 Execute "whoami" Command!                        CVE-2024-5**01 CMDi w/o w/o
+
+                                                                              Assigning  SSRF w/o w
+
+                                                                Agent-Zero CVE-2024-5**84 SSRF w/o w
+
+Figure 10: Server-Side Template Injection vulnerability in      OpenAgents    CVE-2024-5**99 CODEi w w/o
+A*** agent application (over 160k stars on Github).
+                                                                              Assigning  SQLi w/o w/o
+
+B Assigned CVEs                                                 1With or without the Prompt Injection technique used to
+
+Table 4 breaks down the CVE details and the techniques used     exploit the vulnerability.
+to exploit the vulnerability.                                   2With or without the Code Escape technique used to exploit
+
+                                                                the vulnerability.
+
+USENIX Association                                                            34th USENIX Security Symposium 3785
+
+
+===== PAGE 21 / 21 =====
+
+C Sink List
+
+Table 5 lists the sinks used in AgentFuzz.
+Table 5: Sink types and corresponding classes and methods.
+
+Package     Class      Methods                 Type
+
+subprocess  /          run, call, check_call,  CMDi
+                         Popen, getoutput
+
+os          /          system, popen,          CMDi
+
+                       exec*, spawn*
+
+builtins    /          eval, exec              CODEi
+
+urllib      /          request.urlopen         SSRF
+
+requests    /          get, post, request SSRF
+
+requests    Session    get, post, request SSRF
+
+httpx AsyncClient get, post, request SSRF
+
+aiohttp ClientSession get, post, request SSRF
+
+urllib3 PoolManager    urlopen, request        SSRF
+
+urllib3     /          request                 SSRF
+
+jinja2 Environment     from_string             SSTI
+
+flask       Function render_template_string SSTI
+
+sqlite3     Cursor     execute                 SQLi
+
+sqlalchemy Session     execute                 SQLi
+
+sqlalchemy Connection  execute                 SQLi
+
+django      /          cursor.execute          SQLi
+
+3786 34th USENIX Security Symposium                         USENIX Association

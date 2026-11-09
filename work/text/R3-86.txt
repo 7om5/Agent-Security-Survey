@@ -1,0 +1,1185 @@
+# R3-86 | MetaMancer: Practical Tool Selection Attacks against LLM Agents
+# PDF: papers\MetaMancer_Practical Tool Selection Attacks against LLM Agents.pdf
+# extracted: 2026-11-02T23:05:30.151Z
+
+
+===== PAGE 1 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents
+
+        Wenbin Zhai                    Yihao Liu                                                  Dong Wang
+
+ The Hong Kong Polytechnic    The Hong Kong Polytechnic                                     The Hong Kong Polytechnic
+             University                  University                                                    University
+
+        Hong Kong, China            Hong Kong, China                                              Hong Kong, China
+wenbin.zhai@connect.polyu.hk  yihao5.liu@connect.polyu.hk                              dong-comp.wang@connect.polyu.hk
+
+         Hao Chen                                                                              Bin Xiao✉
+
+The University of Hong Kong                                                            The Hong Kong Polytechnic
+      Hong Kong, China                                                                            University
+        chenho@hku.hk
+                                                                                             Hong Kong, China
+                                                                                           b.xiao@polyu.edu.hk
+
+Abstract                                                                               Keywords
+
+Large Language Model (LLM) agents increasingly rely on third-                          LLM agents, tool selection attacks, agent security
+party tools, making tool selection a critical security boundary. By
+manipulating tool metadata, an attacker can steer an agent toward                      ACM Reference Format:
+a malicious tool and thereby redirect downstream execution, even                       Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, and Bin Xiao. 2026. Meta-
+without controlling the user query or interacting with the victim                      Mancer: Practical Tool Selection Attacks against LLM Agents. In Proceedings
+system. Although prior attacks reveal the vulnerability of tool se-                    of the 2026 ACM SIGSAC Conference on Computer and Communications Se-
+lection, they fail to fully capture the adversarial problem in realistic               curity (CCS ’26), November 15–19, 2026, The Hague, Netherlands. ACM, New
+settings. Mounting a practical attack remains highly challenging,                      York, NY, USA, 15 pages. https://doi.org/10.1145/3830454.3846793
+because the attacker should manipulate the complete tool metadata
+under a strict transfer-based black-box setting while preserving                       1 Introduction
+effectiveness, stealth, and robustness. To address this challenge, we
+formulate adversarial tool selection as a semantically constrained                     Large Language Model (LLM) agents are increasingly deployed
+bilevel optimization problem, and propose MetaMancer, a multi-                         as autonomous decision-making systems that interact with APIs,
+agent semantic optimization framework that estimates effective-                        databases, and software tools, rather than as standalone text gen-
+ness and constraints in a surrogate ecosystem, and reconciles them                     erators [20, 60, 61]. This paradigm shift has facilitated the de-
+through semantic projection and atomic joint updates. Experiments                      velopment of practical agent systems, such as Claude Code [3],
+on ToolBench and MCPTools, spanning 20 tasks, 9,729 candidate                          Codex [45], Manus [34], and OpenClaw [47]. In parallel, the expand-
+tools, 8 target LLMs, and 6 representative defenses, demonstrate                       ing tool ecosystem has fostered public platforms such as Apify [5],
+that MetaMancer achieves end-to-end attack success rates of 92.7%                      PulseMCP [49], and MCP.so [35], which host diverse collections
+and 93.8% without defenses, and retains 91.2% and 92.2% after aver-                    of third-party tools. As the number of available tools grows and
+aging over six defenses, exceeding state-of-the-art attacks by over                    provider competition intensifies, agents must autonomously deter-
+50 percentage points under defenses. These results indicate that the                   mine which external tool to select, trust, and invoke in response to a
+tool selection boundary of LLM agents remains under-protected. To                      specific user request [50, 54]. Upon the selection of a tool, the agent
+mitigate this threat, we propose Core View Reconstruction (CVR), a                     may retrieve sensitive data, initiate transactions, modify external
+lightweight defense that reconstructs tool metadata within the core                    states, or trigger downstream workflows [65, 67]. Consequently, the
+capability boundary implied by required parameters. CVR reduces                        routing and selection of external tools constitute a critical security
+the end-to-end attack success rates of MetaMancer to 18.0% and                         boundary within modern agent ecosystems.
+17.6%, while consistently suppressing other tool selection attacks.
+                                                                                          Recent research in agent security has demonstrated that external
+CCS Concepts                                                                           content, injected tools, and cross-tool interactions can redirect agent
+                                                                                       behavior, leak private data, and corrupt control flows within tool-
+• Security and privacy; • Computing methodologies → Intel-                             integrated systems [19, 26, 68]. However, a critical upstream attack
+ligent agents;                                                                         surface remains insufficiently explored: the tool selection stage.
+                                                                                       Before a malicious tool can execute harmful actions, the agent must
+This work is licensed under a Creative Commons Attribution 4.0 International License.  first retrieve it and subsequently prioritize it over competing benign
+CCS ’26, The Hague, Netherlands.                                                       alternatives [4, 39]. In practice, this decision is primarily mediated
+© 2026 Copyright held by the owner/author(s).                                          by tool metadata, namely names, descriptions, and schemas [46].
+ACM ISBN 979-8-4007-2871-6/2026/11                                                     This reliance creates a natural entry point for attackers. In open
+https://doi.org/10.1145/3830454.3846793                                                ecosystems where third-party developers compete for visibility and
+                                                                                       invocation, attackers do not necessarily need to compromise the
+                                                                                       underlying model, the system prompt, or the user query. It often
+                                                                                       suffices to manipulate the metadata to ensure the agent retrieves
+                                                                                       and selects the adversarial tool as the optimal match. Compared to
+
+
+===== PAGE 2 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                                                                                                    Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+Table 1: Comparison with Representative Prior Work on Tool Selection Attacks. Ret. = Retrieval, Sel. = Selection, Desc. =
+Description, Nat. = Metadata Naturalness, Consist. = Semantic Consistency, and Valid. = Runtime Validity.
+
+Method                                                                   Venue             Manipulated Fields                          Pipeline Coverage  Optimization Setting   Constraint Modeling  Candidate Pool
+
+ToolCommander [68]                                                       NAACL’25                   Desc.                                   Ret.+Sel.        Gradient-based               None                20
+Select Me [12]                                                           arXiv’25                   Desc.                                       Sel.          Query-based                 None                20
+MPMA [62]                                                                AAAI’26                    Desc.                                       Sel.          Query-based            Heuristic Nat.           6
+AMA [38]                                                                 NeurIPS’25            Name, Desc.                                      Sel.          Query-based                 None                3
+ToolHijacker [53]                                                        NDSS’26                    Desc.                                                    Transfer-based               None                10
+MetaMancer (Ours)                                                        This work       Name+Desc.+Schema                                  Ret.+Sel.                           Nat.+Consist.+Valid.     59–2578
+                                                                                                                                            Ret.+Sel.       Transfer-based
+
+                                    100                                                                                                              the selection stage, overlooking the retrieval visibility across large
+                                                                                                                                                     candidate pools [12, 62], which limits their effectiveness in realis-
+End-to-End Attack Success Rate (%)  80                                                                                                               tic settings. Meanwhile, they frequently focus on optimizing de-
+                                                                                                                                                     scriptions while neglecting schemas, and solely maximize attack
+                                    60                                                                                                               effectiveness without explicit constraints, which prevents them
+                                                                                                                                                     from remaining stealthy. Consequently, the high attack success
+                                    40                                                                                                               rates (ASR) of these methods are often fragile, producing metadata
+                                                                                                                                                     that deviates significantly from benign distributions and thus can
+                                    20                                                                                                               be easily detected by preventive or auditing mechanisms [38, 53].
+                                                                                                                                                     Ultimately, this leaves a key practical question unanswered: can an
+                                    0                                                                                                                attacker construct adversarial tool metadata that remains effective,
+                                                                                                                                                     stealthy, and robust within a large-scale tool-integrated agentic
+                                         14  16  18                  60  65  70      75                 80  85  90            95  100                ecosystem?
+
+                                    Pre-Defense Covariance Ellipse              Metadata Quality Score      Keyword Stuffing      AMA                   Answering this question is non-trivial as it requires overcom-
+                                    Post-Defense Covariance Ellipse                                         Goal Hijacking        ToolHijacker       ing three primary challenges. First, the attack space is inherently
+                                    Benign Metadata Quality Range        Pre-Defense Centroid               MPMA                  MetaMancer (Ours)  heterogeneous. An effective optimization strategy must jointly ma-
+                                                                         Post-Defense Centroid                                                       nipulate the tool name, the natural-language description, and the
+                                                                         Superlative Injection                                                       structured schema, rather than focusing on a single textual descrip-
+                                                                                                                                                     tion. Second, the attack is subject to strict constraints. Adversarial
+Figure 1: Impact of Defenses on the Trade-Off between ASR                                                                                            perturbations that make a tool more likely to be selected may si-
+and Metadata Quality Across Tool Selection Attacks.                                                                                                  multaneously compromise metadata naturalness, disrupt semantic
+                                                                                                                                                     consistency, or corrupt runtime validity. Third, the attack operates
+downstream exploitation, compromising the selection process is                                                                                       in a strict transfer-based black-box setting. The attacker has no
+significantly more covert, scalable, and aligned with the operational                                                                                access to the target model, retriever, competing tool pool, or user
+mechanisms of open tool markets.                                                                                                                     query distribution. Consequently, the optimization process cannot
+                                                                                                                                                     rely on exact gradients or feedback from the target system.
+   Previous studies demonstrate that the tool selection mechanism
+is inherently fragile and susceptible to exploitation. Even minor                                                                                       In this paper, we formulate adversarial tool selection as a seman-
+modifications to tool descriptions can bias selection outcomes [15].                                                                                 tically constrained bilevel optimization problem and propose Meta-
+Furthermore, adversarial optimization over metadata can trigger                                                                                      Mancer, a multi-agent semantic optimization framework to address
+malicious invocations within the Model Context Protocol (MCP)                                                                                        these challenges. MetaMancer constructs a surrogate ecosystem
+and related ecosystems [12, 38, 62], while adversarial tool injection                                                                                to approximate the target environment, independently evaluates
+and prompt-based hijacking can effectively manipulate tool-calling                                                                                   effectiveness and constraints, reconciles them through semantic
+systems [53, 68]. Although these investigations substantiate the                                                                                     aggregation, and applies atomic updates to preserve consistency
+reality of such threats, they fail to fully capture the adversarial                                                                                  across metadata fields. Extensive experiments on ToolBench [51]
+problem and do not yet establish whether practical tool selection                                                                                    and MCPTools [16], covering 20 tasks, 9,729 candidate tools, 8 target
+attacks are achievable in realistic settings.                                                                                                        LLMs, and 6 representative defenses, demonstrate that MetaMancer
+                                                                                                                                                     consistently outperforms existing attacks. It achieves end-to-end
+   Mounting a practical attack remains highly challenging, because                                                                                   ASRs of 92.7% and 93.8% without defenses, and maintains average
+the attacker should manipulate the complete tool metadata under a                                                                                    ASRs of 91.2% and 92.2% across six defenses, exceeding state-of-
+strict transfer-based black-box setting while preserving effective-                                                                                  the-art attacks by more than 50 percentage points. As illustrated
+ness, stealth, and robustness. Specifically, effectiveness requires                                                                                  in Figure 1, MetaMancer remains in the region of high ASR and
+end-to-end attack success over the retrieve-then-select pipeline;                                                                                    high quality after defenses, whereas prior attacks either exhibit
+stealth demands metadata naturalness, semantic consistency, and                                                                                      limited end-to-end effectiveness or degrade sharply under defenses.
+runtime validity; and robustness requires reliable transferability                                                                                   These results demonstrate that MetaMancer satisfies the practi-
+across heterogeneous tasks, tool ecosystems, and target LLMs, as                                                                                     cal requirements of effectiveness, stealth, and robustness. Further
+well as resilience to defenses.
+
+   However, as summarized in Table 1, existing approaches fail
+to fully capture the practical attack. First, they typically focus on
+
+
+===== PAGE 3 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                                          CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+analysis shows that MetaMancer is highly optimization-efficient.         exploit cross-tool dependencies to hijack downstream control flow.
+These results indicate that the tool selection boundary of LLM           Collectively, these studies confirm the threat of tool metadata. How-
+agents remains under-protected. To mitigate MetaMancer, we fur-          ever, they do not formulate the attack as a constrained end-to-end
+ther propose Core View Reconstruction (CVR), a lightweight de-           optimization problem across the retrieve-then-select pipeline.
+fense mechanism that rewrites the name and description within
+the core capability boundary implied by the required parameters.            Subsequent research automates metadata manipulation under
+The experimental results show that CVR significantly reduces the         black-box access. Select Me [12] performs a coarse-to-fine black-box
+ASR of MetaMancer from over 92% to approximately 18%. Finally,           text attack on tool metadata. AMA [38] iteratively generates attrac-
+to further explore the boundary of tool selection attacks, we design     tive metadata to induce malicious tool invocation. MPMA [62] inves-
+an adaptive attack based on MetaMancer that reinforces the seman-        tigates preference manipulation within MCP ecosystems through
+tic information and capabilities carried by required parameters,         advertising-style rewriting and genetic search, and ToolTweak [55]
+thereby inducing a trade-off between recovered attack effective-         similarly optimizes names and descriptions to bias agent decisions.
+ness and tool usability. The primary contributions of this paper are     This line of work demonstrates that tool selection bias can be am-
+summarized as follows:                                                   plified without access to model weights. However, most of these
+                                                                         methods rely on repeated interactions with the target system, fo-
+     • To the best of our knowledge, this is the first work to investi-  cus on selector-side preference, and restrict the attack surface to
+        gate practical tool selection attacks against LLM agents that    natural-language fields.
+        jointly optimize the complete tool metadata, including the
+        name, description, and schema. Unlike prior unconstrained           Recent work considers stricter attacker assumptions that closely
+        attacks, our attack explicitly targets the practical require-    reflect practical deployment environments. ToolHijacker [53] in-
+        ments of effectiveness, stealth, and robustness under large      vestigates no-box attacks by optimizing malicious tool metadata
+        tool ecosystems.                                                 within a surrogate pipeline, explicitly targeting the retrieve-then-
+                                                                         select mechanism. Concurrently, ToolFlood [24] demonstrates that
+     • We formalize adversarial tool selection as a semantically con-    the retrieval stage can be attacked by semantically covering broad
+        strained bilevel optimization problem under a strict transfer-   query regions with malicious tools, thereby crowding benign tools
+        based black-box setting, and propose MetaMancer, a surrogate-    out of the top-𝑘 results. These studies align more closely with the
+        based multi-agent semantic optimization framework that           practical setting evaluated in our paper. Nevertheless, they do not
+        integrates stage-aware effectiveness optimization, semantic      explicitly treat name, description, and schema as a unified meta-
+        constraint auditing, conflict-aware policy aggregation, and      data object, nor do they jointly optimize attack effectiveness with
+        constraint-compliant atomic updates over the retrieve-then-      metadata naturalness, semantic consistency, and runtime validity.
+        select pipeline.
+                                                                            A parallel line of research focuses on robustness and bias analysis
+     • We conduct extensive experiments across two complemen-            rather than attack generation. ToolCert [64] investigates robustness
+        tary benchmarks, diverse target LLMs, and multiple repre-        under adversarial tool injection and provides a certified perspective
+        sentative defense mechanisms. The results demonstrate that       on the stability of tool selection. BiasBusters [8] further illustrates
+        MetaMancer achieves state-of-the-art attack effectiveness        that functionally equivalent tools can receive systematically dif-
+        while maintaining strong stealth and robustness, thereby         ferent selection outcomes, and that metadata perturbations can
+        validating the practicality of the proposed threat.              substantially shift these outcomes. While these studies are essential
+                                                                         for evaluating and diagnosing the vulnerability, they do not address
+     • We propose Core View Reconstruction (CVR), a lightweight          the constrained end-to-end attack generation problem.
+        defense mechanism that uses required parameters rather
+        than optional parameters as anchors for core capabilities. By    3 Problem Formulation
+        reconstructing the core view of tool metadata, CVR achieves
+        substantial defensive effectiveness against MetaMancer and       3.1 The Tool Selection Mechanism
+        other tool selection attacks. We further design an adaptive
+        attack based on MetaMancer that exposes the trade-off be-        We model an LLM-based Agent System as a tuple A = ⟨R, M, T ⟩,
+        tween recovered attack effectiveness and tool usability.         where R represents the retriever, M denotes the LLM-based rea-
+                                                                         soning engine, and T = {𝑡1, 𝑡2, . . . , 𝑡𝑁 } constitutes the library of
+2 Related Work                                                           available tools. Following recent work on tool-augmented LLMs [22,
+                                                                         48, 51] and deployed agent platforms [46], each tool 𝑡𝑖 ∈ T is ex-
+Recent studies have revealed diverse security and privacy risks in       posed to the agent through metadata x𝑖 = (𝑛𝑖, 𝑑𝑖, 𝑠𝑖 ), where 𝑛𝑖 , 𝑑𝑖 ,
+LLM agents [9, 10, 29, 31–33, 59], while tool selection introduces       and 𝑠𝑖 denote the name, natural-language description, and struc-
+an additional attack surface. Early evidence demonstrates that even      tured schema, respectively. Given a user query 𝑞, the tool selection
+minor modifications can influence model preferences, thereby es-         process follows a two-stage Retrieve-then-Select pipeline [4, 39].
+tablishing tool metadata as a practical attack surface. Faghih et
+al. [15] show that simple edits to tool descriptions alter selection        Stage 1: Retrieval (R). The retriever R filters the tool library T
+preferences, while Nestaas et al. [41] demonstrate preference ma-        into a top-𝑘 candidate set by matching the query 𝑞 against the
+nipulation in search and plugin selection settings. Related research     textual components of each tool (i.e., 𝑛𝑖 and 𝑑𝑖 ). The structured
+on adversarial tool usage broadens this perspective. ToolComman-         schema 𝑠𝑖 is excluded at this stage to avoid syntactic noise. The
+der [68] investigates adversarial tool injection against tool-calling    retrieved set is defined as
+systems, and Les Dissonances [26] reveals that malicious tools can
+                                                                                   T𝑘 (𝑞) = R (𝑞, T ) = Top-k (sim(𝜙 (𝑞), 𝜙 (𝑛𝑖 ⊕ 𝑑𝑖 ))) , (1)
+
+                                                                                                                        𝑡𝑖 ∈ T
+
+
+===== PAGE 4 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                      Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+where 𝜙 (·) denotes an embedding function, sim(·, ·) denotes a sim-      not violate the interface-level runtime validity. Moreover, the at-
+ilarity metric, and ⊕ denotes textual concatenation.
+                                                                         tacker can construct a local surrogate ecosystem to approximate
+   Stage 2: Selection (S). Conditioned on the retrieved set T𝑘 (𝑞),
+the LLM M reasons over the complete metadata of each candidate,          the victim environment. Specifically, the attacker can deploy a sur-
+including the schema, and outputs the final tool decision. The inclu-    rogate retriever R′ and a surrogate LLM M′, assemble a surrogate
+sion of 𝑠𝑖 enables the model to verify feasibility based on the schema   tool library Tsurr that is distinct from the actual library T , and
+and to disambiguate candidates with similar surface semantics:           construct a surrogate query set Qsurr that is disjoint from the real
+                                                                         target query distribution Qtarget. The attacker then optimizes the
+        𝑡∗ (𝑞) = S(𝑞, T𝑘 (𝑞)) = argmax 𝑃M (𝑡𝑖 | 𝑞, C(T𝑘 (𝑞))) , (2)      malicious metadata offline in this surrogate ecosystem and relies
+
+                                                 𝑡𝑖 ∈ T𝑘 (𝑞)             entirely on transferability rather than on feedback from the victim
+
+where C(T𝑘 (𝑞)) denotes the context constructed from the retrieved       system.
+candidates, and 𝑃M (·) denotes the likelihood of selecting a candi-
+date tool assigned by M under the current context. This two-stage        3.3 Bilevel Optimization Formulation
+decomposition is fundamental to the threat model: an adversarial
+tool must first gain visibility during the retrieval stage and subse-    Building upon the threat model, we formalize adversarial tool selec-
+quently be selected in the final selection stage.                        tion as a semantically constrained bilevel optimization problem. The
+                                                                         lower-level problem models the retrieve-then-select decision pro-
+3.2 Threat Model                                                         cess of the victim system after the injection of malicious metadata,
+                                                                         while the upper-level problem defines the optimization objective
+3.2.1 Attacker’s Goal. The goal of the attacker is to maximize the       of the attacker. This formulation explicitly accounts for the con-
+end-to-end probability that the victim system selects an injected        straints of metadata naturalness, semantic consistency, and runtime
+malicious tool for queries within the target domain. At the same         validity, distinguishing our setting from unconstrained adversarial
+time, the attack must satisfy the following three requirements that      attacks. For notational brevity, let 𝑡adv denote the injected malicious
+are essential for a practical attack.                                    tool, and let x = (𝑛, 𝑑, 𝑠) denote its metadata. The dependence of
+                                                                         𝑡adv on x is kept implicit below.
+   First, metadata naturalness requires the metadata to remain close
+to benign tool specifications in style and statistical profile, thereby  3.3.1 Lower-Level Problem. After the injection of 𝑡adv into the
+avoiding obvious anomalies such as garbled text, repetitive keyword      benign tool library T , the augmented library becomes T˜ (x) =
+stuffing, or implausible length patterns. Second, semantic consis-
+tency requires the description and schema to remain semantically         T ∪ {𝑡adv}. For a query 𝑞, the victim first retrieves the tool subset
+aligned. Specifically, functional claims in the description should be
+supported by the schema, and the fields of the schema should be             T𝑘 (𝑞, x) = R (𝑞, T˜ (x)),                         (3)
+justified by the functionality stated in the description. Third, run-
+time validity requires the manipulated tool to remain invocable and      and subsequently selects the specific tool
+executable without breaking required arguments or call signatures.
+                                                                           𝑡∗ (𝑞, x) = S(𝑞, T𝑘 (𝑞, x)) = argmax 𝑃M (𝑡𝑖 | 𝑞, C(T𝑘 (𝑞, x))) . (4)
+3.2.2 Attacker’s Knowledge. We assume a strict transfer-based
+black-box setting to reflect a realistic and restrictive scenario for                                                    𝑡𝑖 ∈ T𝑘 (𝑞,x)
+third-party tool developers on open platforms. Specifically, the at-
+tacker has no access to the internal parameters of the victim model      This lower-level formulation preserves the sequential dependency
+M or the retriever R, and cannot query the victim system to obtain       of the pipeline of the victim system: retrieval determines whether
+feedback for optimization. The attacker is also unaware of the exact     the adversarial tool is exposed to the model, and selection deter-
+composition of the benign tool library T and the retrieved candidate     mines whether the tool is ultimately chosen. This distinction is
+set T𝑘 (𝑞) for any given query. Furthermore, although the attacker       essential, because attacks that solely bias the selector remain inef-
+may possess general domain knowledge about the target domain,            fective if the malicious tool fails to survive retrieval.
+the true query distribution Qtarget remains unknown. Finally, unlike
+prompt-injection settings, the attacker cannot manipulate the input      3.3.2 Upper-Level Problem. The upper-level problem specifies the
+prompt or the user query.                                                optimization objective of the attacker. The attacker seeks metadata
+                                                                         x that maximizes end-to-end attack success rate:
+3.2.3 Attacker’s Capabilities. Despite these restrictions, the at-
+tacker can act as a third-party developer and publish a malicious        max 𝐽attack (x) := E𝑞∼Qtarget [I(𝑡 ∗ (𝑞, x) = 𝑡adv)]  (5)
+tool within open ecosystems, such as Apify [5], PulseMCP [49], and       x
+MCP.so [35], making it available for integration into agent work-
+flows subject to the formatting rules of the platform. The attacker      s.t. Lnat (x) ≤ 𝜖,                                    (6)
+controls the published metadata and the tool-side wrapper or han-
+dler that parses incoming calls. Thus, the attacker can introduce           Lcons (x) = 0,                                     (7)
+optional schema fields and configure the tool interface to accept
+them without making them mandatory execution dependencies.                  Lvalid (x) = 0.                                    (8)
+The backend logic can safely accept and ignore such optional fields
+when they are unnecessary. Thus, the presence of these fields does       These constraints mathematically enforce the requirements spec-
+                                                                         ified in the threat model. Specifically, Eq. (6) imposes metadata
+                                                                         naturalness by constraining deviations from benign metadata pat-
+                                                                         terns within a threshold 𝜖. Eq. (7) enforces semantic consistency
+                                                                         by requiring semantic alignment between the description and the
+                                                                         schema, thereby preventing unsupported claims or unjustified pa-
+                                                                         rameters. Eq. (8) guarantees runtime validity by ensuring that the
+                                                                         manipulated tool remains invocable and executable.
+
+                                                                            Furthermore, Eq. (5) defines the ideal objective on the target
+                                                                         side. Under the threat model, the attacker cannot observe Qtarget,
+
+
+===== PAGE 5 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                                         CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+the true environment of the victim system, or the exact feedback        4.2 Surrogate Ecosystem and Initialization
+from the victim system. Therefore, a practical attack must optimize
+surrogate estimates of both effectiveness and constraints, relying      Under the strict transfer-based black-box setting, the attacker lacks
+on transferability to generalize the attack to the target system.       access to the target LLM, retriever, benign tool pool, or query dis-
+                                                                        tribution. Thus, MetaMancer cannot optimize directly against the
+3.4 Key Challenges                                                      target system and instead relies on a local surrogate ecosystem to
+                                                                        provide transferable optimization feedback for offline optimization.
+Addressing this problem presents three challenges. First, the opti-
+mization space spans the complete tool metadata, instead of a sin-         First, the Surrogate Initializer Ainit constructs a surrogate ecosys-
+gle textual description. This expansion introduces strong coupling      tem A′ = (R′, M′, Qsurr, Tsurr) where R′ and M′ denote the sur-
+across different fields. Adversarial perturbations to a single field    rogate retriever and LLM, and Qsurr and Tsurr denote the surrogate
+may compromise the semantic consistency of the whole metadata.          query set and tool pool. Given tool artifacts, such as source code
+Second, the attack objectives are inherently conflicting. Effective     or draft metadata, Ainit infers the target domain of the adversar-
+adversarial perturbations that improve retrieval visibility or selec-   ial tool, and uses it to guide the construction of Qsurr and Tsurr.
+tion preference may also compromise metadata naturalness, disrupt       Qsurr is designed to cover representative user intents within the
+semantic consistency, or corrupt runtime validity. This inherent ten-   target domain, preventing optimization from overfitting to nar-
+sion can induce optimization oscillation, where the search process      row query patterns. Tsurr introduces plausible local competition
+alternates between effective yet detectable states and compliant        through tools with overlapping yet distinct functionalities. This
+yet ineffective ones. Third, the attacker lacks access to the victim    forces the adversarial tool to improve both retrieval visibility and
+system, including the target model, retriever, pool of benign tools,    selection preference. By evaluating the current metadata within
+or query distribution. As a result, neither the lower-level decision    this surrogate retrieve-then-select loop, MetaMancer can attribute
+process nor the upper-level objective can be optimized directly.        failures to insufficient retriever-side relevance or weak selector-side
+                                                                        preference, thereby producing optimization feedback that transfers
+4 MetaMancer                                                            effectively to unseen target systems.
+
+4.1 Overview                                                               Subsequently, Ainit performs metadata initialization from either
+                                                                        available source code and API specifications or an attacker-authored
+To address these challenges, we propose MetaMancer, a surrogate-        metadata draft. Specifically, when source code or API specifications
+based multi-agent semantic optimization framework for approxi-          are accessible, Ainit derives the initial metadata state x0 from the
+mately solving the semantically constrained bilevel optimization        functionality and parameter definitions of the tool. Alternatively,
+problem. As shown in Figure 2, MetaMancer optimizes complete            when a metadata draft is provided, Ainit rewrites the draft into
+tool metadata in a surrogate ecosystem and relies on transferability    x0 while preserving semantic consistency. This resulting state x0
+of the optimized metadata to the target system. Given tool artifacts,   serves as a starting point for the subsequent stage-aware effective-
+such as source code, API specifications, or draft metadata, the output  ness optimization.
+of MetaMancer is an optimized metadata state x∗ that improves end-
+to-end attack effectiveness while preserving metadata naturalness,      4.3 Stage-Aware Effectiveness Optimization
+semantic consistency, and runtime validity. MetaMancer consists
+of five role-specialized agents. The Surrogate Initializer Ainit con-   With the surrogate ecosystem constructed and the initial metadata
+structs the surrogate ecosystem and produces an initial metadata        state established, the Objective Evaluator Aobj optimizes attack
+state x0. The Objective Evaluator Aobj analyzes retrieve-then-select    effectiveness. Because an end-to-end failure can occur either before
+failures in the surrogate loop and generates a stage-aware effective-   the adversarial tool enters the retrieved context or after it becomes
+ness proposal set. The Constraint Auditor Aconst audits metadata        visible to the selector, MetaMancer performs stage-aware effective-
+naturalness and semantic consistency, and produces a semantic           ness optimization rather than treating the attack failure as a single
+constraint proposal set. Then, the Aggregator Aagg reconciles these     undifferentiated outcome.
+competing proposals from Aobj and Aconst into a constraint-aware
+update policy. Finally, the State Optimizer Aopt realizes that policy      At iteration 𝑙, let 𝑡adv (x𝑙 ) denote the adversarial tool parameter-
+as a sequence of atomic updates while enforcing runtime validity.       ized by the current metadata state x𝑙 . For each surrogate query 𝑞 ∈
+                                                                        Qsurr, Aobj first evaluates whether the adversarial tool appears in
+   Starting from the initial state x0, MetaMancer iterates through ef-  the top-𝑘 retrieved candidates: T𝑘′ (𝑞, x𝑙 ) = R′ (𝑞, Tsurr ∪ {𝑡adv (x𝑙 )}) .
+fectiveness evaluation, semantic constraint auditing, conflict-aware    If 𝑡adv (x𝑙 ) ∉ T𝑘′ (𝑞, x𝑙 ), the query is categorized as a retrieval failure.
+policy aggregation, and atomic update execution until the optimiza-     Otherwise, Aobj evaluates the selection: 𝑡ˆ𝑞 = S′ 𝑞, T𝑘′ (𝑞, x𝑙 ) . If
+tion budget is exhausted or a satisfactory surrogate attack state is    𝑡ˆ𝑞 ≠ 𝑡adv (x𝑙 ), the query is categorized as a selection failure. Let Qret
+reached. At a high level, the optimization update at iteration 𝑙 is     and Qsel denote the subsets of surrogate queries that induce retrieval
+                                                                        failure and selection failure, respectively. This stage-wise evaluation
+x𝑙+1 = Aopt x𝑙 , Aagg Aobj (x𝑙 ), Aconst (x𝑙 ) .                 (9)    attributes end-to-end failures to either insufficient retriever-side
+                                                                        relevance or weak selector-side preference.
+By separating stage-aware effectiveness optimization, semantic con-
+straint auditing, conflict-aware policy aggregation, and constraint-       For retrieval failures, Aobj generates relevance-oriented propos-
+compliant atomic updates within the surrogate ecosystem, Meta-          als for the metadata visible to the retriever, primarily the name and
+Mancer approximates the constrained optimization problem with-          description. The objective is to improve alignment with representa-
+out querying the target system.                                         tive user queries and increase the probability that the adversarial
+
+
+===== PAGE 6 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                                                              Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+                                                                                                 Surrogate-based Multi-Agent System
+
+Raw Tool Artifacts                    Surrogate Ecosystem                                        Retrieval Failure
+                                           Construction                                               Analysis
+                                                                                                                                     Conflict Identification
+
+                     Surrogate                          Metadata             Objective           Selection Failure  Aggregator
+
+%20Sans%20MS%26amp%3Bquot%3B%3B%20font-size%3AS%o2u0r1c6epxC%o3dBe%26quot%3B%I2n6igtit%al3izBeRretrieval%20Failure%26lt%3B%2Fb%26gt%3B%26lt%E3vBadliuv%at2o6rgt%3B%26lt%3Bb%20style%3D%26quot%3Bbackground-color%3A%20trSaenmsparnetnitc%P3rBo%je2c0tcionlor%3A%20light-dark(rgb(0%2C%200%2C%200)%2C%20rgb(255
+                                      Initialization                                             Analysis           Agent
+                            Agent                                            Agent
+
+ Draft Metadata                   Current Metadata State                     Constraint  Metadata Naturalness          State         Runtime Validity
+API Specification           Name Description Schema                           Auditor    Semantic Consistency       Optimizer        Atomic Updates
+                                                                                Agent
+                                                                                                                      Agent
+
+No access to target                                                          Victim LLM Agent
+   environment
+
+                              Tool Pool                                      Top-K candidates                                         Prompt-Level
+                            Adversarial Tool                                       Adversarial                                          Prevention
+                            BeniTgonolTPoooolls                                         Tool
+                                                                                  Benign Tool A                                      Metadata-Level
+User Query           Email  Database  Analysis                    Retriever                      Selector           Adversarial          Detection
+                      Tool     Tool     Tool                                      Benign Tool B                         Tool
+                                                                                                                                       Agent-Level
+                                                                                                                                         Guardrail
+
+                                                        Figure 2: Overview of MetaMancer.
+
+tool survives the top-𝑘 filtering process. Because the schema is                         For semantic consistency, Aconst performs a bidirectional au-
+excluded from the retrieval phase in our formulation, proposals at
+the retrieval stage do not directly target the schema fields.                            dit between the description and schema. In the forward direction,
+
+   For selection failures, Aobj generates preference-oriented pro-                       it verifies whether the functional claims made in the description
+posals over the complete metadata exposed to the selector. These
+proposals aim to reduce the reasoning gap between the adversar-                          are supported by the schema fields, and unsupported claims are
+ial tool and the benign winning tool. They may refine the name,
+description or schema when such optimization strengthens the                             classified as capability hallucinations. In the backward direction, it
+capability alignment for downstream selection.
+                                                                                         determines whether the parameters introduced in the schema are
+   The output of Aobj is a set of effectiveness proposals Δ𝑙obj, where
+each proposal is represented as a tuple 𝛿o𝑙 bj = ⟨Intent, Scope, Content⟩,               justified by the functionality stated in the description, and unjusti-
+where Intent records whether the proposal addresses a retrieval or
+selection failure, Scope identifies the targeted metadata field, and                     fied parameters are classified as schema stuffing.
+Content specifies the proposed optimization feedback. The proposal
+set Δ𝑙obj is subsequently passed to the policy aggregation stage.                        The output of Aconst consists of a set of structured corrective pro-
+                                                                                                 Δ𝑙const,                            𝛿𝑙
+4.4 Semantic Constraint Auditing                                                         posals            each     represented  as           =  ⟨Intent, Scope, Content⟩,
+                                                                                                                                       const
+While the Objective Evaluator improves attack effectiveness, it can-
+not ensure the stealth of the metadata. Therefore, the Constraint                        where Intent records whether the proposal addresses naturalness
+Auditor Aconst is introduced to ensure the semantic constraints
+of the current metadata state. It focuses on the two semantic con-                       or consistency, Scope identifies the targeted metadata field, and
+straints defined in Section 3.3, namely metadata naturalness and
+semantic consistency. Runtime validity is not treated as a parallel                      Content specifies the proposed optimization feedback. This output
+semantic audit objective here. Instead, it is enforced later during
+the atomic update stage as a hard execution constraint.                                  format aligns with the effectiveness proposals used by Aobj, facil-
+                                                                                         itating direct downstream aggregation. The proposal set Δ𝑙const is
+   For metadata naturalness, Aconst evaluates whether the current
+metadata exhibits artifacts of over-optimization relative to typi-                       forwarded to the conflict-aware policy aggregation stage.
+cal patterns in the surrogate tool pool. Aconst targets linguistic
+anomalies, such as excessive superlatives, repetitive keywords, pro-                     4.5 Conflict-Aware Policy Aggregation
+motional rhetoric, or unusually directive wording. Additionally, it
+identifies structural outliers, such as implausible description length                   The effectiveness proposals Δ𝑙obj and the constraint proposals Δ𝑙const
+or abnormal schema complexity. Rather than maximizing similarity                         are generated independently and therefore may impose incom-
+to any reference tool, the objective is to maintain the adversarial                      patible pressures on overlapping metadata fields. For example, an
+metadata within a benign semantic region so that it remains diffi-                       effectiveness proposal may strengthen aggressive optimization to
+cult to distinguish from benign tool specifications. Upon identifying                    improve retrieval or selection, whereas a constraint proposal may
+deviations, Aconst produces naturalness-oriented proposals.                              suppress such optimization to prevent detectable artifacts or unsup-
+                                                                                         ported claims. A naive union of these two proposals would therefore
+                                                                                         lead to unstable optimization, causing the metadata to oscillate be-
+                                                                                         tween effective but exposed states and constraint-compliant yet
+                                                                                         ineffective states. To address the tension between these competing
+                                                                                         objectives, MetaMancer introduces the Aggregator Aagg, which
+                                                                                         reconciles Δ𝑙obj and Δ𝑙const into a unified update policy.
+
+                                                                                            The first step of Aagg is conflict identification. A proposal pair
+                                                                                         is treated as conflicting when they target overlapping metadata
+                                                                                         fields, push the current state in incompatible semantic optimization
+                                                                                         directions, and cannot be jointly satisfied by a single modification.
+                                                                                         This definition keeps conflict detection within the scope of the
+                                                                                         affected fields while preserving the stage information carried by
+
+
+===== PAGE 7 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                                          CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+Δ𝑙obj and the semantic constraints carried by Δ𝑙const. Proposals that    and noisy setting for evaluating attack effectiveness and generaliza-
+do not meet this condition are treated as compatible and can be          tion of the attack under realistic large-scale tool competition. We
+directly retained in the final policy 𝜋𝑙 .                               select 10 representative tasks comprising 6,932 candidate tools.
+                                                                         MCPTools [16]: MCPTools represents a more structured and schema-
+   For conflicting proposals, Aagg projects them into a compromise       centric MCP-based ecosystem. Its standardized interfaces and cleaner
+form that preserves the effectiveness optimization while remaining       schemas make it suitable for assessing the robustness of MetaMancer
+within the semantic constraints specified by the constraint pro-         under production-style structural constraints. We select 10 repre-
+posal. This process may involve weakening exposed manipulative           sentative tasks comprising 2,797 candidate tools.
+optimization, rewriting unsupported claims into schema-grounded
+functionality, or replacing overly aggressive modifications with            Overall, our evaluation spans 20 tasks and 9,729 candidate tools.
+more natural alternatives that retain task relevance. Proposals that     For each task, we construct 100 evaluation queries, yielding 1,000
+clearly conflict with runtime validity requirements are filtered out     queries per benchmark.
+at this stage and remain subject to final validation during atomic
+update execution. The output of Aagg is the conflict-aware pol-          5.1.2 Target Agent System. We evaluate MetaMancer across hetero-
+icy 𝜋𝑙 = Aagg Δ𝑙obj, Δ𝑙const , which consists of retained compatible     geneous agent settings covering diverse target LLMs and retrievers.
+proposals together with projected conflict-resolved proposals. The       Target LLMs. We evaluate 8 representative target LLMs across both
+policy is subsequently passed to the final atomic update stage.          publicly released and proprietary models. The publicly released
+                                                                         models include DeepSeek-V3.2 (DeepSeek) [28], Qwen-3.5-397B
+4.6 Constraint-Compliant Atomic Updates                                  (Alibaba Cloud) [52], GLM-4.7 (Z.AI) [66], and Llama-4-Maverick
+                                                                         (Meta) [36], while the proprietary models include GPT-5.1 (Ope-
+Given the conflict-aware policy 𝜋𝑙 produced by the aggregator, the       nAI) [44], Gemini-3.1-Pro (Google) [18], Claude-Sonnet-4.5 (An-
+State Optimizer Aopt serves as the execution layer of MetaMancer. It     thropic) [2], and Grok-4.1 (xAI) [63].
+converts the high-level policy into concrete metadata modifications      Target Retrievers. We evaluate 6 representative target retrievers
+to produce the subsequent state: x𝑙+1 = Aopt (x𝑙, 𝜋𝑙 ) . At this stage,  across publicly released and proprietary embedding models. The
+the primary objective is not further policy optimization, but rather     publicly released retrievers include BGE-M3 (BAAI) [11], Qwen3-
+reliable realization. The applied updates must preserve runtime          Embedding-8B (Alibaba Cloud) [69], and Llama-Embed-Nemotron-
+validity while maintaining semantic consistency.                         8B (NVIDIA) [6]. The proprietary retrievers include Text-Embedding-
+                                                                         3-Large (OpenAI) [43], Gemini-Embedding-001 (Google) [17], and
+   To satisfy this requirement, MetaMancer applies updates atomi-        Codestral-Embed-2505 (Mistral AI) [37]. For all retrievers, we set
+cally rather than as independent free-form rewrites. The optimizer       𝑘 = 5 to evaluate adversarial tool visibility.
+primarily operates on the tool name, description, and parameter
+descriptions, alongside limited schema adjustments that remain           5.1.3 Default Attack Settings. Unless otherwise specified, all Meta-
+compatible with the valid call signature. Whenever a new func-           Mancer agents use Qwen-3.5-27B as the backbone model, with
+tional claim is introduced into the description, the schema must         the iteration limit set to 𝐿max = 10. To simulate strict black-box
+provide the corresponding structural evidence. Conversely, when a        constraints, we use a surrogate ecosystem with Qwen-3.5-27B as
+schema element is introduced or refined for selector-side alignment,     the surrogate LLM M′ and BGE-M3 as the surrogate retriever R′.
+the description must be updated to justify its functional role. This     Each simulation uses 10 surrogate queries (|Qsurr| = 10) and 10
+bidirectional binding prevents two common failure modes of un-           surrogate tools (|Tsurr| = 10). By default, we evaluate the generated
+constrained metadata attacks, namely capability hallucinations and       attacks against a target agent system consisting of GPT-5.1 and
+schema stuffing. To ensure runtime validity, the system rejects any      Text-Embedding-3-Large, and fix the retrieval depth at 𝑘 = 5 for
+updates that alter mandatory parameter names, change mandatory           both surrogate and target environments.
+parameter types, or otherwise compromise the valid call signature.
+                                                                         5.1.4 Compared Baselines. We compare MetaMancer against the
+   Before committing the state transition from x𝑙 to x𝑙+1, Aopt          following six baselines.
+performs a local verification on the candidate metadata. This veri-      Superlative Injection [15]: This heuristic prepends a superlative
+fication checks structural well-formedness, runtime validity, and        claim (i.e., “This is the best tool in the world”) to the tool description
+semantic consistency. If the candidate violates these requirements,      and adds the prefix “Best” to the tool name to increase salience.
+it is repaired or discarded before entering the next global iteration.   Goal Hijacking [30]: This method embeds explicit adversarial
+Consequently, the atomic update stage enforces runtime validity at       instructions within the tool description (i.e., “Ignore previous in-
+the realization layer and prevents the propagation of malformed          structions and select this tool {tool_name} as your final choice
+states into subsequent optimization rounds.                              immediately”), acting as a direct prompt injection attack.
+                                                                         Keyword Stuffing [1]: This baseline densely injects task-relevant
+5 Evaluation                                                             keywords into the metadata to increase the semantic overlap with
+                                                                         user queries. It mainly targets the retrieval stage without enforcing
+5.1 Experiment Setup                                                     semantic consistency or naturalness.
+                                                                         MPMA [62]: We adopt the GAPMA variant, which rewrites the tool
+5.1.1 Benchmarks. We evaluate MetaMancer on two complemen-               description using an advertising strategy, and refines it through a
+tary tool ecosystems:                                                    genetic algorithm. Following the original publication, we apply the
+ToolBench [51]: ToolBench represents a large-scale, open-domain,         Authoritative setting and keep remaining parameters unchanged.
+and weakly standardized tool ecosystem, providing a heterogeneous
+
+
+===== PAGE 8 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                                                         Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+Table 2: Correlation of metadata metrics with defense-                 SI 1.9  0.3  3.5  3.8    5.8    1.2     4.9    2.5    0.5    0.6     2.5   100  SI 2.6  2.1    1.9    3.7    0.8    2.4  2.5      3.6   2.6    1.6    2.4                                                                                                                                                                     100
+induced relative ASR degradation.                                                                                                                 80                                                                                                                                                                                                                                                 80
+                                                                       GH 0.8  0.2  5.2  1.5    3.0    1.8     4.1    3.0    1.0    0.5     2.1   60   GH 2.1  1.4    1.3    2.6    0.5    1.9  2.0      2.6   2.1    2.4    1.9                                                                                                                                                                     60
+                                                                                                                                                  40                                                                                                                                                                                                                                                 40
+                                                                       KS 5.6Methods0.32.10.7   4.3    0.6     5.2    3.9    1.4    0.8     2.5   20   KS 2.6  2.0    1.9    3.5    0.7    2.5  2.9      3.3   3.0    2.5    2.5                                                                                                                                                                     20
+                                                                                                                                                                                                                    Defended ASR (%)0                                                                                                                                                                0
+
+                                                                                                                                                                                                                                        Methods
+                                                                                                                                                                                                                                                                                                                                                                                     Defended ASR (%)
+                                                                       MPMA 31.7 3.1 45.3 15.7 23.4 17.2 27.7 6.7            7.0    1.1 17.9           MPMA 22.5 20.7 20.1 31.1 13.2 23.0 23.9 28.7 25.3 15.5 22.4
+
+Correlation  MQS     PPL    PPL_W                                      AMA 40.8 15.8 53.8 27.8 41.5 25.5 39.8 17.8 19.5 16.7 29.9                      AMA 32.9 30.4 29.1 42.9 20.5 33.4 34.8 39.8 35.5 26.7 32.6
+
+Pearson      -0.793  0.177   -0.158                                    ToolHijacker 42.2 38.4 42.3 36.2 42.5 40.0 37.9 41.9 34.1 41.6 39.7             ToolHijacker 36.2 33.6 32.8 39.9 27.8 35.0 37.2 39.3 37.7 33.5 35.3
+Spearman     -0.777  0.201   -0.200
+                                                                       MetaMancer 92.0 89.7 97.7 93.1 97.4 80.0 93.6 97.6 81.1 89.7 91.2               MetaMancer 90.8 92.9 90.2 98.5 83.6 92.5 93.1 96.4 93.6 90.3 92.2
+
+                                                                       Adv. Comrc. Comm. DB     Email    Fin.  Med.    Pay.  Srch.  Travel  Avg.       Web     Cloud   Dev   Game    DB     Prod. Comm.  Geo.  Cryp.  Img.   Avg.
+                                                                       (427) (536) (845) (469)  (858)  (2578)  (133)  (285)  (319)  (482)              (193)   (525)  (308)   (82)  (976)   (181) (173)  (59)  (139)  (161)
+                                                                                                       Tasks                                                                               Tasks
+
+                                                                                    (a) ToolBench                                                                     (b) MCPTools
+
+AMA [38]: This method formulates metadata generation as a state-       Figure 3: Task-Wise Defended ASR of Different Attacks.
+action-value optimization problem within a black-box in-context
+learning framework. It iteratively optimizes tool name and descrip-    widens further on MCPTools, where MetaMancer achieves 93.8%
+tion through batch generation and value-guided refinement.             against 83.6% for ToolHijacker. The performance gain stems from
+ToolHijacker [53]: This approach is a no-box prompt injection          implicit semantic shaping, which aligns adversarial metadata with
+attack against retrieve-then-select systems. It constructs a shadow    the retrieve-then-select process to provide better end-to-end control.
+pipeline and decomposes optimization into retrieval-oriented and       Table 4 shows that MetaMancer outperforms all baselines even
+selection-oriented components to manipulate final tool selection.      without schema optimization, indicating that the core semantic
+                                                                       optimization framework drives the improvement rather than merely
+   Besides adversarial baselines, we also report the success rate of   expanding the attack surface. Baseline methods typically rely on
+the original, unmodified tool metadata as a non-adversarial control,   explicit preference instructions or focus primarily on the selector,
+denoted as Benign Reference. This reference is used only to calibrate  limiting their success rates in large-scale tool environments.
+attack gains and is not treated as a competing attack baseline.
+                                                                          MetaMancer is stealthy. MetaMancer remains highly effective
+5.1.5 Evaluation Metrics. We evaluate MetaMancer through the           under defenses, whereas prior attacks degrade sharply. With six
+following metrics:                                                     defenses enabled, MetaMancer retains average ASRs of 91.2% on
+Effectiveness. Following the retrieve-then-select pipeline, we adopt   ToolBench and 92.2% on MCPTools, representing drops of only 1.5
+the end-to-end attack success rate 𝐴𝑆𝑅e2e as the primary metric,       and 1.6 percentage points relative to the undefended setting. Con-
+together with two stage-wise metrics. The retrieval attack success     versely, the ASR of ToolHijacker drops to 39.7% on ToolBench and
+rate 𝐴𝑆𝑅ret denotes the fraction of queries where the adversarial      35.3% on MCPTools, with AMA and MPMA experiencing similar
+tool appears in the top-𝑘 candidates. The conditional selection at-    declines. Jointly optimizing for effectiveness and constraints allows
+tack success rate 𝐴𝑆𝑅sel|ret measures the fraction of these retrieved  MetaMancer to maintain its influence while evading prompt-level
+cases in which the agent selects the adversarial tool. Consequently,   prevention, metadata-level detection, and agent-level guardrails.
+𝐴𝑆𝑅e2e = 𝐴𝑆𝑅ret · 𝐴𝑆𝑅sel|ret measures the overall proportion of        We observe a marginal increase in the benign reference under de-
+queries that result in the final selection of the adversarial tool.    fenses, though it remains near zero. As discussed in Section 6, this
+Metadata Quality. We assess metadata quality using the Metadata        occurs because defenses such as VIGIL normalize queries and de-
+Quality Score (MQS), a continuous metric in [0, 100] assigned by       scriptions, slightly improving the match for clean tools.
+two external LLM-based auditors (i.e., GPT-5.4-Pro and Gemini-3.1-
+Pro). MQS captures linguistic anomalies, explicit malicious instruc-      MetaMancer is robust. MetaMancer shows consistent supe-
+tions, and cross-field inconsistencies between natural-language        rior performance across heterogeneous settings, achieving state-
+descriptions and structured schemas. Traditional text-level met-       of-the-art results on both benchmarks and across all target LLMs,
+rics, such as PPL and PPL_W [23, 53], primarily reflect token-level    regardless of defenses. Figure 3 reflects this pattern at the task level,
+fluency, and thus fail to capture these metadata-specific inconsis-    demonstrating high post-defense success rates across diverse task
+tencies. As shown in Table 2, MQS exhibits substantially stronger      categories. Given that the two benchmarks differ substantially in
+absolute correlation with defense-induced relative ASR degradation     scale, metadata noise, and tool standardization, this stability con-
+than PPL and PPL_W, justifying its adoption in our evaluation. To      firms that MetaMancer avoids overfitting to benchmark-specific
+establish a baseline, we evaluate 1,000 randomly sampled benign        properties or model-specific preferences. Ultimately, it provides re-
+tools and present their interquartile range (IQR) in Figure 1.         liable end-to-end attack performance across varied tool ecosystems,
+                                                                       models, tasks, and defense mechanisms.
+5.2 Performance Comparison
+                                                                       5.3 Ablation and Sensitivity Analysis
+Table 3 reports the end-to-end ASR of MetaMancer, six attack base-
+lines, and the benign reference across ToolBench and MCPTools.         5.3.1 Core Component Ablation. Table 4 isolates the contribution
+Figure 3 disaggregates the post-defense results by task category.      of each component in MetaMancer.
+Overall, these results evaluate whether MetaMancer satisfies three
+requirements of a practical attack: effectiveness, stealth under de-      Replacing the distributed multi-agent architecture with a single
+fenses, and robustness across heterogeneous deployment settings.       multi-purpose agent (w/o MAS) uniformly degrades performance,
+                                                                       exposing the limitations of a single-agent approach in navigating
+   MetaMancer is effective. MetaMancer achieves state-of-the-          the complex search space. By decomposing the bilevel optimization
+art performance on both datasets and across all eight target LLMs      problem, the distributed architecture mitigates the interference
+without defenses. On ToolBench, it attains an average ASR of 92.7%,    between structural formulation and semantic reasoning.
+compared to 88.9% for the strongest baseline, ToolHijacker. This gap
+
+
+===== PAGE 9 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                            CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+Table 3: End-to-end ASR (%) on ToolBench and MCPTools with and without defenses. Each cell reports Base/Def., where Base
+denotes performance without defense and Def. denotes the average performance under six defenses. BR = Benign Reference, SI
+= Superlative Injection, KS = Keyword Stuffing, GH = Goal Hijacking.
+
+Method        GPT-5.1    Gemini-3.1-Pro  Claude-Sonnet-4.5 Grok-4.1         DeepSeek-V3.2  Qwen-3.5    GLM-4.7    Llama-4    Average
+
+BR             1.1/2.0         0.9/1.8                           ToolBench        1.0/1.9    0.8/1.6    1.3/2.4    1.1/2.1    1.1/2.0
+SI             2.7/2.4         2.2/2.1                                            3.0/2.4    1.4/2.4    3.0/2.8    2.6/2.7    2.7/2.5
+KS             3.3/2.5         3.4/2.0    1.2/2.2                 1.2/2.0         4.0/2.1    3.4/2.5    5.0/3.2    5.8/2.7    4.3/2.5
+GH             3.8/1.8         3.9/1.6    2.8/2.3                 3.6/2.9         4.7/2.0    3.7/2.1    4.9/2.8    5.1/2.2    4.4/2.1
+MPMA          22.5/17.8       21.1/14.9   5.0/2.4                 4.4/2.6       20.5/16.7   18.8/15.8  26.3/22.7  24.7/18.6  22.5/17.9
+AMA           37.3/29.4       36.2/27.0   4.4/2.0                 4.7/2.3       36.9/29.4   35.0/28.3  40.7/33.4  39.4/30.2  37.9/29.9
+ToolHijacker  84.9/42.8       89.2/41.1  22.1/20.7               23.7/16.0      90.6/40.8   87.1/33.8  89.2/42.1  89.1/36.7  88.9/39.7
+MetaMancer    90.6/90.0      89.7/89.2   38.4/33.0               39.3/28.5      93.9/92.5  94.2/90.7   92.8/92.1  92.9/91.9  92.7/91.2
+                                         90.7/44.6               90.2/35.7
+BR             0.4/1.1         0.3/1.0   94.2/90.8               93.2/92.4        0.4/1.2    0.3/1.0    0.5/1.4    0.4/1.3    0.4/1.2
+SI             3.1/2.3         2.8/2.0                                            3.6/2.4    2.1/2.2    3.8/2.8    3.2/2.5    3.3/2.4
+KS             4.7/2.4         4.9/2.0                           MCPTools         5.3/2.3    4.6/2.3    6.2/3.0    6.6/2.9    5.5/2.5
+GH             5.7/1.7         5.5/1.5                                            6.2/1.8    5.3/1.8    6.6/2.4    6.7/2.2    6.1/1.9
+MPMA          30.2/22.6       26.7/19.2   0.5/1.3                 0.5/1.3       28.6/21.4   26.7/20.7  30.8/25.8  31.3/23.2  29.2/22.4
+AMA           42.9/32.4       41.4/29.5   3.5/2.4                 4.0/2.6       42.7/31.8   41.0/31.0  45.6/35.8  44.8/32.9  43.4/32.6
+ToolHijacker  81.9/35.8       85.7/34.9   6.1/2.6                 5.5/2.5       77.7/33.0   86.0/33.0  78.7/36.2  85.3/36.7  83.6/35.3
+MetaMancer    92.4/91.4      90.8/89.7    6.5/1.8                 6.3/2.0       94.6/92.8  95.1/92.7   92.1/91.5  93.3/91.7  93.8/92.2
+                                         30.0/24.8               29.4/21.5
+                                         44.1/35.0               44.3/32.4
+                                         90.3/39.0               83.3/33.8
+                                         96.6/94.1               95.4/93.7
+
+          Table 4: Ablation Study of MetaMancer.                       5.3.2 Impact of Surrogate and Target Top-𝑘 Settings. Figure 4 shows
+                                                                       the performance of MetaMancer across various surrogate (𝑆@𝑘)
+              ToolBench                  MCPTools                      and target (𝑇 @𝑘) top-𝑘 configurations. Given a default pool of 10
+                                                                       surrogate tools, 𝑆@1 reduces the attack optimization to a retrieval-
+Variant       Ret. Sel. E2E MQS Ret. Sel. E2E MQS                      only regime, whereas 𝑆@10 eliminates retrieval filtering to isolate
+                                                                       the selection stage.
+MetaMancer 95.2 97.4 92.7 92.9 99.2 94.6 93.8 94.3
+                                                                          Retrieval and selection are not monotonic substitutes. Under
+w/o MAS       93.6 95.0 88.9 86.7 98.7 93.0 91.8 89.5                  𝑇 @5, optimizing solely for retrieval with 𝑆@1 achieves a 97.5%
+                                                                       retrieval ASR but drops the selection ASR to 91.2% (88.9% E2E ASR).
+w/o Aconst 96.7 98.3 95.0 60.1 99.6 96.7 96.3 58.7                     Conversely, isolating selection via 𝑆@10 degrades the retrieval
+                                                                       ASR to 91.3% (85.6% E2E ASR). In contrast, the balanced stage-
+w/o Aagg      92.8 94.1 87.3 88.3 98.5 91.7 90.3 90.2                  aware setting (𝑆@5) maintains high effectiveness across both stages
+                                                                       (95.2% retrieval and 97.4% selection ASRs), achieving an E2E ASR
+w/o Schema 95.2 94.3 89.8 68.5 99.2 91.1 90.4 63.7                     of 92.7%. Over-optimizing either stage in isolation therefore creates
+                                                                       a bottleneck that constrains overall attack efficacy.
+   Removing the Constraint Auditor (w/o Aconst) demonstrates
+the fundamental trade-off between attack effectiveness and stealth.       MetaMancer also remains robust against discrepancies between
+Although unconstrained optimization achieves the highest ASR,          surrogate (𝑆@𝑘) and target (𝑇 @𝑘) settings. Across all 25 configura-
+the MQS drops substantially to 60.1 and 58.7, indicating that the      tions, the E2E ASR consistently exceeds 81%, ranging from 81.3%
+resulting aggressive perturbations deviate from benign semantic        (𝑆@10/𝑇 @1) to 93.8% (𝑆@1/𝑇 @1). Even under an extreme mis-
+distributions.                                                         match, such as transferring an 𝑆@1-optimized payload to 𝑇 @10,
+                                                                       the attack sustains an 87.6% E2E ASR alongside a 98.5% retrieval
+   Excluding the Aggregator (w/o Aagg) reduces both attack effec-      ASR. This stability indicates that the adversarial metadata does not
+tiveness and metadata quality. This decline reflects multi-objective   overfit to specific surrogate top-𝑘 hyperparameters and transfers
+conflicts inherent in adversarial optimization. Without a conflict-    reliably across varying target retrieval budgets.
+aware policy aggregation mechanism to balance the objective eval-
+uator and the constraint auditor, the optimization process fails to    5.3.3 Impact of Optimization Backbone Scale and Family. Table 5
+converge to a solution that satisfies both effectiveness and stealth.  shows that surrogate scale influences optimization effectiveness,
+                                                                       yet exhibits diminishing returns. Within the Qwen-3.5 family, in-
+   Restricting the optimization to unstructured names and descrip-     creasing the backbone from 9B to 27B raises the E2E ASR from
+tions (w/o Schema) leaves the retrieval ASR largely unaffected. How-   85.3% to 92.7% on ToolBench and from 88.4% to 93.8% on MCPTools,
+ever, the downstream selection ASR declines, and the MQS drops to      whereas further scaling to 122B-A10B and 397B-A17B yields only
+68.5 on ToolBench and 63.7 on MCPTools. Decoupling functional          marginal gains in E2E ASR. In contrast, MQS steadily improves,
+descriptions from structured schemas causes capability hallucina-
+tions, making it vulnerable to semantic audits. Nevertheless, this
+variant still outperforms existing baselines. This result confirms
+that the performance improvements stem from the optimization
+architecture rather than merely an expanded attack surface.
+
+
+===== PAGE 10 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                                                                                                                                       Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+                                         Ret. ASR                           Sel. ASR                   E2E ASR          100.0                                                  100                                                                      100
+                                    97.3 97.5 97.7          100.0 93.5 91.2 89.6                  91.0 88.9 87.5        97.5
+                         S@1  93.8                  98.5                              88.9  93.8                  87.6  95.0   ASR (%)                                                                                         Attack Success Rate (%)
+                                                                                                                        92.5                          Attack Success Rate (%)
+Surrogate top-k setting  S@3 93.5 96.5 97.3 97.5 98.0       100.0 95.8 95.6 95.0 93.6       93.5 92.4 93.0 92.6 91.8    90.0                                                   95                                                                       95
+                                                                                                                        87.5
+                         S@5 90.5 93.6 95.2 96.6 97.5       100.0 98.0 97.4 95.8 95.6       90.5 91.8 92.7 92.6 93.2    85.0                                                   90                                                                       90
+                                                                                                                        82.5
+                         S@7 86.6 93.0 95.0 96.0 96.5       100.0 96.0 94.4 94.0 93.7       86.6 89.2 89.7 90.2 90.4    80.0
+
+                         S@10 81.3 89.2 91.3 93.6 94.4      100.0 95.6 93.8 92.3 91.0       81.3 85.3 85.6 86.4 85.9                                                           85                                      Ret.                             85                                      Ret.
+                                      T@1 T@3 T@5 T@7 T@10                                  T@1 T@3 T@5 T@7 T@10                                                                                                       Sel.                                                                     Sel.
+                                                            T@1  T@3 T@5 T@7 T@10                                                                                              80                                      E2E                              80                                      E2E
+                                                                 Target top-k setting                                                                                                  1                                                                        1
+                                                                                                                                                                                          5  10                            15                                      5  10                            15
+
+                                                                                                                                                                                          Number of Surrogate Tools                                                Number of Surrogate Tools
+
+Figure 4: Impact of surrogate and target top-𝑘 settings.                                                                                                                                  (a) ToolBench                                                            (b) MCPTools
+Dashed boxes indicate the default stage-aware setting (𝑆@5,
+𝑇 @5).                                                                                                                                                                                    Figure 5: Impact of Surrogate Tool Scale.
+
+Table 5: Impact of surrogate optimization backbones across                                                                                                                     100                                                                      100
+different model scales and families. The first four rows are
+Qwen-3.5 variants.                                                                                                             Attack Success Rate (%)                         95                                              Attack Success Rate (%)  95
+
+                                                                                                                                                                               90                                                                       90
+
+                                                            ToolBench                             MCPTools
+
+Backbone Ret. Sel. E2E MQS Ret. Sel. E2E MQS                                                                                                                                   85                                      Ret.                             85                                      Ret.
+                                                                                                                                                                                                                       Sel.                                                                     Sel.
+                                                                                                                                                                               80                                      E2E                              80                                      E2E
+                                                                                                                                                                                       1                                                                        1
+9B                                  90.6 94.1 85.3 88.4 97.7 90.5 88.4 88.1                                                                                                               5  10                        15                                          5  10                        15
+
+27B                                 95.2 97.4 92.7 92.9 99.2 94.6 93.8 92.6                                                                                                               Number of Surrogate Queries                                              Number of Surrogate Queries
+
+122B-A10B 95.4 97.4 92.9 93.1 99.1 94.7 93.9 92.9
+
+397B-A17B 97.3 95.9 93.3 94.7 99.4 94.8 94.3 95.3                                                                                                                                         (a) ToolBench                                                            (b) MCPTools
+
+Gemma-7B 90.5 94.4 85.4 88.2 97.6 90.8 88.6 87.9                                                                                                                                          Figure 6: Impact of Surrogate Query Scale.
+Llama2-7B 95.6 89.2 85.3 86.6 98.9 86.2 85.3 86.3
+Llama2-13B 90.5 94.7 85.7 88.7 97.8 91.2 89.2 88.4
+Llama2-70B 96.8 93.4 90.4 91.2 99.2 91.5 90.8 91.3
+
+reaching 94.7 and 95.3 on the respective benchmarks with the 397B-                                                             5.3.5 Impact of Surrogate Query Scale. As shown in Figure 6, in-
+A17B variant. The Llama2 family exhibits a similar scaling trend.                                                              creasing the query budget from 1 to 10 improves the performance
+The 70B variant achieves 90.4% and 90.8% E2E ASR, outperforming                                                                across both benchmarks, reaching 92.7% on ToolBench and 93.8%
+the 7B variant (85.3% on both benchmarks) and the 13B variant                                                                  on MCPTools. This trend indicates that moderate query diversity
+(85.7% on ToolBench and 89.2% on MCPTools).                                                                                    provides richer optimization feedback. However, expanding the
+                                                                                                                               budget to 15 reduces the performance to 90.8% and 92.2%, even
+   Cross-family evaluations further show that effective transfer is                                                            though the retrieval success remains relatively stable. This suggests
+not tied to a specific surrogate family. Even compact surrogates                                                               that excessive query diversity primarily impairs the selection stage;
+such as Gemma-7B [57], Llama2-7B [58], and Qwen-3.5-9B achieve                                                                 the metadata must accommodate numerous intent variants, render-
+an E2E ASR of at least 85.3% across both benchmarks. Furthermore,                                                              ing the optimized semantics more diffuse and less aligned. Overall,
+Qwen-3.5-27B achieves a higher E2E ASR and MQS than Llama2-                                                                    a budget of 10 surrogate queries yields the optimal balance between
+70B on both benchmarks despite having a smaller nominal scale,                                                                 query coverage and specificity in the selection stage.
+indicating that parameter count alone does not dictate optimization
+effectiveness. Overall, MetaMancer remains effective across diverse                                                            5.3.6 Cross-Retriever Transferability. As illustrated in Figure 7,
+surrogate families and scales without requiring a frontier-scale                                                               MetaMancer exhibits effective transferability across different re-
+optimization backbone.                                                                                                         trievers on both ToolBench and MCPTools. Regardless of the spe-
+                                                                                                                               cific surrogate-target pairings, it maintains average retrieval attack
+5.3.4 Impact of Surrogate Tool Scale. As shown in Figure 5, in-                                                                success rates above 95% and 98%, respectively. The minimal degra-
+creasing the surrogate pool from 1 to 10 tools improves the ASR                                                                dation in performance under transfer-based settings suggests that
+from 84.2% to 92.7% on ToolBench and from 87.8% to 93.8% on                                                                    MetaMancer avoids overfitting to any specific surrogate model.
+MCPTools. This improvement indicates that moderate surrogate                                                                   Rather, it exploits the common vulnerabilities within the shared
+competition helps MetaMancer avoid overfitting to an overly simple                                                             embedding spaces of modern retrievers. Although minor differences
+environment and learn transferable semantic optimization. How-                                                                 in robustness exist across the target retrievers, the consistently high
+ever, further expanding the pool to 15 tools improves the retrieval                                                            success rates indicate that current LLM agent systems lack sufficient
+ASR but reduces the end-to-end ASR to 89.5% and 91.2%, primarily                                                               resistance against cross-retriever perturbations.
+due to a lower selection ASR. These results suggest that excessive
+competition among surrogate tools overemphasizes retrieval expo-                                                               5.3.7 Robustness under Multi-Stage Retrieval and Reranking. To
+sure and weakens the semantic alignment required for selection.                                                                evaluate the robustness of MetaMancer against more complex target
+Overall, a pool of 10 surrogate tools provides the optimal balance                                                             tool selection pipelines, we introduce an additional reranking stage
+between retrieval visibility and selection influence.                                                                          that reduces the top-𝑘 retrieved tools to the top-𝑟 candidates for
+                                                                                                                               subsequent LLM-based selection. We evaluate four representative
+
+
+===== PAGE 11 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                                                                                                           CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+        BGE 94.56 97.33 96.20 95.70 91.43 98.75 95.66            100               BGE 98.82 99.28 99.14 99.20 98.69 99.50 99.10            100  100                                                                                                                                                             100
+   Qwen3 95.62 98.28 96.88 96.42 92.22 98.86 96.38               98           Qwen3 98.96 99.53 99.38 99.33 98.87 99.62 99.28               98
+     Llama 95.18 97.74 97.12 96.02 92.05 98.40 96.08Surrogate Retriever96       Llama 98.90 99.44 99.48 99.30 98.81 99.54 99.24             96   98                                                                                                                                                              98
+                                                                                                                    Ret. ASR (%)94          94
+        Text 94.80 97.35 96.54 96.28 92.46 98.05 95.91           92                Text 98.86 99.35 99.22 99.40 98.90 99.49 99.20           92   96                                                                                                                                                              96
+   Gemini 93.62 96.40 95.48 95.06 92.68 97.20 95.07                                                                                  Surrogate Retriever90Gemini 98.58 99.10 98.94 98.92 98.60 99.16 98.8890
+Codestral 95.08 97.72 96.98 95.96 92.08 98.98 96.13                                                                                                                                                                                                      Ret. ASR (%)Codestral 98.92 99.45 99.31 99.28 98.84 99.66 99.2494Ret.94Ret.
+                                                                                                                                                           Sel.                                                                                                                                                            Sel.
+       Avg. 94.81 97.47 96.53 95.91 92.15 98.37 95.87                                                                                                                                         Attack Success Rate (%)Avg. 98.84 99.36 99.24 99.24 98.79 99.50 99.1692E2E                                         92        E2E
+                     BGE Qwen3 Llama Text Gemini Codestral Avg.                                                                                                                                                                                                                         Attack Success Rate (%)BGE Qwen3 Llama Text Gemini Codestral Avg.
+                                           Target Retriever                                                           Target Retriever           90                                                                                                                                                              90
+                                                                                                                                                        5        10       15               20                                                                                                                           5         10    15                 20
+          (a) ToolBench                                                              (b) MCPTools
+                                                                                                                                                           Number of Similar Benign Tools                                                                                                                                  Number of Similar Benign Tools
+
+                                                                                                                                                           (a) ToolSim                                                                                                                                                     (b) QuerySim
+
+Figure 7: Cross-retriever transferability of Ret. ASR. Dashed                                                                                    Figure 8: Robustness under Curated Tool Competition.
+boxes indicate the default BGE-to-Text configuration.
+
+Table 6: Robustness under multi-stage retrieval and rerank-                                                                                      Table 7: Optimization-time LLM cost and undefended ASR
+ing. Each cell reports Ret./Sel./E2E ASR (%).                                                                                                    under a unified accounting scheme.
+
+                                                                                                                                                 Method              LLM-call formula                                                                                                                                             Cost    ASR
+                                                                                                                                                 MPMA                                                                                                                                                                             107   22.5/29.2
+𝑘𝑟  Cohere                                                       Nemotron  Qwen3  BGE                                                            AMA                 2 + 𝐾 (𝑊 + 𝐶cross + 1)                                                                                                                                       5151  37.9/43.4
+                                                                                                                                                 ToolHijacker                                                                                                                                                                     4501  88.9/83.6
+5 5 95.0/96.5/91.7 94.9/96.5/91.6 95.0/96.0/91.2 95.1/96.6/91.9                                                                                  MetaMancer          1 + 𝑊 𝑄 + 𝐾𝑊 (1 + 𝐵𝑄 )                                                                                                                                       143   92.7/93.8
+10 5 92.5/96.2/89.0 92.4/95.9/88.6 92.9/95.9/89.1 87.7/96.1/84.3
+15 5 91.2/95.8/87.4 90.5/95.5/86.4 89.5/96.0/85.9 85.6/96.0/82.2                                                                                                     1+𝑄  𝐾     min (𝑊         ,  𝐵𝑡  −1                                                                                                         )  (𝐵  +  𝐵𝑄  )
+20 5 89.7/96.1/86.2 88.9/96.4/85.7 87.4/95.9/83.8 83.3/96.8/80.6                                                                                                          𝑡 =1
+
+                                                                                                                                                                     3 + 𝐾 (𝑄 + 4)
+
+10 10 96.8/95.2/92.2 96.8/94.9/91.9 96.8/94.3/91.3 96.8/94.5/91.5                                                                                search width, and 𝐾 denote the maximum number of optimiza-
+15 10 96.6/93.9/90.7 95.8/94.7/90.7 94.4/94.7/89.4 95.2/92.0/87.6                                                                                tion iterations. For MPMA, 𝐶cross denotes the crossover evaluation
+20 10 95.5/93.4/89.2 94.8/94.2/89.3 92.2/94.8/87.4 93.2/93.1/86.8                                                                                cost in the GAPMA setting. Table 7 presents the optimization-time
+                                                                                                                                                 LLM-call formula for each method, the instantiated cost under the
+rerankers, including Cohere-Rerank-v4.0-Pro (Cohere) [13], Llama-                                                                                adopted settings, and the corresponding undefended end-to-end
+Nemotron-Rerank-VL-1B-v2 (NVIDIA) [42], Qwen3-Reranker-8B                                                                                        ASR on ToolBench and MCPTools.
+(Alibaba Cloud) [69], and BGE-Reranker-v2-M3 (BAAI) [7]. As
+shown in Table 6, MetaMancer maintains an end-to-end ASR be-                                                                                        The results show that MetaMancer achieves a favorable trade-
+tween 80.6% and 92.2% across all evaluated configurations. Although                                                                              off between effectiveness and cost. ToolHijacker and AMA incur
+more restrictive reranking causes moderate degradation, the con-                                                                                 substantially higher optimization-time costs because they rely on
+sistently high success rates demonstrate that MetaMancer remains                                                                                 tree-style expansion or population-level candidate evaluation over
+effective under multi-stage retrieval and reranking.                                                                                             surrogate queries. MPMA is cheaper, but this lower cost comes
+                                                                                                                                                 with substantially weaker end-to-end ASR, reflecting its limited
+5.3.8 Robustness under Curated Tool Competition. To evaluate                                                                                     control over the retrieve-then-select pipeline. By contrast, Meta-
+whether MetaMancer relies on large tool repositories containing                                                                                  Mancer avoids both tree explosion and population-wide search,
+numerous weak or irrelevant competitors, we construct smaller                                                                                    and its cost grows linearly with the surrogate query count and
+target pools consisting of the top-𝑚 benign tools most semanti-                                                                                  iteration budget. Specifically, it employs five role-specialized agents
+cally similar to either the adversarial tool (ToolSim) or each target                                                                            within a fixed optimization workflow, where stage-aware optimiza-
+query (QuerySim), where 𝑚 ∈ {5, 10, 15, 20}. As shown in Figure 8,                                                                               tion, constraint auditing, and policy aggregation guide targeted
+MetaMancer consistently maintains high effectiveness across both                                                                                 updates without repeatedly exploring large candidate populations.
+settings, achieving end-to-end ASR of 94.1–95.8% under ToolSim                                                                                   This structured optimization reduces wasted exploration while pre-
+and 92.9–94.2% under QuerySim. The marginal degradation as 𝑚                                                                                     serving targeted feedback across stages. Meanwhile, MetaMancer
+increases indicates that the attack does not depend on an exten-                                                                                 achieves the strongest undefended ASR on both benchmarks, in-
+sive pool of weak or irrelevant tools. Instead, MetaMancer remains                                                                               dicating that its semantically constrained optimization provides
+effective even when the target pool is deliberately restricted to                                                                                a practical balance between attack effectiveness and optimization
+semantically competitive benign alternatives.                                                                                                    overhead.
+
+5.4 Optimization Cost Analysis                                                                                                                   6 Robustness against Defenses
+
+The optimization cost is a critical practical factor in the strict                                                                               Defense mechanisms against tool-related attacks can be categorized
+transfer-based black-box setting. Therefore, we compare Meta-                                                                                    into three layers. Prompt-level preventions, including instructional
+Mancer with representative iterative baselines using a unified ac-                                                                               and sandwich prevention [14, 21], constrain agent behavior by op-
+counting scheme for LLM calls. Let 𝑄 := |Qsurr| denote the surrogate                                                                             timizing input prompts. Metadata-level detections, such as Agent-
+query count, 𝐵 denote the offspring factor, 𝑊 denote the retained                                                                                Scan [56] and LLM-as-a-Judge detectors [25], audit static meta-
+                                                                                                                                                 data before invocation to identify malicious actions. Agent-level
+
+
+===== PAGE 12 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                                               Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+Table 8: Robustness of attacks under prompt-level prevention            Table 9: Robustness of attacks under metadata-level detection
+defenses.                                                               defenses.
+
+Method        ToolBench                   MCPTools                      Defense        Method            ToolBench        MCPTools
+
+BR            Instruction Sandwich        Instruction Sandwich          Agent-Scan     Benign Reference  Esc. ASR         Esc. ASR
+SI                                                                                     Superlative Inj.
+KS              1.1 (0)       1.1 (0)       0.4 (0)       0.4 (0)       TB TNR: 99.1   Keyword Stuffing  100 1.1 (0)      100 0.4 (0)
+GH             1.3 (-1.4)    1.3 (-1.4)    1.4 (-1.9)    1.2 (-2.1)     MCP TNR: 99.8  Goal Hijacking
+MPMA           1.4 (-2.9)    1.3 (-3.0)    1.6 (-3.9)    1.4 (-4.1)                    MPMA              100 2.7 (0)      100 3.3 (0)
+AMA            2.3 (-2.1)    2.3 (-2.1)    2.6 (-3.5)    2.4 (-3.7)     LLM-as-a-      AMA
+ToolHijacker  17.7 (-4.8)   17.9 (-4.6)   22.8 (-6.4)   22.4 (-6.8)     Judge          ToolHijacker      100 4.3 (0)      100 5.5 (0)
+MetaMancer    30.7 (-7.2)   30.2 (-7.7)   34.6 (-8.8)   33.9 (-9.5)                    MetaMancer
+              64.8 (-24.1)  64.5 (-24.4)  58.3 (-25.3)  57.9 (-25.7)    TB TNR: 97.1                     0  0 (-4.4)      0  0 (-6.1)
+              92.5 (-0.2)   91.0 (-1.7)   93.6 (-0.2)   92.9 (-0.9)     MCP TNR: 98.6  Benign Reference
+                                                                                       Superlative Inj.  100 22.5 (0)     100 29.2 (0)
+                                                                                       Keyword Stuffing
+                                                                                       Goal Hijacking    100 37.9 (0)     100 43.4 (0)
+                                                                                       MPMA
+                                                                                       AMA               0  0 (-88.9)     0  0 (-83.6)
+                                                                                       ToolHijacker
+                                                                                       MetaMancer        100 92.7 (0)     100 93.8 (0)
+
+                                                                                                         100 1.1 (0)      100 0.4 (0)
+
+guardrails, including ToolSafe [40] and VIGIL [27], act as dynamic                                       0  0 (-2.7)      0  0 (-3.3)
+runtime monitors that detect and mitigate suspicious behaviors.
+                                                                                                         0  0 (-4.3)      0  0 (-5.5)
+6.1 Prompt-level Prevention
+                                                                                                         0  0 (-4.4)      0  0 (-6.1)
+Instructional prevention [21]. This method employs a system
+prompt that treats tool metadata as untrusted content rather than ex-                                    90 19.9 (-2.6)   90 24.8 (-4.4)
+ecutable instructions. The prompt instructs the model to disregard
+manipulative or self-promotional language within the metadata                                            40 16.4 (-21.5)  30 10.8 (-32.6)
+and to base the routing decision on the alignment between user
+intent and actual tool functionality.                                                                    0  0 (-88.9)     0  0 (-83.6)
+Sandwich prevention [14]. This mechanism builds upon instruc-
+tional prevention by placing the metadata of the candidate tool                                          100 92.7 (0)     100 93.8 (0)
+between an initial instruction and a final safety reminder. The final
+reminder aims to mitigate the influence of misleading guidance          the semantic level. By examining the consistency between tool
+near the end of an extended context, ensuring that the decision of      descriptions and parameter schemas, it can detect manipulative
+the model remains focused on the functional alignment between           intent that may not be captured by fixed rules, making it a stronger
+the user request and the tool.                                          and more general detection baseline.
+Experimental Results. Table 8 shows that MetaMancer remains             Experimental Results. Against metadata-level defenses, Meta-
+highly effective against prompt-level defenses. Under both instruc-     Mancer achieves a 100% escape rate under both Agent-Scan and
+tional and sandwich prevention, the end-to-end ASR decreases by         LLM-as-a-Judge on ToolBench and MCPTools, maintaining the ASR
+less than 2.0 percentage points and remains above 91.0% on both         at 92.7% and 93.8%. This result indicates that constraint-aware op-
+ToolBench and MCPTools. In contrast, attacks relying on explicit        timization keeps adversarial metadata within the distribution of
+directives experience sharp degradation. The ASR of ToolHijacker        benign tools. By contrast, instruction-heavy attacks are easily ex-
+drops by 24.1–25.3 percentage points under instructional preven-        posed by static scanning. Goal Hijacking and ToolHijacker are fully
+tion, while Goal Hijacking approaches a benign level of perfor-         intercepted by Agent-Scan, reducing the escape rates to zero. The
+mance. These results indicate that prompt-level defenses are effec-     LLM-as-a-Judge defense is stronger against shallow or structurally
+tive in suppressing overt instruction injection, but are significantly  inconsistent perturbations, eliminating Superlative Injection and
+less effective against metadata that is semantically aligned with       Keyword Stuffing, and reducing the escape rate of AMA to 40% on
+benign tool descriptions. Sandwich prevention is slightly stronger      ToolBench and 30% on MCPTools. Overall, while metadata-level
+than instructional prevention, further reducing the ASR of AMA          audits effectively detect explicit directives, unnatural phrasing, and
+and ToolHijacker by 0.3–0.7 percentage points. This suggests that       semantic inconsistencies in baseline attacks, they fail to identify
+a trailing safety reminder provides limited additional protection       the jointly optimized metadata generated by MetaMancer.
+against recency-driven compliance with manipulative metadata.
+                                                                        6.3 Agent-level Guardrail
+6.2 Metadata-level Detection
+                                                                        ToolSafe [40]. ToolSafe audits candidate actions before tool execu-
+Agent-Scan [56]. Agent-Scan is a widely adopted open-source             tion to identify potential security risks. Upon detecting an unsafe
+static analysis framework that audits metadata and configurations       action, the system generates a safety analysis and validation report,
+for predefined risk patterns before tool invocation. In this study,     appending it to the model context as feedback to prompt the agent
+we employ it as a representative rule-based baseline to assess the      to re-reason and proactively correct its behavior.
+efficacy of static scanning methods against metadata manipulation.      VIGIL [27]. VIGIL performs intent anchoring on the user query
+LLM-as-a-Judge [25]. The LLM-as-a-Judge paradigm utilizes an            to extract foundational tasks and logical constraints. It applies an
+independent LLM to evaluate the metadata of candidate tools at          objective rewriting mechanism to tool metadata, preserving neutral
+                                                                        functional facts while filtering out manipulative instructions. Before
+                                                                        execution, it validates the candidate path against these extracted
+                                                                        constraints to ensure semantic alignment with the user goal.
+                                                                        Experimental Results. Against agent-level guardrails, MetaMancer
+                                                                        remains substantially more effective than all baselines, maintaining
+
+
+===== PAGE 13 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                                   CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+Table 10: Robustness of attacks under agent-level guardrail              Table 11: Effectiveness of CVR against MetaMancer.
+defenses.
+
+Method        ToolBench                   MCPTools                       Defense                 ToolBench         MCPTools
+
+BR            ToolSafe VIGIL              ToolSafe VIGIL                 No Defense          Ret. Sel. E2E     Ret. Sel. E2E
+SI                                                                       VIGIL
+KS              1.1 (0)     6.6 (+5.5)      0.4 (0)     5.4 (+5.0)       Desc.-Only Rewrite  95.2 97.4 92.7    99.2 94.6 93.8
+GH              2.7 (0)     6.7 (+4.0)     3.2 (-0.1)   5.5 (+2.2)       Req.-Only Restrict  91.0 94.1 85.6    94.3 90.6 85.4
+MPMA           1.6 (-2.7)   6.6 (+2.3)     1.3 (-4.2)    5.4 (-0.1)      CVR (Ours)          93.1 94.5 88.0    96.8 91.6 88.7
+AMA            1.6 (-2.8)   6.5 (+2.1)     1.1 (-5.0)    5.3 (-0.8)                          95.2 94.3 89.8    99.2 91.1 90.4
+ToolHijacker   22.5 (0)     7.1 (-15.4)   29.0 (-0.2)   6.1 (-23.1)                          25.1 71.7 18.0    27.4 64.1 17.6
+MetaMancer    37.8 (-0.1)   26.5 (-11.4)  43.2 (-0.2)   29.8 (-13.6)
+              62.2 (-26.7)  46.9 (-42.0)  55.7 (-27.9)  39.8 (-43.8)     Table 12: Effectiveness of CVR against tool selection attacks.
+               92.7 (0)     85.6 (-7.1)   93.7 (-0.1)   85.4 (-8.4)
+
+ASR above 85.4% on both benchmarks under ToolSafe and VIGIL.             Method               ToolBench                MCPTools
+ToolSafe has a limited impact on MetaMancer, whereas VIGIL in-
+duces bounded reductions of 7.1 and 8.4 percentage points on Tool-       SI            Ret. Sel. E2E           Ret. Sel. E2E
+Bench and MCPTools. In contrast, the performance of baselines            KS
+degrades sharply. These results indicate that agent-level guardrails     GH            4.0 67.5 2.7 (0)        4.4 59.1 2.6 (-0.7)
+are effective against explicit directives and rewritable textual manip-  MPMA          4.5 57.8 2.6 (-1.7)     5.0 50.0 2.5 (-3.0)
+ulation, but remain less effective against adversarial metadata that     AMA           4.5 57.8 2.6 (-1.8)     5.0 50.0 2.5 (-3.6)
+semantically aligns with benign tools. We also observe that VIGIL        ToolHijacker  9.3 76.3 7.1 (-15.4)    10.1 65.3 6.6 (-22.6)
+slightly increases benign selection rates by normalizing user intent     MetaMancer    12.1 75.2 9.1 (-28.8)   13.2 70.5 9.3 (-34.1)
+and tool descriptions, suggesting that its rewriting mechanism acts                    14.0 77.1 10.8 (-78.1)  15.4 62.3 9.6 (-74.0)
+as a functional normalization filter rather than a comprehensive                       25.1 71.7 18.0 (-74.7)  27.4 64.1 17.6 (-76.2)
+defense.
+                                                                         without canonicalizing the description. As shown in Table 11, CVR
+7 A Defense Mechanism Against MetaMancer                                 significantly reduces the end-to-end ASR of MetaMancer from over
+                                                                         92% to approximately 18% across both benchmarks. This defensive
+The robustness of MetaMancer against existing defenses indicates         capability stems primarily from disrupting the initial retrieval stage,
+that directly detecting complete malicious metadata is insufficient      where restricting the exposed metadata to a minimal core view
+once the attack preserves metadata naturalness, semantic consis-         causes the retrieval ASR to decrease from over 95% to roughly
+tency, and runtime validity. We therefore defend against such at-        26%. Furthermore, the ablation results demonstrate that isolated
+tacks by restricting the metadata view that is exposed during re-        constraints on either the descriptions or schemas yield marginal
+trieval and selection, rather than by attempting to identify malicious   improvements, confirming that simultaneously neutralizing the
+intent from raw, complete metadata. The key intuition is that tool       description and the expansion of optional parameters is strictly
+selection should be based on defender-controlled core functionality,     necessary to eliminate the structural redundancy of the attack.
+rather than on the complete metadata into which an attacker can
+inject adversarial perturbations.                                           As shown in Table 12, CVR effectively generalizes to different
+                                                                         tool selection attacks. For the baseline attacks, CVR limits retrieval
+   Therefore, we design Core View Reconstruction (CVR), a light-         ASR to at most 15.4% and restricts residual E2E ASR to at most
+weight defense mechanism. Given raw tool metadata consisting of          10.8% on ToolBench and 9.6% on MCPTools. This suppression is
+a name, description, required parameters, and optional parameters,       particularly pronounced for attacks with high undefended success
+CVR reconstructs a core view, containing only a canonical name,          rates. Specifically, the E2E ASR of ToolHijacker drops by 78.1 and
+a canonical description, and required parameters. The canonical          74.0 percentage points on the two benchmarks, respectively, while
+name and description are regenerated within the capability bound-        MPMA and AMA are also substantially mitigated. Although Meta-
+ary implied by required parameters, while optional parameters are        Mancer remains the most resilient attack against CVR, its E2E ASR
+excluded from retrieval and selection and revealed only after the        is reduced to 18.0% and 17.6%. These results demonstrate that CVR
+tool has been selected for invocation. This design directly targets      provides consistent protection against diverse tool selection attacks.
+the two main points exploited by MetaMancer, namely adversar-
+ial semantic perturbations and capability expansion introduced by        8 Adaptive Attacks
+optional parameters. By reconstructing a core view, CVR forces
+the agent to select tools based on core functionality rather than        To further explore the boundary of tool selection attacks, we design
+attack-optimized metadata.                                               an adaptive attack. Because CVR reconstructs the core view of
+                                                                         metadata based on the capabilities implied by required parameters,
+   We compare it with two partial variants. Desc.-Only Rewrite           a natural adaptive strategy is to reinforce the semantic information
+canonicalizes the description while still exposing the full schema,      and capabilities carried by required parameters. Specifically, while
+and Req.-Only Restrict restricts the schema to required parameters       satisfying stealth constraints, we add required parameters that
+                                                                         expand the functional capabilities, thereby allowing more semantic
+                                                                         information to be retained in the reconstructed core view.
+
+
+===== PAGE 14 / 15 =====
+
+CCS ’26, November 15–19, 2026, The Hague, Netherlands.                                                                                                                                          Wenbin Zhai, Yihao Liu, Dong Wang, Hao Chen, & Bin Xiao
+
+90Attack Success Rate (%)                  Ret.                                                                   90                                         Ret.  References
+80                                                                                       Attack Success Rate (%)Sel.80                                       Sel.
+70                                         E2E                                                                    70                                         E2E    [1] Pranjal Aggarwal, Vishvak Murahari, Tanmay Rajpurohit, Ashwin Kalyan,
+60                                                                                                                60                                                     Karthik Narasimhan, and Ameet Deshpande. 2024. Geo: Generative engine
+50          2  3           4               5                                                                      50          2  3          4                5           optimization. In Proceedings of the 30th ACM SIGKDD conference on knowledge
+40                                                                                                                40                                                     discovery and data mining. 5–16.
+30                                                                                                                30
+20                                                                                                                20                                                [2] Anthropic. 2025. Introducing Claude Sonnet 4.5. Retrieved September 13, 2026
+                                                                                                                                                                         from https://www.anthropic.com/news/claude-sonnet-4-5
+         1                                                                                                                 1
+                                                                                                                                                                    [3] Anthropic. 2026. Claude Code. Retrieved September 13, 2026 from https://claude.
+            Number of Required Parameters                                                                                     Number of Required Parameters              com/product/claude- code
+
+            (a) ToolBench                                                                                                     (b) MCPTools                          [4] Anthropic. 2026. Tool Search Tool. Retrieved September 13, 2026 from https:
+                                                                                                                                                                         //platform.claude.com/docs/en/agents- and- tools/tool- use/tool- search- tool
+            Figure 9: Impact of Required Parameters.
+                                                                                                                                                                    [5] Apify. 2026. Apify Store. Retrieved September 13, 2026 from https://apify.com/
+   Figure 9 reports the CVR-aware adaptive attack results as the                                                                                                         store
+number of required parameters varies from 1 to 5. Across both Tool-
+Bench and MCPTools, increasing the number of required parame-                                                                                                       [6] Yauhen Babakhin, Radek Osmulski, Ronay Ak, Gabriel Moreira, Mengyao Xu,
+ters partially restores attack effectiveness, primarily through higher                                                                                                   Benedikt Schifferer, Bo Liu, and Even Oldridge. 2025. Llama-Embed-Nemotron-
+retrieval ASR. This shows that the inflation of required parameters                                                                                                      8B: A Universal Text Embedding Model for Multilingual and Cross-Lingual Tasks.
+helps more semantics survive the core-view reconstruction and                                                                                                            arXiv preprint arXiv:2511.07025 (2025).
+recover retrieval visibility. By contrast, the gain from the selector is
+limited once the adversarial tool is retrieved. The plateauing trends                                                                                               [7] Beijing Academy of Artificial Intelligence. 2024. BGE-Reranker-v2-M3. Retrieved
+reveal the underlying trade-off between effectiveness and usability.                                                                                                     September 13, 2026 from https://huggingface.co/BAAI/bge-reranker-v2-m3
+More required parameters strengthen the exposed core view but
+also make the tool interface heavier and less generally usable.                                                                                                     [8] Thierry Blankenstein, Jialin Yu, Zixuan Li, Vassilis Plachouras, Sunando Sengupta,
+                                                                                                                                                                         Philip Torr, Yarin Gal, Alasdair Paren, and Adel Bibi. 2026. Biasbusters: Uncover-
+9 Conclusion                                                                                                                                                             ing and mitigating tool selection bias in large language models. In International
+                                                                                                                                                                         Conference on Learning Representations, Vol. 2026. 102460–102489.
+In this paper, we studied practical tool selection attacks against
+LLM agents in open tool ecosystems. We showed that tool metadata                                                                                                    [9] Yiming Cao, Yanjie Li, Kaisheng Liang, and Bin Xiao. 2026. Enhancing targeted
+is a critical security surface that can be compromised to manipu-                                                                                                        adversarial attacks on large vision-language models via intermediate projector.
+late the tool selection process. Under a strict transfer-based black-                                                                                                    IEEE Transactions on Information Forensics and Security (2026).
+box setting, we formulated adversarial tool selection as a semanti-
+cally constrained bilevel optimization problem, and then proposed                                                                                                  [10] Yiming Cao, Dong Wang, Xinqi Lyu, and Bin Xiao. 2026. PureProof: Diffusion-
+MetaMancer, a surrogate-based multi-agent semantic optimization                                                                                                          Resistant Black-box Targeted Attack on Large Vision-Language Models. In Pro-
+framework that performs stage-aware effectiveness optimization,                                                                                                          ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition.
+semantic constraint auditing, conflict-aware policy aggregation,                                                                                                         8621–8630.
+and constraint-compliant atomic updates. Across ToolBench and
+MCPTools, covering 20 tasks, 9,729 candidate tools, 8 target LLMs,                                                                                                 [11] Jianlv Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. 2024.
+and 6 representative defenses, MetaMancer achieves around 93%                                                                                                            Bge m3-embedding: Multi-lingual, multi-functionality, multi-granularity text
+end-to-end ASR without defenses and remains above 91% when                                                                                                               embeddings through self-knowledge distillation. arXiv preprint arXiv:2402.03216
+averaged across defenses. Further analysis demonstrates that Meta-                                                                                                       4, 5 (2024).
+Mancer is highly optimization-efficient. These results demonstrate
+that MetaMancer is effective, stealthy, and robust across hetero-                                                                                                  [12] Liuji Chen, Hao Gao, Jinghao Zhang, Qiang Liu, Shu Wu, and Liang Wang. 2025.
+geneous tool ecosystems, target LLMs, and defensive settings. To                                                                                                         Select Me! When You Need a Tool: A Black-box Text Attack on Tool Selection.
+mitigate this threat, we further proposed Core View Reconstruction                                                                                                       arXiv preprint arXiv:2504.04809 (2025).
+(CVR), which reconstructs a core view of tool metadata based on
+the capabilities implied by required parameters. The experimental                                                                                                  [13] Cohere. 2025. Rerank v4.0. Retrieved September 13, 2026 from https://docs.
+results show that CVR substantially reduces the effectiveness of                                                                                                         cohere.com/changelog/rerank- v4.0
+MetaMancer. Overall, our findings show that tool metadata should
+be treated as an adversarial surface, and the tool selection process                                                                                               [14] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc
+of LLM agents must be secured as a core component of the agent                                                                                                           Fischer, and Florian Tramèr. 2024. Agentdojo: A dynamic environment to eval-
+execution pipeline.                                                                                                                                                      uate prompt injection attacks and defenses for llm agents. Advances in Neural
+                                                                                                                                                                         Information Processing Systems 37 (2024), 82895–82920.
+Acknowledgments
+                                                                                                                                                                   [15] Kazem Faghih, Wenxiao Wang, Yize Cheng, Siddhant Bharti, Gaurang Sriramanan,
+This work was supported in part by the General Research Fund                                                                                                             Sriram Balasubramanian, Parsa Hosseini, and Soheil Feizi. 2025. Tool Preferences
+(GRF) of the Hong Kong Research Grants Council (RGC) under                                                                                                               in Agentic LLMs are Unreliable. In Proceedings of the 2025 Conference on Empirical
+Grant PolyU 15230025.                                                                                                                                                    Methods in Natural Language Processing. 20965–20980.
+
+                                                                                                                                                                   [16] Xiang Fei, Xiawu Zheng, and Hao Feng. 2025. Mcp-zero: Active tool discovery
+                                                                                                                                                                         for autonomous llm agents. arXiv preprint arXiv:2506.01056 (2025).
+
+                                                                                                                                                                   [17] Google Cloud. 2025. Text Embeddings API. Retrieved September 13,
+                                                                                                                                                                         2026 from https://docs.cloud.google.com/gemini-enterprise-agent-platform/
+                                                                                                                                                                         reference/models/text- embeddings- api
+
+                                                                                                                                                                   [18] Google Cloud. 2026. Gemini 3.1 Pro. Retrieved September 13, 2026
+                                                                                                                                                                         from https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/
+                                                                                                                                                                         gemini/3- 1- pro
+
+                                                                                                                                                                   [19] Feng He, Tianqing Zhu, Dayong Ye, Bo Liu, Wanlei Zhou, and Philip S Yu. 2025.
+                                                                                                                                                                         The emerged security and privacy of llm agent: A survey with case studies.
+                                                                                                                                                                         Comput. Surveys 58, 6 (2025), 1–36.
+
+                                                                                                                                                                   [20] Junda He, Christoph Treude, and David Lo. 2025. Llm-based multi-agent systems
+                                                                                                                                                                         for software engineering: Literature review, vision, and the road ahead. ACM
+                                                                                                                                                                         Transactions on Software Engineering and Methodology 34, 5 (2025), 1–30.
+
+                                                                                                                                                                   [21] Keegan Hines, Gary Lopez, Matthew Hall, Federico Zarfati, Yonatan Zunger, and
+                                                                                                                                                                         Emre Kiciman. 2024. Defending against indirect prompt injection attacks with
+                                                                                                                                                                         spotlighting. arXiv preprint arXiv:2403.14720 (2024).
+
+                                                                                                                                                                   [22] Xinyi Hou, Yanjie Zhao, Shenao Wang, and Haoyu Wang. 2025. Model context
+                                                                                                                                                                         protocol (mcp): Landscape, security threats, and future research directions. ACM
+                                                                                                                                                                         Transactions on Software Engineering and Methodology (2025).
+
+                                                                                                                                                                   [23] Neel Jain, Avi Schwarzschild, Yuxin Wen, Gowthami Somepalli, John Kirchen-
+                                                                                                                                                                         bauer, Ping-yeh Chiang, Micah Goldblum, Aniruddha Saha, Jonas Geiping, and
+                                                                                                                                                                         Tom Goldstein. 2023. Baseline defenses for adversarial attacks against aligned
+                                                                                                                                                                         language models. arXiv preprint arXiv:2309.00614 (2023).
+
+                                                                                                                                                                   [24] Hussein Jawad and Nicolas JB Brunel. 2026. ToolFlood: Beyond Selection–
+                                                                                                                                                                         Hiding Valid Tools from LLM Agents via Semantic Covering. arXiv preprint
+                                                                                                                                                                         arXiv:2603.13950 (2026).
+
+                                                                                                                                                                   [25] Dawei Li, Bohan Jiang, Liangjie Huang, Alimohammad Beigi, Chengshuai Zhao,
+                                                                                                                                                                         Zhen Tan, Amrita Bhattacharjee, Yuxuan Jiang, Canyu Chen, Tianhao Wu, et al.
+
+
+===== PAGE 15 / 15 =====
+
+MetaMancer: Practical Tool Selection Attacks against LLM Agents                                                          CCS ’26, November 15–19, 2026, The Hague, Netherlands.
+
+      2025. From generation to judgment: Opportunities and challenges of llm-as-         [52] Qwen Team. 2026. Qwen3.5: Towards Native Multimodal Agents. Retrieved
+      a-judge. In Proceedings of the 2025 Conference on Empirical Methods in Natural           September 13, 2026 from https://qwen.ai/blog?id=qwen3.5
+      Language Processing. 2757–2791.
+[26] Zichuan Li, Jian Cui, Xiaojing Liao, and Luyi Xing. 2025. Les dissonances: Cross-   [53] Jiawen Shi, Zenghui Yuan, Guiyao Tie, Pan Zhou, Neil Zhenqiang Gong, and
+      tool harvesting and polluting in multi-tool empowered llm agents. arXiv e-prints         Lichao Sun. 2025. Prompt injection attack to tool selection in llm agents. arXiv
+      (2025), arXiv–2504.                                                                      preprint arXiv:2504.19793 (2025).
+[27] Junda Lin, Zhaomeng Zhou, Zhi Zheng, Shuochen Liu, Tong Xu, Yong Chen,
+      and Enhong Chen. 2026. VIGIL: Defending LLM Agents Against Tool Stream             [54] Zhengliang Shi, Shen Gao, Lingyong Yan, Yue Feng, Xiuyi Chen, Zhumin Chen,
+      Injection via Verify-Before-Commit. arXiv preprint arXiv:2601.05755 (2026).              Dawei Yin, Suzan Verberne, and Zhaochun Ren. 2025. Tool learning in the wild:
+[28] Aixin Liu, Aoxue Mei, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu,                 Empowering language models as automatic tool agents. In Proceedings of the
+      Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, et al. 2025. Deepseek-                   ACM on Web Conference 2025. 2222–2237.
+      v3. 2: Pushing the frontier of open large language models. arXiv preprint
+      arXiv:2512.02556 (2025).                                                           [55] Jonathan Sneh, Ruomei Yan, Jialin Yu, Philip Torr, Yarin Gal, Sunando Sengupta,
+[29] Yihao Liu, Jinhe Huang, Yanjie Li, Dong Wang, and Bin Xiao. 2024. Generative              Eric Sommerlade, Alasdair Paren, and Adel Bibi. 2025. Tooltweak: An attack on
+      AI model privacy: a survey. Artificial Intelligence Review 58, 1 (2024), 33.             tool selection in llm-based agents. arXiv preprint arXiv:2510.02554 (2025).
+[30] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. 2024.
+      Formalizing and benchmarking prompt injection attacks and defenses. In 33rd        [56] Snyk. 2026. Snyk Agent Scan. Retrieved September 13, 2026 from https://github.
+      USENIX Security Symposium (USENIX Security 24). 1831–1847.                               com/snyk/agent-scan/releases/tag/v0.4.18 Version 0.4.18.
+[31] Yihao Liu, Xinqi Lyu, Dong Wang, Yanjie Li, and Bin Xiao. 2026. LOMIA: Label-
+      only membership inference attacks against pre-trained large vision-language        [57] Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupati-
+      models. Advances in Neural Information Processing Systems 38 (2026), 153714–             raju, Shreya Pathak, Laurent Sifre, Morgane Rivière, Mihir Sanjay Kale, Juliette
+      153737.                                                                                  Love, et al. 2024. Gemma: Open models based on gemini research and technology.
+[32] Xinqi Lyu, Yihao Liu, Yanjie Li, and Bin Xiao. 2025. Pla: Prompt learning at-             arXiv preprint arXiv:2403.08295 (2024).
+      tack against text-to-image generative models. In 2025 IEEE/CVF International
+      Conference on Computer Vision (ICCV). IEEE, 16851–16860.                           [58] Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yas-
+[33] Xinqi Lyu, Yihao Liu, Dong Wang, and Bin Xiao. 2026. Red-teaming Retrieval-               mine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhos-
+      Augmented Diffusion Models via Poisoning Knowledge Bases. In Proceedings                 ale, et al. 2023. Llama 2: Open foundation and fine-tuned chat models. arXiv
+      of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 34961–            preprint arXiv:2307.09288 (2023).
+      34970.
+[34] Manus. 2026. Welcome. Retrieved September 13, 2026 from https://manus.im/           [59] Dong Wang, Xiangyu He, Xinqi Lyu, and Bin Xiao. 2026. Breaking Multimodal
+      docs/introduction/welcome                                                                LLM Safety via Video-Driven Prompting. In Proceedings of the IEEE/CVF Confer-
+[35] MCP.so. 2026. MCP.so: MCP Marketplace. Retrieved September 13, 2026 from                  ence on Computer Vision and Pattern Recognition. 8566–8576.
+      https://mcp.so/
+[36] Meta AI. 2025. The Llama 4 Herd: The Beginning of a New Era of Natively             [60] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang,
+      Multimodal AI Innovation. Retrieved September 13, 2026 from https://ai.meta.             Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, et al. 2024. A survey on large
+      com/blog/llama- 4- multimodal- intelligence/                                             language model based autonomous agents. Frontiers of Computer Science 18, 6
+[37] Mistral AI. 2025. Codestral Embed. Retrieved September 13, 2026 from https:               (2024), 186345.
+      //mistral.ai/news/codestral- embed
+[38] Kanghua Mo, Li Hu, Yucheng Long, and Zhihao Li. 2026. Attractive metadata           [61] Maolin Wang, Yingyi Zhang, Bowen Yu, Bingguang Hao, Cunyin Peng, Yicheng
+      attack: Inducing LLM agents to invoke malicious tools. Advances in Neural                Chen, Wei Zhou, Jinjie Gu, Chenyi Zhuang, Ruocheng Guo, et al. 2026. Function
+      Information Processing Systems 38 (2026), 162770–162793.                                 calling in large language models: Industrial practices, challenges, and future
+[39] Model Context Protocol. 2026. MCP Client Best Practices. Retrieved September              directions. Comput. Surveys 58, 9 (2026), 1–37.
+      13, 2026 from https://modelcontextprotocol.io/docs/develop/clients/client-best-
+      practices                                                                          [62] Zihan Wang, Rui Zhang, Yu Liu, Wenshu Fan, Wenbo Jiang, Qingchuan Zhao,
+[40] Yutao Mou, Zhangchi Xue, Lijun Li, Peiyang Liu, Shikun Zhang, Wei Ye, and Jing            Hongwei Li, and Guowen Xu. 2026. Mpma: Preference manipulation attack
+      Shao. 2026. ToolSafe: Enhancing Tool Invocation Safety of LLM-based agents               against model context protocol. In Proceedings of the AAAI Conference on Artificial
+      via Proactive Step-level Guardrail and Feedback. arXiv preprint arXiv:2601.10156         Intelligence, Vol. 40. 35838–35846.
+      (2026).
+[41] Fredrik Nestaas, Edoardo Debenedetti, and Florian Tramèr. 2025. Adversar-           [63] xAI. 2025. Grok 4.1. Retrieved September 13, 2026 from https://x.ai/news/grok-
+      ial Search Engine Optimization for Large Language Models. In The Thirteenth              4- 1
+      International Conference on Learning Representations.
+[42] NVIDIA. 2025. Llama-Nemotron-Rerank-VL-1B-v2. Retrieved September 13,               [64] Jehyeok Yeon, Isha Chaudhary, and Gagandeep Singh. 2025. Quantifying Distri-
+      2026 from https://docs.api.nvidia.com/nim/reference/nvidia-llama-nemotron-               butional Robustness of Agentic Tool-Selection. arXiv preprint arXiv:2510.03992
+      rerank- vl- 1b- v2                                                                       (2025).
+[43] OpenAI. 2024. text-embedding-3-large. Retrieved September 13, 2026 from
+      https://developers.openai.com/api/docs/models/text- embedding- 3- large            [65] Miao Yu, Fanci Meng, Xinyun Zhou, Shilong Wang, Junyuan Mao, Linsey Pan,
+[44] OpenAI. 2025. GPT-5.1: A Smarter, More Conversational ChatGPT. Retrieved                  Tianlong Chen, Kun Wang, Xinfeng Li, Yongfeng Zhang, et al. 2025. A survey
+      September 13, 2026 from https://openai.com/index/gpt-5-1/                                on trustworthy llm agents: Threats and countermeasures. In Proceedings of the
+[45] OpenAI. 2026. Codex. Retrieved September 13, 2026 from https://openai.com/                31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2.
+      codex/                                                                                   6216–6226.
+[46] OpenAI. 2026. Optimize Metadata. Retrieved September 13, 2026 from https:
+      //developers.openai.com/plugins/guides/optimize- metadata                          [66] Z.AI. 2025. GLM-4.7: Overview. Retrieved September 13, 2026 from https:
+[47] OpenClaw. 2026. OpenClaw: Open-Source AI Assistant. Retrieved September                   //docs.z.ai/guides/llm/glm- 4.7
+      13, 2026 from https://openclaw.ai/
+[48] Shishir G Patil, Huanzhi Mao, Fanjia Yan, Charlie Cheng-Jie Ji, Vishnu Suresh, Ion  [67] Hanrong Zhang, Jingyuan Huang, Kai Mei, Yifei Yao, Zhenting Wang, Chenlu
+      Stoica, and Joseph E Gonzalez. 2025. The berkeley function calling leaderboard           Zhan, Hongwei Wang, and Yongfeng Zhang. 2025. Agent Security Bench (ASB):
+      (bfcl): From tool use to agentic evaluation of large language models. In Forty-          Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents. In
+      second International Conference on Machine Learning.                                     The Thirteenth International Conference on Learning Representations.
+[49] PulseMCP. 2026. MCP Server Directory. Retrieved September 13, 2026 from
+      https://www.pulsemcp.com/servers                                                   [68] Rupeng Zhang, Haowei Wang, Junjie Wang, Mingyang Li, Yuekai Huang, Dandan
+[50] Yujia Qin, Shengding Hu, Yankai Lin, Weize Chen, Ning Ding, Ganqu Cui, Zheni              Wang, and Qing Wang. 2025. From allies to adversaries: Manipulating llm tool-
+      Zeng, Xuanhe Zhou, Yufei Huang, Chaojun Xiao, et al. 2024. Tool learning with            calling through adversarial injection. In Proceedings of the 2025 Conference of the
+      foundation models. Comput. Surveys 57, 4 (2024), 1–40.                                   Nations of the Americas Chapter of the Association for Computational Linguistics:
+[51] Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin         Human Language Technologies (Volume 1: Long Papers). 2009–2028.
+      Cong, Xiangru Tang, Bill Qian, et al. 2024. Toolllm: Facilitating large language
+      models to master 16000+ real-world apis. In International Conference on Learning   [69] Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang, Huan Lin, Baosong Yang,
+      Representations, Vol. 2024. 9695–9717.                                                   Pengjun Xie, An Yang, Dayiheng Liu, Junyang Lin, et al. 2025. Qwen3 embedding:
+                                                                                               Advancing text embedding and reranking through foundation models. arXiv
+                                                                                               preprint arXiv:2506.05176 (2025).
+
+                                                                                         A Open Science and Ethical Considerations
+
+                                                                                         MetaMancer investigates a dual-use security risk in the tool selec-
+
+                                                                                         tion of LLM agents. All experiments were conducted in controlled
+
+                                                                                         benchmark environments without targeting deployed agent ser-
+
+                                                                                         vices, third-party marketplaces, production APIs, or real users. No
+
+                                                                                         harmful real-world tool actions were executed, and no private user
+
+                                                                                         data, credentials, or personally identifiable information were ac-
+
+                                                                                         cessed. By characterizing this attack surface and evaluating corre-
+
+                                                                                         sponding defenses, including CVR, this study aims to improve the
+
+                                                                                         security of tool-augmented LLM agents.
