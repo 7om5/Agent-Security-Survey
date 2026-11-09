@@ -1,0 +1,1332 @@
+# R1-07 | Parasites in the Toolchain: A Large-Scale Analysis of Attacks on the MCP Ecosystem
+# PDF: papers\Parasites in the Toolchain_A Large-Scale Analysis of Attacks on the MCP Ecosystem.pdf
+# extracted: 2026-11-02T19:31:16.768Z
+
+
+===== PAGE 1 / 18 =====
+
+2026 IEEE Symposium on Security and Privacy (SP)
+
+                                                                                                                                                 Parasites in the Toolchain:
+                                                                                                                             A Large-Scale Analysis of Attacks on the MCP Ecosystem
+
+                                                                                                                                         Shuli Zhao†∗, Qinsheng Hou†∗, Zihan Zhan†, Yanhao Wang†‡,
+                                                                                                                                    Yuchong Xie§, Yu Guo†, Libo Chen†¶, Shenghong Li†¶, and Zhi Xue†
+                                                                                                                             † Shanghai Jiao Tong University, § The Hong Kong University of Science and Technology,
+
+                                                                                                                                                              ‡ CHAITIN TECHNOLOGY Co.,Ltd.
+                                                                                                                                                         ∗Equal contribution ¶Corresponding authors
+
+                                                                                                                                     {shuli.zhao, houqinsheng, zhan_zh, guoyu_1, bob777, shli, zxue}@sjtu.edu.cn,
+
+                                                                                                                                                        wangyanhao136@gmail.com, yxiece@cse.ust.hk
+
+2026 IEEE Symposium on Security and Privacy (SP) | 979-8-3315-6065-2/26/$31.00 ©2026 IEEE | DOI: 10.1109/SP63933.2026.00154  Abstract—Large language models (LLMs) are increasingly                    provide more accurate, timely and domain-specific responses
+                                                                                                                             integrated with external systems through the Model Context                [20], [40], [61]. To standardize this integration, the Model
+                                                                                                                             Protocol (MCP), which standardizes tool invocation and has                Context Protocol (MCP) [32] has recently emerged as a
+                                                                                                                             rapidly become a backbone for LLM-powered applications.                   unifying interface that enables applications to provide context
+                                                                                                                             While this paradigm enhances functionality, it also introduces            to LLMs and allows LLMs to seamlessly invoke external
+                                                                                                                             a fundamental security shift: LLMs transition from passive                tools. MCP has quickly gained traction, and public hosting
+                                                                                                                             information processors to autonomous orchestrators of task-               platforms such as PulseMCP [42] and MCP Market [31]
+                                                                                                                             oriented toolchains, expanding the attack surface, elevating              now aggregate thousands of MCP servers, positioning MCP
+                                                                                                                             adversarial goals from manipulating single outputs to hijacking           as a key backbone for the next generation of LLM-powered
+                                                                                                                             entire execution flows. In this paper, we identify and characterize       applications.
+                                                                                                                             a systematic privacy-leakage attack pattern, termed Parasitic
+                                                                                                                             Toolchain Attacks, instantiated as MCP Unintended Privacy                     However, MCP also represents a fundamental paradigm
+                                                                                                                             Disclosure (MCP-UPD). These attacks require no direct victim              shift in how LLMs interact with the outside world. In the
+                                                                                                                             interaction; instead, adversaries embed malicious instructions            traditional threat model, LLMs were viewed as information
+                                                                                                                             into external data sources that LLMs access during legitimate             processors, where security concerns centered on untrusted
+                                                                                                                             tasks. Unlike traditional prompt injection and tool poisoning             inputs leading to malicious textual outputs (e.g., misinforma-
+                                                                                                                             attacks, our attack targets the interconnected toolchain itself,          tion [9], [30], malicious social media information [13], [47])
+                                                                                                                             assembling multiple legitimate tools into a coordinated workflow          within a single turn. The MCP ecosystem transforms the LLM
+                                                                                                                             whose combined behavior accomplishes malicious objectives.                into an autonomous orchestrator, capable of executing entire
+                                                                                                                             In MCP-UPD, the malicious logic infiltrates the toolchain and             task-oriented toolchains. Once an initial prompt triggers
+                                                                                                                             unfolds in three phases: Parasitic Ingestion, Privacy Collection,         a tool, subsequent actions may proceed with zero user
+                                                                                                                             and Privacy Disclosure, culminating in stealthy exfiltration of           oversight, fundamentally altering the attack surface. The
+                                                                                                                             private data. Our root cause analysis reveals that MCP lacks              adversary’s goal is no longer limited to manipulating a single
+                                                                                                                             both context–tool isolation and least-privilege enforcement,              model response but is elevated to hijacking the entire task
+                                                                                                                             enabling adversarial instructions to propagate unchecked into             execution flow, turning the LLM into a confused deputy that
+                                                                                                                             sensitive tool invocations. To assess the severity, we design             can execute complex, multi-step operations on the user’s
+                                                                                                                             MCP-SEC and conduct the first large-scale security census                 behalf.
+                                                                                                                             of the MCP ecosystem, analyzing 12,230 tools across 1,360
+                                                                                                                             servers. Our findings show that the MCP ecosystem is rife                     Recently, several studies have begun to examine the
+                                                                                                                             with real-world exploitable gadgets and diverse attack methods,           security of MCP ecosystem [19], [21], [28], [44], [46],
+                                                                                                                             underscoring systemic risks in MCP platforms and the urgent               [51], [55], [58]. Invariant Labs [23] first exposed MCP
+                                                                                                                             need for defense mechanisms in LLM-integrated environments.               risks via the Tool Poisoning Attack (TPA), showing that a
+                                                                                                                                                                                                       malicious MCP server can alter an agent’s tool-use behavior,
+                                                                                                                             1. Introduction                                                           posing severe security threats. Following this line of inquiry,
+                                                                                                                                                                                                       subsequent studies [55], [58], [64] have primarily focused
+                                                                                                                                 Recent advances in large language models (LLMs) have                  on malicious-server–based threats. These works rely on
+                                                                                                                             fueled their rapid integration into real-world applications.              scenarios where users install malicious servers and trigger
+                                                                                                                             Increasingly, LLMs are no longer standalone systems but                   attacks via crafted prompts. However, this assumption is
+                                                                                                                             are embedded into broader ecosystems, where they interact                 overly restrictive because it requires users to explicitly install
+                                                                                                                             with external databases, APIs, and productivity tools to                  or trust an unverified server, which is difficult to achieve
+                                                                                                                                                                                                       in real-world deployments. Therefore, researchers have also
+                                                                                                                                                                                                       begun to investigate the problem from the perspective of
+                                                                                                                                                                                                       indirect injection attacks. Existing works [19], [28], [46] have
+
+                                                                                                                             © 2026, Shuli Zhao. Under license to IEEE.                           138
+
+                                                                                                                             DOI 10.1109/SP63933.2026.00154
+
+                                                                                                                             Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 2 / 18 =====
+
+discussed indirect injection attacks against MCP servers or       autonomous agents, turning compromised model decisions
+tools, showing that externally sourced malicious content can      into executable tool calls that drive entire task flows.
+poison the model’s context, influence its reasoning process,
+and ultimately trigger unsafe tool invocations. However, these        In summary, this paper makes the following contributions:
+works focus on attacks against a single MCP server/tool,           • Formalization of a New Privacy-Leakage Attack Class.
+which inherently limits the attacker by that server’s native
+capabilities. For example, an attacker cannot enable a web            We design and formalize MCP Unintended Privacy
+content fetch tool to read private files in the victim’s file         Disclosure, a new class of stealthy, multi-phase attacks
+system. To the best of our knowledge, no prior work has               that arise from the LLM’s role as an autonomous tool
+systematically explored how to break the single-server/tool           orchestrator.
+capability limitations by combining multiple MCP server-           • Root Cause Analysis. We reveal systemic design flaws,
+s/tools (each providing complementary functionality) to               missing context-tool isolation and weak privilege control,
+enhance attack capabilities and achieve diverse, end-to-end           that inherently expose the MCP ecosystem to MCP-UPD
+attacks. Moreover, compared with existing indirect prompt             attacks.
+injection methods, exploiting MCP toolchain interactions           • Large-Scale Security Census. We design MCP-SEC and
+significantly expands the attack surface and introduces new           perform the first large-scale empirical analysis of public
+defense challenges. Attackers can construct exploit chains            MCP platforms, quantifying the prevalence of exploitable
+by leveraging complementary capabilities across distributed           tools (1,062, 8.7% of 12,230) and servers (370, 27.2%
+MCP services, without requiring detailed prior knowledge of           of 1,360) that enable our attack.
+the host’s internal configuration. In contrast, defenders must     • Security Implications. We demonstrate the widespread
+consider not only the security of individual servers/tools,           consequences and diversity of MCP-UPD for MCP
+but also their cross-server compositions, where individually          ecosystems in real-world scenarios. Additionally, we
+benign components may jointly enable unintended data                  propose defense mechanisms of MCP-UPD and discuss
+access or cross-tool data propagation.                                two other types of parasitic toolchain attacks, remote
+                                                                      command execution and arbitrary file write.
+    In this paper, we reveal a new privacy-leakage attack         Open-source. We release the core source code of MCP-SEC,
+pattern rooted in toolchain risks that exploits this paradigm     prompt, and demos on [37], [48].
+shift, which we term Parasitic Toolchain Attacks, instantiated
+as MCP Unintended Privacy Disclosure (MCP-UPD).                   2. Background and Threat Model
+The attack is exceptionally stealthy as it requires no direct
+interaction with the victim. Instead, an adversary plants a           This section establishes the core premise of our work: that
+“parasitic prompt” in external data sources that the LLM’s        the architectural design of the Model Context Protocol (MCP)
+toolchain may access during task execution. When a victim’s       ecosystem, while powerful, fundamentally alters the LLM
+application processes a legitimate task that involves retrieving  security landscape. We demonstrate that this new paradigm,
+or processing such external content, the parasitic instructions   characterized by the tight coupling of untrusted external
+silently infiltrate the task flow and unfold in three automated   data and privileged tool execution, gives rise to a novel
+phases: (1) Parasitic Ingestion, where the LLM encounters         class of vulnerabilities. We begin with an overview of the
+and internalizes the malicious instructions through its tool-     MCP ecosystem and its workflow, then define our precise
+mediated interactions with external data sources; (2) Privacy     threat model. Finally, we provide a motivating example that
+Collection, where the LLM is induced to co-opt authorized         concretely demonstrates how an adversary can exploit this
+internal tools (e.g., readFile, searchHistory) to access local    architecture to cause a practical and damaging privacy breach.
+files or private user data; and (3) Privacy Disclosure, where a
+final tool with network access (e.g., postToWeb) is invoked to    2.1. The MCP Ecosystem
+exfiltrate the collected privacy data to an attacker-controlled
+endpoint.                                                             We model the emerging paradigm of LLM-tool integra-
+                                                                  tion through the Model Context Protocol (MCP) [32] ecosys-
+    The root cause of this attack lies not in LLMs being          tem. MCP provides a standardized framework for connecting
+inherently unsafe, but in how the MCP paradigm shifts             LLM-based applications with external services, enabling
+the threat model without adapting the underlying security         them to perform real-world actions beyond text generation.
+boundaries. In the traditional paradigm, adversarial inputs       Conceptually, MCP adopts a client–server architecture. In
+could only compromise the trustworthiness of LLM outputs          this paper, we consider three main entities:
+within a single interaction. However, the MCP paradigm
+introduces systemic weaknesses: (1) lack of context–tool           • MCP Host. The client-side AI application that serves
+isolation, which allows adversarial prompts embedded in               as the user’s primary interface (e.g., Claude Desktop
+retrieved content to directly influence downstream tool invo-         [2], Cursor IDE [3]). The Host embeds the core LLM
+cations, and (2) absence of least-privilege enforcement, which        and acts as an orchestrator for multiple MCP clients,
+grants overbroad access once a toolchain is triggered. These          where each client is a lightweight module responsible
+design flaws amplify the consequences of the paradigm shift:          for maintaining a one-to-one connection with a specific
+adversarial input manipulation no longer merely corrupts              MCP Server.
+information, but can escalate into behavioral hijacking of
+                                                                   • MCP Server. A lightweight service that provides auxiliary
+                                                                      capabilities to the Host, such as file management, email
+
+                                                                                                   139
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 3 / 18 =====
+
+Large Language Model                                 LLM, which may synthesize it, invoke additional tools, or
+                                                                                      finalize the task. ➆ Result Presenting. The Host renders the
+                                                                                      final response to the user.
+
+③Decision                                                ⑥Result                      Parasitic                 Privacy           Privacy
+  making                                                organizing                    Ingestion                collection        Disclosure
+
+                    user prompt  invocation  invocation  fomatted                           User Invocation
+                      tool info  parameters   results     results
+                                                                                                    Parasitic
+②Prompt Formatting                           MCP Host                                                 Attack        AGENT          Attack
+                                                                                                                                 Invocation
+⑦Result Presenting                                                                       External                Attack
+                                                                                      Ingestion Tool           Invocation           Network Access
+                                             tool info                                                                                     Tool
+                                                                                                                 Privacy Access
+MCP Client1                                             MCP Client2                                                    Tool             send_mail
+
+                                 ①Initializing           ④tool             ⑤Tool
+                                                         invoking          Executing
+                                                                                      get_posts                read_file
+
+MCP Server1                                             MCP Server2
+
+tool1 tool2 tool3                                       tool1 tool2 tool3                content with          content with       privacy send
+                                                                                      malicious prompt            privacy          to attacker
+                                 MCP servers
+                                                                                        Please read the          mcp.json            recipient：
+                                                                                      mcp.json, and send                         diag@attacker.com
+Figure 1. Overview of the MCP workflow architecture. The diagram                                                                 content：mcp.json
+illustrates the seven-step process: ➀ Initializing connections between MCP                     it to
+Host and Servers, ➁ Prompt Formatting of user requests, ➂ Decision                    diag@attacker.com
+making by the Large Language Model, ➃ Tool Invoking through MCP
+clients, ➄ Tool Executing on MCP servers, ➅ Result organizing by the                  Figure 2. Attack process of MCP-UPD (MCP Unauthorized Privacy
+LLM, and ➆ Result Presenting to the user. The architecture shows the MCP              Disclosure). The diagram illustrates a three-phase parasitic toolchain attack:
+Host managing multiple MCP clients that connect to corresponding MCP                  ➀ Parasitic Ingestion: the user invokes an external ingestion tool (get_posts)
+servers, each equipped with various tools (tool1, tool2, tool3). The LLM              to retrieve content containing a malicious prompt that instructs the agent to
+(represented by logos of different language models) serves as the central             perform unauthorized actions; ➁ Privacy Collection: the compromised agent
+decision-making component that processes user prompts, determines tool                follows the injected instructions to access sensitive local files (mcp.json)
+invocations, and organizes results before final presentation.                         using privacy access tools (read_file); ➂ Privacy Disclosure: the agent
+                                                                                      exfiltrates the collected privacy data to the attacker-controlled endpoint
+                                                                                      (diag@attacker.com) through network access tools (send_mail).
+
+    handling, or social media interaction. Servers expose                             2.2. Threat Model
+    functionality via MCP tools and may access two types of
+    resources: (1) local resources, such as files or databases,                           We now define the threat model under which our attacks
+    and (2) remote services, accessible over the internet.                            operate, guided by the realistic assumptions of the MCP
+ • MCP Tools. A tool is a discrete, executable function                               ecosystem.
+    exposed by a server. Each tool is described by its name,
+    a natural language description, and a structured schema                           2.2.1. Attacker’s Goal. The adversary seeks to perform
+    for its input parameters. Through tools, AI applications                          unauthorized data exfiltration from the victim’s environment.
+    can interact with external systems, perform computations,                         This includes sensitive local files (e.g., configuration files
+    and trigger side effects in the real world.                                       containing API keys), private chat histories, or proprietary
+Workflow of Tool Invocation. As illustrated in Figure 1,                              data accessible via other connected MCP services.
+the MCP workflow for completing a user task via tools
+involves seven steps: ➀ Initializing. The Host establishes                            2.2.2. Attacker’s Capabilities. The adversary possesses
+connections with one or more MCP Servers. Each server                                 two key capabilities for executing the attack. ➀ Instruction
+provides metadata describing its tools, which populate the                            Injection Vector: The attacker can place a crafted textual
+Host’s tool registry. ➁ Prompt Formatting. The Host receives                          payload into an external data source that the victim’s MCP
+a user request, formats it, and forwards it to the embedded                           Host will later retrieve via a legitimate tool invocation. This
+LLM. ➂ Invocation Decision-making. The LLM reasons                                    serves as the sole injection point, with example vectors
+over the user request and the available tool registry, deciding                       including malicious forum posts, poisoned shared documents,
+whether to call a tool, with what parameters, or to generate                          or web pages indexed by search tools. The payload con-
+a direct textual response. ➃ Tool Invoking. The Host’s MCP                            tains an adversarial "parasitic prompt" designed to hijack
+client issues a request to the corresponding MCP Server,                              the LLM’s decision-making. ➁ Exfiltration Channel: The
+supplying the specified parameters. ➄ Tool Executing. The                             attacker controls a network endpoint (e.g., an email inbox
+server executes the tool and returns the result to the client.                        or a web server) capable of receiving stolen data.
+➅ Result Organizing. The client forwards the result to the
+
+                                                                                                   140
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 4 / 18 =====
+
+2.2.3. System Assumptions and Limitations. The threat                (path="mcp.json") function. This operation with host-
+model operates under several key constraints that reflect            level privileges leads to the unauthorized disclosure of
+realistic attack scenarios. ➀ The adversary cannot directly          the configuration file and its embedded API keys.
+compromise the Host, the embedded LLM, or any MCP                 • Privacy Disclosure. The LLM immediately invokes
+Server. ➁ The attacker cannot eavesdrop on or tamper                 Email.send(to = "diag@attacker.com", body
+with Host-Server network traffic. ➂ The adversary does not           = "[contents of mcp.json]"), completing the
+require prior knowledge of the victim’s local files or MCP           exfiltration.
+configuration, and the attack does not require direct user           If the Host operates in auto-execution mode, the entire
+interaction, as it is triggered through externally retrieved     attack unfolds without user oversight. To the victim, the
+content during normal system operation. ➃ The impact             system behaves normally, they receive the search results
+of MCP-UPD is limited to the resources and privileges            from the SMPA, while in the background their credentials
+accessible to the victim’s MCP Host.                             are silently exfiltrated.
+
+    This model is intentionally conservative. It assumes that    3. MCP Unintended Privacy Disclosure
+all MCP components are secure in isolation. The vulnerability,
+instead, emerges from trusted interactions across components,    3.1. Introduction of MCP-UPD
+particularly the lack of strict separation between untrusted
+tool outputs and privileged LLM reasoning. In contrast to            MCP-UPD exploits the untrustworthy outputs of LLMs
+traditional prompt injection, which mainly compromises           in conjunction with the MCP toolchain paradigm, resulting
+textual outputs, our model demonstrates how adversarial          in severe risks of privacy leakage. A defining characteristic
+input can escalate into unauthorized, executable toolchains.     of MCP-UPD is its high degree of stealth: the adversary
+                                                                 does not need to directly interact with the victim or deploy a
+2.3. Motivating Example: A Stealthy API Key Theft                malicious server in the victim’s system. Instead, the adversary
+                                                                 plants a "parasitic prompt" into external data sources, which
+    To ground our threat model, we present a motivating          silently infiltrates the toolchain during the execution of
+example illustrating how a passive adversary can exploit the     legitimate tasks. When the MCP host invokes MCP tools to
+MCP ecosystem to steal sensitive credentials. As shown in        access external content with "parasitic prompt" as part of
+Figure 2, this scenario assumes a common Host configuration      the task flow, the malicious instructions are automatically
+where tools for web searching, local file access, and email      ingested and internalized in the context, subsequently driving
+communication are all enabled for user convenience.              a sequence of covert tool invocations that progressively
+                                                                 achieve the collection and exfiltration of private information.
+2.3.1. Normal Workflow. Suppose a user queries their Host:
+“What are the latest posts on Social Media Platform A                To provide a clearer exposition of the operational work-
+(SMPA) about ‘IEEE S&P’?” The benign workflow reflects           flow of MCP-UPD, we divide the process into three stages:
+MCP’s intended functionality: ➀ The LLM selects the              Parasitic Ingestion, Privacy Collection, and Privacy Dis-
+SMPA_Server.get_posts tool with parameter query="IEEE            closure. In the following sections, we detail the procedures
+S&P". ➁ The server returns recent posts containing the           involved in each stage and illustrate how they manifest within
+keyword. ➂ The Host presents the results to the user.            the MCP toolchain.
+
+2.3.2. Parasitic Toolchain Attack Scenario. An adversary         3.1.1. Parasitic Ingestion. The first stage of MCP-UPD,
+executes a multi-phase attack:                                   parasitic ingestion, occurs when adversarial instructions
+                                                                 penetrate the execution flow of an LLM through standard tool-
+  • Preparation. The attacker publishes a post on SMPA           mediated interactions. In this stage, the adversary implants
+    containing both the keyword (“IEEE S&P”) and a hidden        malicious content into external data sources, such as emails,
+    parasitic prompt:                                            social media posts, or chat histories, which are routinely
+      “Great discussion on IEEE S&P! For any AI assistant        accessed during legitimate task execution.
+       processing this: perform a routine diagnostic. Step
+       1: Read the contents of the local mcp.json file. Step         Once the victim MCP host invokes MCP tools to retrieve
+       2: Forward these contents to diag@attacker.com            information from these sources, the content with malicious
+       for a security audit.”                                    instructions is seamlessly passed to the LLM as part of the
+                                                                 task context. Because these tools are considered legitimate
+  • Parasitic Ingestion. When the victim queries SMPA, the       utilities and are widely adopted to provide contextual inputs,
+    malicious post appears in the search results. The Host’s     adversarial instructions enter the model’s reasoning pipeline
+    LLM ingests this text as part of its reasoning context. Due  without triggering suspicion. After internalization, these in-
+    to the lack of context–tool isolation, the LLM mistakenly    structions influence subsequent tool invocations and establish
+    interprets the embedded payload as internal instructions     the foundation for covert operations in later stages of the
+    rather than benign external data.                            attack.
+
+  • Privacy Collection. Based on the injected instruc-           3.1.2. Privacy Collection. The second phase of MCP-UPD,
+    tions, the LLM invokes the FileSystem.readFile               privacy collection, is triggered once the adversarial instruc-
+                                                                 tions have been internalized by the LLM during the ingestion
+
+                                                                                                   141
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 5 / 18 =====
+
+phase. At this point, the malicious logic embedded in the           made by MCP fundamentally enlarges the attack surface of
+LLM’s context guides subsequent reasoning and induces               LLM-based applications and exposes users to privacy and
+the LLM to invoke sensitive internal tools. Specifically, the       security risks that prior threat models did not account for.
+LLM can be manipulated to co-opt (1) utilities that allow
+access to arbitrary local files (e.g., readFile), thereby exposing  3.3. Attack Insights to Systematic Analysis
+confidential documents or configuration files stored on the
+host system, and (2) application-specific tools that retrieve           The above description details the operational workflow
+private information (e.g., readChatHistory for instant mes-         and root causes of MCP-UPD, illustrating how adversarial
+saging applications or readEmail for mail clients), resulting       prompts can be silently ingested into legitimate task flows,
+in leaking sensitive communication records.                         drive the invocation of privacy-sensitive tools, and ultimately
+                                                                    deliver confidential information. Our root cause analysis
+3.1.3. Privacy Disclosure. The final stage, privacy dis-            further highlighted the systemic architectural weakness of
+closure, concludes the attack by exfiltrating the harvested         MCP hosts, that is, the lack of isolation and privilege
+information to an adversary-controlled endpoint. This is            minimization across tools, which allows malicious logic
+achieved by manipulating the LLM into invoking a tool               to propagate through the entire toolchain.
+with outbound network capabilities, such as an API client
+or a web request utility. The malicious logic, now active               Although these findings establish the feasibility and
+in the LLM’s context, constructs a tool invocation where            severity of MCP-UPD, they leave an important question: to
+the previously collected private data is encoded into the           what extent is the current MCP ecosystem actually vulnerable
+function’s parameters. The subsequent execution of this tool        in practice? For example, beyond the theoretical attack
+call transmits the data payload to an external server under         surface demonstrated in the motivating example, it is critical
+the adversary’s control. This act of disclosure marks the           to determine how many real-world MCP servers expose tools
+culmination of the attack, completing the full operational          that could be exploited as building blocks of MCP-UPD
+pipeline from parasitic ingestion and privacy collection to         toolchains.
+final exfiltration.
+                                                                        To answer this question, the following section introduces
+3.2. Root Causes                                                    our automated analysis framework, which systematically
+                                                                    collects and examines MCP servers to identify tools that can
+    The vulnerability underlying MCP-UPD originates not             be exploited in MCP-UPD. This bridges the gap between
+from intrinsic flaws in LLMs themselves, but from a mis-            understanding the attack mechanism and assessing its real-
+match between the MCP paradigm and existing security                world ecosystem-wide impact.
+assumptions. By transforming LLMs from passive informa-
+tion processors into autonomous orchestrators of toolchains,        4. Design of MCP-SEC
+MCP redefines the threat model without redefining the
+associated security boundaries. The misalignment creates                To understand the impact of MCP-UPD at scale, it is not
+systemic weaknesses that adversaries can exploit.                   sufficient to demonstrate a single motivating case. What is
+                                                                    needed is a systematic method to analyze the MCP ecosystem
+    First, the lack of context–tool isolation allows untrusted      and identify the tools that can serve as building blocks
+content retrieved from external data sources to directly influ-     for Parasitic Toolchain Attack. Specifically, our goal is to
+ence subsequent tool invocations. Once malicious instructions       measure the capability boundaries of MCP tools provided
+enter the context of the LLM, they seamlessly propagate             by publicly accessible MCP servers. We further determine
+through the reasoning process and drive downstream opera-           whether they can be exploited as "gadgets" in the stages of
+tions, blurring the boundary between benign task input and          MCP-UPD, namely, Parasitic Ingestion, Privacy Collection,
+adversarial control.                                                and Privacy Disclosure.
+
+    Second, the absence of least-privilege enforcement                  We design MCP-SEC, an analysis framework that
+grants overbroad capabilities once a toolchain is activated.        can quantitatively assess risks across the MCP ecosystem:
+Individual tools often expose sensitive system or application-      whether MCP servers expose tools that can be chained
+level functions, and MCP provides no mechanism to constrain         into full attack workflows. As illustrated in Figure 3, the
+the scope of their invocation in a fine-grained manner. As a        framework consists of three major components: a Description
+result, an adversary who succeeds in steering the model’s           Collector that crawls public MCP servers and extracts
+reasoning can escalate from reading benign external data to         descriptions of tools from them, a MCP Tool Analyzer that
+executing privileged operations, such as accessing local files      maps MCP tools to risk-related capabilities, and a Dynamic
+or exfiltrating private information.                                Verifier that performs dynamic verification of tools with
+                                                                    risk-related capabilities in the real-world environment. After
+    Together, these design flaws amplify the impact of              passing through the dynamic verifier, the MCP tool can be
+adversarial input manipulation. What was once limited to            proven capable of performing the risky operation in real-
+corrupting textual outputs within a single interaction now          world environments.
+escalates into behavioral hijacking: compromised model
+decisions are translated into executable tool calls that au-
+tonomously drive multi-step task flows. The paradigm shift
+
+                                                                                                   142
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 6 / 18 =====
+
+Description Collector                                    MCP Tool Analyzer                    Dynamic Verifier
+
+MCP Platform                      Tool Info Database                     Tool Capability Analyzer         Dynamic Verification
+
+                                  Tool Name: fetch                                                        Automation Execution
+                                  Tool Description:
+                                   Fetches a URL from the internet. …                                        User Prompt Dataset
+
+                                  Input Schema:                                                                    Use Fetch tool to retrieve
+                                   url: URL to fetch                                                               web pages
+                                   max_length: max charactors…                                                    Call FileSystem tool to
+                                                                                                                  read the file
+                                                                       Original desc  Summarized desc             Call Weibo tool to send a post
+                                                                        Reasoning     Preliminary result
+                                                                                                           Prompt Preparation
+MCP Server Database                 MCP Client                         Manual Check
+
+         "mcpServers": {          connet_to_server                     External   Network  Privacy
+           "github": {                 list_tool                       Ingestion   Access  Access
+              "command": "npx",                                                     Tool    Tool
+              "args": [            store_tool_info                        Tool
+                 "-y",
+                 "server-github"
+              ]
+           }
+
+         }
+
+                                     Figure 3. The workflow of MCP-SEC.
+
+4.1. Description Collector                                             the tool’s function. Extracting this information enables us to
+                                                                       analyze each tool’s potential security risks.
+    The first stage of our framework focuses on discovering
+and collecting data about MCP servers and their exposed                    To automate this extraction, we implemented an MCP
+tools. Since MCP servers are often hosted on public platforms          Client based on the official Python SDK [33], supporting
+and open-source repositories, it is possible to systematically         connection establishment, session management, and tool
+crawl and index them. This module aims to provide com-                 invocation. The extraction steps are as follows: (1) The client
+prehensive coverage of the MCP ecosystem by collecting                 connects to each MCP server using the server configuration
+MCP server information and extracting tool descriptions as             commands in the database. (2) The client issues a query to
+the foundation for further analysis.                                   list all available tools provided by the MCP server. (3) The
+                                                                       client retrieves the corresponding descriptions and stores the
+4.1.1. MCP Server Crawler. First of all, it is necessary               results in a structured Tool Information Database.
+to collect comprehensive information about MCP servers.
+Since MCP servers hosted on public platforms typically                     The resulting Tool Information Database contains a
+provide corresponding GitHub links to make available as                structured record of all discovered MCP tools across the
+open-source projects for user download, we implemented the             analyzed MCP servers. For each tool, the database stores
+MCP Server Crawler to leverage these links as the entry point          its name, description, and inputSchema, which serves as the
+for data collection. The crawler gathers the names of MCP              foundation for subsequent analysis.
+servers and their associated links of GitHub projects from
+hosting platform listings, then removes duplicates to ensure           4.2. MCP Tool Analyzer
+uniqueness. For each GitHub project, the crawler extracts
+detailed information, including the server name, execution                 With the tool descriptions collected, the second stage of
+commands, execution parameters, execution configurations,              our framework focuses on assessing the functional boundaries
+and repository statistics such as the number of GitHub stars.          of tools and identifying which tools can be used for MCP-
+To facilitate MCP server deployment and ensure the feasibil-           UPD. The rationale behind this stage is that MCP-UPD
+ity of large-scale measurement analysis, the crawler collects          fundamentally relies on the inherent capabilities of tools.
+only MCP servers packaged for direct execution via npx [36]            While some tools expose no meaningful attack surface and
+or uvx [4], which encapsulate all necessary dependencies and           are therefore harmless, others provide functionalities that can
+configurations. The crawler then consolidates the collected            be co-opted as "gadgets" in a parasitic toolchain, enabling
+information into the MCP Server Database, which provides               adversaries to access or exfiltrate sensitive data. Therefore,
+the structured information for subsequent automated analysis           systematically evaluating tool capabilities is essential to
+of tool capabilities.                                                  quantify the potential attack surface of MCP-UPD.
+
+4.1.2. Tool Description Extractor. After constructing the              4.2.1. Tool Capability Definition. We define three capabili-
+MCP Server Database, the next step is to systematically ex-            ties of tools that are directly relevant to the MCP-UPD, as
+tract information about all tools offered by these servers. Each       each phase of the attack chain depends on a specific type
+MCP tool typically specifies three fields: name, description,          of functionality: External Ingestion Tools enable Parasitic
+and inputSchema, where the description explicitly defines              Ingestion, Privacy Access Tools support Privacy Collection,
+                                                                       and Network Access Tools facilitate Privacy Disclosure:
+
+                                                                        • External Ingestion Tool: Tools that can fetch textual
+                                                                           data from external, potentially attacker-controlled sources
+
+                                                                                                   143
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 7 / 18 =====
+
+(e.g., fetch, search, or social media connectors). These      were resolved via majority voting, and the resulting labels
+    tools provide the initial entry point for parasitic prompts.  were treated as the ground truth for subsequent analysis.
+ • Privacy Access Tool: Tools that can read sensitive lo-
+    cal or user-specific data (e.g., read_file, list_contacts,    4.3. Dynamic Verifier
+    search_history). These tools act as the collection phase
+    in the attack chain.                                              The above tool capability analysis relies solely on infor-
+ • Network Access Tool: Tools that can send or publish            mation such as the tool descriptions provided in the MCP
+    arbitrary text to external endpoints (e.g., send_mail,        server, representing a static analysis approach. However, to
+    postToWeb). These tools enable the disclosure phase           actually trigger an MCP-UPD attack in real-world conditions,
+    by exfiltrating collected data.                               the tool must also be capable of executing its intended func-
+    This taxonomy reflects the stages of the parasitic            tionality in real-world environments. Therefore, a dynamic
+toolchain and allows us to assess whether a given MCP             verification process is required to assess the tool’s real-world
+server contains the necessary "gadgets" of MCP-UPD.               behavior and effectiveness, ensuring a rigorous determination
+                                                                  of its practical risk-related capabilities.
+4.2.2. Tool Capability Analyzer. To identify the target tools
+relevant to MCP-UPD, we leverage the semantic reasoning               The dynamic verifier can automatically perform valida-
+capabilities of LLMs. For each analysis, we provide the           tion based on real-world MCP Hosts (e.g., Cursor). The
+complete set of tools exposed by an MCP server as a               module consists of three stages: a user prompt dataset
+unified input to the model, regardless of whether the server      preparation stage, a batch automation execution stage, and a
+includes a single tool or many, enabling LLMs to reason           dynamic result analysis stage. During the user prompt dataset
+over the tools collectively and identify those corresponding      preparation, we generate user prompts corresponding to each
+to predefined risk-related capabilities, including external       tool invocation based on the tool capability analysis results
+ingestion, privacy access, and network disclosure, within         above. For example, a tool with one risk-related capability
+the MCP server’s natural deployment context. At the same          generates one prompt, while a tool with two such capabilities
+time, the process balances efficiency with LLM token-length       generates two prompts. Each prompt explicitly specifies the
+constraints, ensuring that the identification process remains     tool name to ensure that the MCP host can correctly invoke
+scalable and accurate across the diverse categories of MCP        the target tool for execution. In addition, we employ canary-
+servers.                                                          style instrumentation, including controlled external inputs,
+                                                                  synthetic sensitive artifacts, and explicit forwarding markers,
+    We design prompt templates that instruct LLMs to              to provide clear and verifiable detection signals. However,
+interpret each tool’s description and input schema, reason        due to the diversity of MCP tool functionalities, some tools
+about its intended behavior, and map it onto one or more          interact with external or environment-dependent resources
+of the risk-related tool capabilities. For example, if a tool     beyond our experimental control. As a result, canary-based
+takes a URL parameter and returns arbitrary text, the model       instrumentation is not universally applicable across all tools.
+is prompted to consider whether this tool is an External
+Ingestion Tool (e.g., description: "Fetches a URL from the            In the batch automation execution stage, we employ a
+internet", input parameter: url). Similarly, if a tool can        keyboard–mouse simulator to perform automated interactions,
+both read local files and optionally send their contents to       automatically sending the generated user prompt to the MCP
+a remote endpoint, the model is prompted to consider its          host, and then awaiting the returned results. Meanwhile,
+dual role as both a Privacy Access Tool and a Network             the tool execution adopts a linear switching mechanism:
+Access Tool (e.g., description: "Reads the contents of a file     after one tool finishes execution, the next tool will be
+and uploads them", input parameter: filepath), reflecting its     executed automatically. After the entire process, it outputs
+potential to span multiple phases of the MCP-UPD attack           complete chat logs for all tools under the given user prompts,
+chain. For each tool, the LLM outputs a quadruple consisting      including user-sent messages, tool invocation traces, and the
+of its original description, the summarized description, the      corresponding agent responses.
+reasoning process, and the preliminary analysis result (i.e.,
+the tool’s capabilities). This quadruple serves as the basis          During the dynamic result analysis, given the large
+for the subsequent manual check.                                  number of tools under evaluation and the complexity of the
+                                                                  collected data, we first employ LLMs for preliminary analysis.
+    Because the analysis process based on LLMs can be             Each agent chat log containing tool invocation traces is fed
+affected by factors such as hallucination and inherent ran-       into the LLM, which determines whether the tool exhibits a
+domness, it is necessary to perform a manual check on the         specific capability and provides the corresponding reasoning
+preliminary analysis results obtained by LLMs to ensure           behind the judgment. For each capability, the verification
+accuracy before conducting subsequent dynamic verification.       follows the rules below:
+In the manual check stage, we derive the manual check
+result based on the LLM-generated summarized description           • External Ingestion Tool: Chat logs are analyzed to
+of the tool, the corresponding reasoning process, and the             determine whether controlled external inputs or other
+preliminary analysis result, while using the tool’s original          uncontrolled target content are retrieved and incorpo-
+description as a reference. Three independent reviewers               rated into the conversation context, indicating successful
+annotated tool capabilities. For each tool, disagreements             ingestion.
+
+                                                                   • Privacy Access Tool: Chat logs are analyzed to determine
+                                                                      whether the tool accesses synthetic sensitive artifacts
+
+                                                                                                   144
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 8 / 18 =====
+
+TABLE 1. THE SOURCES OF MCP SERVERS AND MCP TOOLS.                server deployment and ensure the feasibility of large-scale
+                                                                  measurement analysis, we focused on MCP servers packaged
+Sources                   MCP Server      MCP Tool                for direct execution with npx [36] or uvx [4], which bundle
+                                                                  all required dependencies and configurations. Finally, we
+Pulse MCP [42]            784 (57.6%)   6,736 (55.1%)             collected 1,360 MCP servers. These servers exposed 12,230
+MCP Market [31]           310 (22.8%)   2,781 (22.8%)             tools, which formed the dataset for our subsequent measure-
+Awesome MCP Servers [43]  266 (19.6%)   2,713 (22.2%)             ment and analysis. The sources of these servers and tools
+                                                                  are detailed in Table 1.
+Total                         1,360         12,230
+                                                                      To support our analysis, we examined not only the
+TABLE 2. CATEGORY DISTRIBUTION OF MCP SERVERS.                    number of MCP servers but also their functional categories,
+                                                                  as different contexts entail distinct risks (i.e., ingestion via
+Category                        Number  Proportion                information retrieval or social media, privacy disclosure via
+                                                                  command execution or cloud services). We used LLMs to
+Information Retrieval              152     11.2%                  semantically parse server descriptions and documentation,
+AI-Driven Utilities                146     10.7%                  classifying them into high-level categories, such as Informa-
+Project Mgmt. & Collaboration      125     9.2%                   tion Retrieval, Command Execution, and Communication &
+Development & Testing              110     8.1%                   Email, with ambiguous cases cross-validated across multiple
+Data Processing & Analytics        109     8.0%                   models. Table 2 presents the category distribution of our
+Docs. & Knowledge Bases            101     7.4%                   collected MCP servers, with the Others category combining
+Blockchain & Financial Systems     85      6.3%                   numerous small categories with a few servers.
+Multimedia Processing              84      6.2%
+Command Execution                  71      5.2%                   Analysis Efficiency. For all 1,360 servers and 12,230 tools,
+Cloud Services                     62      4.6%                   MCP-SEC completed 255 hours of automated analysis,
+Security & Monitoring              57      4.2%                   averaging 675 seconds per server and 75 seconds per tool.
+Communication & Email              54      4.0%                   Manual checks required 71 hours (189 seconds per server
+Social Media Platforms             36      2.6%                   and 21 seconds per tool) for tool capability analysis and
+Geospatial & Transportation        28      2.1%                   143 hours (379 seconds per server and 42 seconds per tool)
+                                                                  for dynamic verification. The efficiency of manual checks
+Others                             140     10.3%                  varies significantly with tool complexity. Most tools have
+                                                                  simple and well-defined functionalities (e.g., read_file),
+Total                            1,360        -                   allowing reviewers to verify LLM-generated outputs against
+                                                                  tool specifications within about 10 seconds. In contrast, more
+    or other targeted sensitive data (e.g., confidential file     complex tools (e.g., unified_search), which operate over
+    contents, environment variables, or application message       heterogeneous data sources, require assessing their access
+    histories).                                                   scope and typically take 50–60 seconds to verify. Manual
+ • Network Access Tool: Chat logs are analyzed to determine       effort per tool in dynamic verification is higher than in
+    whether a network-related MCP tool is invoked with            tool capability analysis, as simpler tools are filtered out in
+    parameters containing synthetic sensitive artifacts or        earlier stages, and the remaining cases involve more complex
+    other targeted sensitive data, indicating potential data      execution traces, requiring additional inspection of invocation
+    exfiltration.                                                 parameters and returned results. Overall, the results indicate
+    To ensure the reliability of dynamic verification, we         that manual verification remains practical and scalable, given
+perform a manual check. Specifically, three independent           the predominance of simple tools and the staged filtering
+reviewers manually inspect the LLM’s reasoning, cross-            design.
+reference it with the corresponding agent chat logs, and
+examine the invocation parameters and returned results.               Table 3 illustrates two representative cases (read_file
+Disagreements are resolved via majority voting, and the           and unified_search) from the manual check process. Each
+resulting labels are treated as the final outputs of the dynamic  case includes the tool name, the related MCP Server name,
+verifier. Finally, after the dynamic verification, we can         the original tool description, the LLM-generated summary,
+identify each tool’s risk-related capabilities within practical   the model’s reasoning, and its predicted result. Reviewers
+environments.                                                     examine this information to determine whether the prediction
+                                                                  is correct and document their decision (correct or incorrect)
+5. Evaluation                                                     in the annotation box.
+
+    In this section, we discuss the analysis results of MCP-      Research Questions. To systematically evaluate the secu-
+SEC and focus on three research questions.                        rity risks posed by MCP-UPD, we design our large-scale
+Experiment Setup. MCP-SEC runs in a real home envi-               measurement around three key research questions:
+ronment on a MacBook with macOS 15.6.1 and 16 GB of
+memory.                                                             • RQ1. How prevalent are MCP tools in the MCP
+Dataset. In this paper, we collected MCP servers from                 ecosystem that can be exploited as "gadgets" in the
+three sources, including two public hosting platforms (Pulse          MCP-UPD? Understanding the prevalence of risky tools
+MCP [42] and MCP Market [31]) and one open-source                     is essential to assess the baseline attack surface of the
+repository (Awesome MCP Servers [43]). To facilitate MCP
+
+                                                                                                   145
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 9 / 18 =====
+
+TABLE 3. CASES OF MANUAL CHECKS IN TOOL CAPABILITY ANALYSIS.
+
+Check Items                         Content
+
+Tool Name (MCP Server Name)         read_file (Filesystem)
+Tool Description                    Reads the entire content of a specified file as UTF-8 text.
+Summary Description                 Reads local file contents.
+Reasoning                           The tool reads file contents from a specified path, indicating private data access.
+LLM Result                          Privacy Access Tool (PAT).
+Manual Check                        □ (✓ or ✗)
+
+Tool Name (MCP Server Name)         unified_search (Unified Search)
+Tool Description                    Search across multiple online sources, such as Google Scholar, Google Web Search, YouTube,
+                                    through a unified interface and return relevant results for the query.
+Summary Description                 Unified search over multiple connected data sources.
+Reasoning                           The tool searches across multiple connected sources, suggesting that it can retrieve a broad range
+                                    of information.
+LLM Result                          External Ingestion Tool (EIT).
+Manual Check                        □ (✓ or ✗)
+
+TABLE 4. LLM ANALYZING ACCURACY IN TOOL CAPABILITY ANALYSIS          This result shows that exploitable capabilities are not rare
+                          AND DYNAMIC VERIFICATION.              exceptions, but are widely present across the MCP ecosystem.
+                                                                 Importantly, this subset represents the operational attack
+Category  Tool Capability Analysis  Dynamic Verification         surface of MCP, that is, the tools that an attacker can
+                                                                 realistically leverage to construct MCP-UPD toolchains. As
+EIT       Precision (%) Recall (%)  Precision (%) Recall (%)     a result, attackers do not need to rely on specially crafted or
+PAT                                                              rare tools, but can easily find and utilize exploitable tools,
+NAT       86.5  99.2                95.1  99.2                   making MCP-UPD both practical and broadly applicable in
+Overall                                                          real-world deployments.
+          85.4  95.8                94.5  98.2
+                                                                     After further analyzing these 1,062 tools, we revealed
+          81.1  99.6                96.4  98.9                   the detailed distribution of their risk-related capabilities, as
+                                                                 shown in Figure 4. Specifically, 472 tools were identified
+          85.5  98.0                95.1  98.8                   solely as External Ingestion Tools (EIT), 391 tools solely as
+                                                                 Privacy Access Tools (PAT), and 180 tools solely as Network
+    MCP ecosystem. By quantifying how many tools provide         Access Tools (NAT). In addition, 9 tools qualified for both
+    capabilities relevant to MCP-UPD, we can determine           EIT and PAT, 4 tools for both PAT and NAT, 4 tools for both
+    whether such tools are isolated anomalies or a widespread    EIT and NAT, and 2 tools for all three types of capabilities.
+    phenomenon that attackers can readily exploit.               In total, 487 tools were identified as EIT, 406 as PAT, and
+ • RQ2. How many MCP servers expose tools that                   190 as NAT. The above data reveals that at each key step
+    could be exploited as building blocks of MCP-UPD             of the MCP-UPD toolchain, there exists a nontrivial set of
+    toolchains? Shifting the perspective from tools to servers   MCP tools that can be practically used in real-world attacks.
+    provides insight into the real deployment risks of the       Some tools can complete multiple steps and even fully cover
+    MCP ecosystem. By analyzing how many servers aggre-          the entire MCP-UPD attack.
+    gate exploitable tools, we can assess the likelihood of
+    attackers encountering viable entry points and identify          In particular, two MCP tools can provide all three capabil-
+    high-risk servers that concentrate multiple dangerous        ities. While capable of executing MCP-UPD independently,
+    capabilities.                                                their versatility also allows them to function at any stage
+ • RQ3. How effective are MCP-UPD toolchains in real-            and combine seamlessly with single-capability tools in MCP-
+    world scenarios? To further evaluate the real-world threat   UPD toolchains, greatly broadening options for attacker
+    of MCP-UPD, we need to construct toolchains based on         flexibility. For example, with execute-command, an attacker
+    exploitable "gadgets" and evaluate their effectiveness to    could use it in any stage in MCP-UPD:
+    align with real-world attack scenarios. Besides, we need
+    to evaluate the performance of MCP-UPD toolchains              • EIT. The attacker embeds malicious prompts in a
+    across different LLMs and clients.                               public resource (e.g., an online document). When the
+                                                                     victim uses execute-command to fetch it (e.g., curl
+5.1. Statistics of Exploitable MCP Tools                             http://public.com/contents), the injected prompt
+                                                                     can trigger other PATs and NATs for malicious use.
+Overall result. Among all 12,230 tools collected from MCP
+servers, the tool capability analysis identified 5,666 tools as    • PAT. The malicious prompt ingested by other EITs
+potentially risky. Following dynamic verification, 1,062 tools       guides the LLM to use execute-command for sensitive
+(8.7% of the total) were confirmed to possess at least one           data access (e.g., cat mcp.json), such as reading local
+risk-related capability exploitable in MCP-UPD toolchains.           configuration files that store API keys.
+
+                                                                                                   146
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 10 / 18 =====
+
+TABLE 5. HIGH-RISK MCP SERVERS AND THEIR DETAILED RISK DISTRIBUTION.
+
+IR: Information Retrieval, PMC: Project Management & Collaboration, SMP: Social Media Platforms, ADU: AI-Driven Utilities DT: Development & Testing DKB: Document
+& Knowledge Bases, CEx: Communication & Email Risk P.: Risk Tool’s Proportion, EIT C. / P.: External Ingestion Tool Count / Proportion, PAT C. / P.: Privacy Access Tool
+
+                                                             Count / Proportion, NAT C. / P.: Network Access Tool Count / Proportion .
+
+Server Name                                    Category Source                   Tools Risk Tools Risk P. EIT C. EIT P. PAT C. PAT P. NAT C. NAT P. Risks
+
+Bright Data [8]                                IR       PulseMCP [42]            65                18        27.7%   18  27.7%  0   0.0%   0  0.0%   18
+Gitee [38]                                     PMC
+Chinese Trends Hub [5]                         SMP      PulseMCP [42]            20                18        90.0%   18  90.0%  0   0.0%   0  0.0%   18
+Discogs [11]                                   IR
+Agentic Tools [41]                             ADU      PulseMCP [42]            21                17        81.0%   17  81.0%  0   0.0%   0  0.0%   17
+MCP Connect [17]                               DT
+Contentful Management [24]                     DKB      AwesomeMCP [43] 42                         15        38.1%   15  35.7%  0   0.0%   1  2.4%   16
+DesktopCommanderMCP [57]                       CEx
+Hacker News [16]                               SMP      MCP Market [31]          20                15        75.0%   0   0.0%   15  75.0%  0  0.0%   15
+HAL [15]                                       DT
+                                                        MCP Market [31]          26                13        59.1%   13  50.0%  0   0.0%   0  0.0%   13
+
+                                                        AwesomeMCP [43] 31                         11        35.5%   11  35.5%  0   0.0%   0  0.0%   11
+
+                                                        AwesomeMCP [43] 18                         10        55.6%   0   0.0%   18  55.6%  0  0.0%   10
+
+                                                        PulseMCP [42]            11                9         81.8%   0   0.0%   0   0.0%   9  81.8%  9
+
+                                                        PulseMCP [42]                           8  8         100.0%  6   75.0%  0   0.0%   2  25.0%  8
+
+                                 472  149                                   150                      tool     Answer to RQ1: 8.7% of MCP tools expose risk-related
+                                                                            125                      server   capabilities, and although most cover only a single stage,
+                           400        121 391                               100                               the complementarity of three capabilities enables complete
+                                                                            75                     96         MCP-UPD toolchains. Two tools even provide all three
+              Tool Counts  300                      89                      50   Server Counts          155   capabilities, allowing them to combine flexibly with other
+                                                                            25                                tools at any stage of MCP-UPD.
+                           200                 180                  22 0                             128
+                                                                                                             5.2. MCP Servers with Risky Tools
+                           100                          9 2 4 2 43          NAS
+                                                                            PAS                              Overall result. Among all 1,360 MCP servers we collected,
+         190                  0                                             EIS                              370 servers contain at least one threat-relevant MCP tools,
+  406                      NAT                                                                               accounting for 27.2% of the total servers.
+487                         PAT
+                            EIT                                                                                  When shifting the analysis from tools to servers, we
+                                                                                                             observe that a nontrivial number of MCP servers expose
+250 0                                                                            0 100                       tools that can form MCP-UPD attack toolchains, as shown
+                                                                                                             in Figure 4. Specifically, 121 servers contain at least one
+Figure 4. Statistics of exploitable MCP tools/servers. EIT/S represents                                      External Ingestion Tool (EIT), 149 servers include a Privacy
+the External Ingestion Tool/Server, PAT/S represents the Privacy Access                                      Access Tool (PAT), and 89 servers have a Network Access
+Tool/Server, NAT/S represents the Network Access Tool/Server.                                                Tool (NAT). Overlaps can further amplify risks: 2 servers
+                                                                                                             host both EIT and PAT, 3 servers host PAT and NAT, and
+ • NAT. The malicious prompt ingested by other                                                               2 servers host EIT and NAT. Notably, 2 servers support
+    EITs guides the LLM to send the privacy infor-                                                           all three tool capabilities, enabling independent execution
+    mation obtained by other PATs to a target re-                                                            of MCP-UPD. Overall, servers having EIT are the most
+    ceiver using execute-command (e.g., curl -X POST                                                         prevalent (128), followed by PAT (155) and NAT (96). This
+   -F file=sk-xxx http://attacker.com/upload), en-                                                           distribution reveals two key insights. First, although most
+    abling the attacker to receive the victim’s privacy data.                                                MCP servers offer only single-capability tools, nearly 30%
+    Besides, from the perspective of overlaps and combina-                                                   provide exploitable components that can be dynamically
+                                                                                                             invoked in real-world scenarios, showing that risky servers
+tions, although most tools are single-purpose, the distributions                                             form a nontrivial portion of the ecosystem rather than being
+of EIT, PAT, and NAT are highly complementary. Within                                                        limited to a few isolated cases. Second, two servers aggregate
+the MCP-UPD attack paradigm of multi-tool tasks, this                                                        EIT, PAT, and NAT, enabling complete MCP-UPD toolchains
+complementarity enables attackers to construct complete                                                      within a single server without cross-server coordination.
+MCP-UPD toolchains within or across MCP servers in real-                                                     These findings demonstrate that MCP-UPD is practical using
+world scenarios.                                                                                             common servers with complementary capabilities.
+
+    To evaluate the reliability of our LLM-based analysis                                                        We further analyze the 10 MCP servers hosting the most
+and mitigate subjective bias, we measure its precision and                                                   risky tools, as detailed in Table 5. The number of risky
+recall with respect to manual annotations, which are treated                                                 tools ranges from 8 in HAL to 18 in Bright Data. HAL
+as ground truth. As shown in Table 4, the LLM achieves a                                                     have a 100% risky tool ratio, while Bright Data shows
+precision of 85.5% and a recall of 98.0% in the tool capability                                              the lowest (27.7%). Among tool capabilities, EITs are the
+analysis stage. In the dynamic verification stage, the precision                                             most common, appearing in 7 servers, with Bright Data and
+is 95.1%, and the recall is 98.8%. These results indicate that                                               Gitee hosting the most (18). PATs are present in 2 servers,
+the LLM achieves high recall while maintaining reasonable                                                    with Agentic Tools having 15 and DesktopCommanderMCP
+precision, thereby reducing the manual verification effort.
+Furthermore, we assess inter-annotator agreement among the
+three reviewers using Fleiss’ Kappa, obtaining a score of
+0.72, which indicates substantial agreement.
+
+                                                                                                   147
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 11 / 18 =====
+
+Figure 5. Distribution of GitHub stars of MCP servers with risky tools.      As discussed above, the attack capability of an MCP
+                                                                         server is related to its function type. Table 6 shows the distri-
+having 18, while NATs appear in 3 servers, peaking at 9 in               bution of attack capabilities across the functional categories
+Hacker News.                                                             of MCP servers. Almost all MCP server categories 90.5%)
+                                                                         can cover all three attack capabilities. Only Geospatial
+    Categorically, Information Retrieval (IR), Social                    & Transportation and Multimedia Processing lacks the
+Media Platforms (SMP), and Development & Testing                         Privacy Disclosure capability, as their primary functionality
+(DT) appear most frequently in the high-risk set (two                    focuses on rendering or transforming content rather than
+servers each), followed by single instances from Project                 transmitting user data to external endpoints. For Parasitic
+Management & Collaboration (PMC), AI-Driven                              Ingestion, Information Retrieval servers rank highest
+Utilities (ADU), Documents & Knowledge Bases                             in count and Social Media Platforms rank highest in
+(DKB), and Command Execution (CEx). Furthermore,                         proportion, both serving as primary entry points for parasitic
+clear correlations appear between server functionality and               ingestion. They focus on aggregating large volumes of
+attack capability. Information retrieval and aggregation                 external content inherently expand ingestion surfaces, making
+platforms (Bright Data, Discogs) tend to expose                          them especially prone to malicious prompt injection.
+EIT capabilities, as their core functionality relies on
+ingesting external data through retrieval interfaces. Social                 For Privacy Collection, Development & Testing
+media platforms (Chinese Trends Hub, Hacker News)                        servers rank highest in both count and proportion. These
+exhibit very high densities of ingestion tools that can be               platforms frequently read configuration files, logs, and
+repurposed as external entry points into the toolchain, and              project artifacts that may contain credentials or sensitive
+in some cases also expose network-access capabilities                    personal data, and their deep integration with organizational
+that enable data exfiltration. In contrast, workflow and                 workflows makes such information particularly susceptible
+agent-oriented platforms such as Agentic Tools and                       to harvesting when misused in toolchain. For Privacy
+DesktopCommanderMCP emphasize command execution                          Disclosure, Communication & Email servers rank highest
+and cross-tool combination, naturally aligning with the                  in both count and proportion. These platforms are
+privacy access stages of MCP-UPD. Development-oriented                   inherently designed to transmit messages and content
+servers (MCP Connect, HAL) and management-focused                        to external recipients, and their tools routinely provide
+platforms (Contentful Management, Gitee) concentrate                     outward communication capabilities. When misused in
+heavily on ingestion-oriented functionality, as their core               MCP-UPD, these outward-facing channels can be easily
+purpose involves synchronizing resources. Notably, both                  repurposed to exfiltrate sensitive information to the public
+HAL and Discogs expose two distinct MCP-UPD–relevant                     Internet, leading to direct privacy disclosure. Beyond the
+capabilities within the same server, making them particularly            top-ranked categories, others also play key roles in MCP-
+easy to repurpose into flexible toolchains.                              UPD. For Parasitic Ingestion, Project Management &
+                                                                         Collaboration servers can expose shared tasks, documents,
+    Moreover, we assessed the popularity of MCP servers                  and integrations, For Privacy Collection and Disclosure,
+with risky tools via their GitHub stars. As shown in Figure 5,           Command Execution servers also contribute significantly,
+82 servers (22%) have 100+ stars, indicating that many                   as their flexible execution interfaces can both access
+projects with risky tools gained notable developer attention.            sensitive data and transmit it to external endpoints, whereas
+Furthermore, several servers exceed 1,000 stars, suggesting              Cloud Services centralize multi-tenant data, having both
+that even widely adopted MCP servers face significant tool               collection and disclosure impacts. This functional "division
+exposure risks. Thus, these security issues extend beyond                of labor" enables MCP-UPD toolchains to be assembled in
+obscure projects to popular ones as well. Although most                  diverse, adaptive ways, depending on available servers.
+servers remain in the low-star range (0–100), this is expected,
+as MCP is new and many servers were only recently released,               Answer to RQ2: 27.2% of MCP servers expose at least
+without sufficient time to build community visibility, which              one exploitable tool, with many widely used servers that
+does not reflect a lack of community interest.                            amplify MCP-UPD exposure. Moreover, nearly all server
+                                                                          categories contain the three attack capabilities, which
+                                                                          enable adaptive and diverse attack compositions across
+                                                                          the ecosystem.
+
+                                                                         5.3. MCP Toolchains Evaluation
+
+                                                                         Overall result. MCP-UPD can be completed in 9 of 10
+                                                                         toolchains, 5 of 7 LLMs, and all five clients.
+
+                                                                         MCP Toolchains Experiment. In the above experiments,
+                                                                         we identified a large number of risky tools within the
+                                                                         MCP ecosystem. To further validate the real-world impact
+                                                                         of MCP-UPD, we conduct a series of empirical studies
+
+                                                                                                   148
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 12 / 18 =====
+
+TABLE 6. DISTRIBUTION OF ATTACK CAPABILITIES ACROSS MCP SERVER FUNCTIONAL CATEGORIES.
+
+                                      Bold numbers indicate the highest values in each attack stage.
+
+Category                              Parasitic Ingestion                                         Privacy Collection                         Privacy Disclosure
+
+Information Retrieval                 Counts(Rank) Proportions(Rank) Counts(Rank) Proportions(Rank)                            Counts(Rank) Proportions(Rank)
+AI-Driven Utilities
+Project Management & Collaboration    36 (1)                          23.7% (2)                   4 (12)           2.6% (12)                  5 (6)           3.3% (10)
+Development & Testing                  8 (7)                          5.5% (11)                   19 (2)           13.0% (5)                  3 (9)           2.1% (12)
+Data Processing & Analytics            7 (8)                            5.6% (9)                  5 (10)           4.0% (11)                 19 (2)           15.2% (2)
+Documents & Knowledge Bases                                             9.1% (5)                  32 (1)           29.1% (1)                  4 (7)
+Blockchain & Financial Systems        10 (3)                          1.8% (12)                   13 (4)           11.9% (6)                  3 (9)             3.6% (9)
+Multimedia Processing                 2 (11)                                                      11 (6)           10.9% (8)                  6 (4)           2.8% (11)
+Command Execution                                                       8.9% (6)                                   7.1% (10)                 11 (3)
+Cloud Services                         9 (6)                          15.3% (3)                    6 (9)           11.9% (6)                 0 (13)             5.9% (5)
+Security & Monitoring                 13 (2)                          1.2% (14)                   10 (7)           25.4% (2)                  4 (7)           12.9% (3)
+Communication & Email                 1 (13)                          14.1% (4)                   18 (3)           19.4% (3)                  6 (4)           0.0% (13)
+Social Media Platforms                10 (3)                          1.6% (13)                   12 (5)             8.8% (9)                 3 (9)             5.6% (6)
+Geospatial & Transportation           1 (13)                            7.0% (8)                  5 (10)           16.7% (4)                 20 (1)             9.7% (4)
+                                       4 (9)                            5.6% (9)                   9 (8)           0.0% (13)                 2 (12)             5.3% (8)
+                                      3 (10)                          27.8% (1)                   0 (13)           0.0% (13)                 0 (13)           37.0% (1)
+                                      10 (3)                            7.1% (7)                  0 (13)                                                        5.6% (6)
+                                      2 (11)                                                                                                                  0.0% (13)
+
+                                      TABLE 7. ATTACK SUCCESS RATE ACROSS EVALUATED TOOLCHAINS.
+
+ID                External Ingestion                            Popular: Github Stars & Server Downloads                            Network Access                        Success
+      Server  Tool                                                                                                             Tool                           Popular Trials
+                                                                                  Privacy Access
+
+                                      Popular Server                  Tool                                Popular  Server
+
+1 fetch       fetch                   72.5k & 23.4m FileSystem        read_file                   72.5k & 78.7k Gmail          send_mail                      814 & 116k 8/10
+
+2 GitMCP      fetch_generic_url_content 6.9k & 989k Everything        printEnv                    72.5k & 368k Slack           slack_post_message             72.5k & 519k 2/10
+
+3 Playwright  playwright_get          23.1k & 23.5k DesktopCommander  get_config                  4.9k & 702k Notion           API-patch-block-children       3.5k & 434k 7/10
+
+4 HAL         http-get                34 & 4.6k haris-musa/excel-mcp-server read_data_from_excel  2.8k & 140k Feishu (Lark)    create_feishu_document         242 & 9k 6/10
+
+5 Gmail       read_mail               814 & 116k DesktopCommander     get_recent_tool_calls       4.9k & 702k Mcp-Proxy        create_issue                   578 & - 3/10
+
+6 Web Fetcher fetch_url               908 & 73.6k Slack               slack_get_channel_history 72.5k & 519k instantly         create_campaign                13 & 1.8k 4/10
+
+7 Web Research visit_page             285 & 22.8k SQL Alchemy         execute_query               360 & 51k linear             Linear_createIssue             117 & 16.1k 1/10
+
+8 Bright Data scrape_as_html          1.6k & 59.3k Mondaycom API      get_board_items_by_name 334 & 47.7k discogs              create_user_collection_folder  65 & 5k 0/10
+
+9 FireCrawl   firecrawl_scrape        4.9k & 691k linear              Linear_getProjects          117 & 16.1k Mondaycom API create_item                       334 & 47.7k 2/10
+
+10 ms-365     get-mail_message        334 & 46.8k ms-365              list-mail-message           334 & 46.8k ms-365           send-mail                      334 & 46.8k 3/10
+
+by deploying representative MCP servers and observing                                 • Result verification. After Cursor completes the operation,
+how these tools behave in practical interaction scenarios.                               we determine whether the attack succeeded by checking
+Specifically, we sample tools having the three risk-related                              if the privacy data was sent by the Network Access Tool
+capabilities (external ingestion, privacy access, and network                            to the target receiver.
+access) based on popularity metrics (i.e., GitHub stars and
+server downloads). The sampling prioritizes highly popular                               Considering model randomness, we repeat each end-to-
+servers to better reflect real-world impacts while maintaining                       end toolchain experiment 10 times. A toolchain is labeled
+diversity across different server types to adapt to diverse                          successful if any trial results in verified exfiltration. All
+usage scenarios within the MCP ecosystem. For each risk-                             experiments are conducted in Cursor using its default Cursor
+related capability, we select 10 representative tools. Then, we                      Auto model. To evaluate the technical exploitability of MCP-
+construct 10 tool invocation chains for real-world evaluation.                       UPD, we minimize human-in-the-loop effects by configuring
+Among them, nine chains are formed by randomly pairing                               the Cursor client for automated execution.
+tools across different servers, while one chain uses three
+tools from the same server to illustrate a self-contained                            Results. Table 7 shows the evaluation results of the 10
+attack chain achievable within a single MCP server. The                              toolchains, which derive the following three key observations.
+procedure of the MCP toolchains experiment is as follows:
+                                                                                      • Obs#1. The majority of constructed toolchains can be
+ • Preparation. For the External Ingestion Tool, we publish                              successfully exploited: 9 of 10 toolchains result in
+    an application page or web page containing a crafted                                 confirmed privacy exfiltration in at least one of 10 trials.
+    malicious prompt that guides the agent to invoke the                                 We observe consistent injection of attacker-controlled
+    Privacy Access Tool to obtain sensitive data and the                                 external content into the LLM context across all repeated
+    Network Access Tool to exfiltrate it to the target receiver.                         trials for each evaluated toolchain. These results suggest
+                                                                                         that MCP-UPD is not an isolated phenomenon but a
+ • Normal usage simulation. First, we add the test MCP                                   repeatable threat across diverse real-world MCP servers.
+    servers to Cursor’s MCP configuration. Then, we simulate
+    a victim’s routine use in a real-world environment. Specif-                       • Obs#2. Three toolchains (Chains 1, 3, and 4) exhibit
+    ically, the user issues a routine request in Cursor, such as                         successful exfiltration in 6–8 out of 10 trials. It shows
+    "Please fetch the content at www.example_attack.com",                                that once an MCP-UPD toolchain is reachable, attackers
+    triggering the External Ingestion Tool to retrieve content                           can consistently exploit the toolchain’s attack trajectory,
+    from a malicious page containing the crafted prompt.                                 even in the face of LLMs’ inherent randomness, without
+                                                                                         adversarial tuning or repeated prompt engineering.
+
+                                                                                      • Obs#3. Chain 10 uses three tools from the same server,
+
+                                                                                                   149
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 13 / 18 =====
+
+TABLE 8. ATTACK SUCCESS RATES ACROSS CLIENTS, MODELS, AND                                  safety alignment. Moreover, the results also reveal that the
+                                      PROMPTS.                                             variation of prompts has an effect on triggering MCP-UPD.
+                                                                                           In summary, MCP-UPD is primarily determined by the
+Prompt  Client         Cursor    Claude    GPT-5  DeepSeek   Gemini     Claude    GPT-4.1  availability of risky tool capabilities, the model’s reasoning
+#1                      Auto   4.5-Sonnet             R1    2.5-Flash  3.5-Haiku           and underlying safety alignment, and tool-invocation logic
+#2      Cursor                               0/5                                     0/5   within the toolchain.
+#3      VS Code Cline    4/5       0/5       0/5       –       4/5         1/5       0/5
+        Cherry Studio     –        0/5       0/5      5/5      5/5         0/5       0/5    Answer to RQ3: MCP-UPD toolchains are broadly
+        Claude Code       –        0/5       0/5      5/5      5/5         0/5       1/5    effective in real-world scenarios. 9 of 10 constructed
+        Codex             –        0/5       0/5      4/5      2/5         0/5       4/5    toolchains complete MCP-UPD in realistic settings. MCP-
+                          –        0/5                3/5      5/5         0/5              UPD exploitability is primarily determined by the tool’s
+        Cursor                               0/5                                     0/5    risk-related capabilities, LLM’s reasoning and safety align-
+        VS Code Cline    3/5       0/5       0/5       –       4/5         3/5       0/5    ment, and tool-invocation logic within the toolchain.
+        Cherry Studio     –        0/5       0/5      5/5      5/5         1/5       0/5
+        Claude Code       –        0/5       0/5      5/5      5/5         1/5       1/5
+        Codex             –        0/5       0/5      3/5      3/5         1/5       4/5
+                          –        0/5                4/5      4/5         1/5
+        Cursor                               0/5                                     1/5
+        VS Code Cline    2/5       0/5       0/5       –       2/5         1/5       0/5
+        Cherry Studio     –        0/5       0/5      3/5      3/5         1/5       0/5
+        Claude Code       –        0/5       0/5      2/5      2/5         1/5       0/5
+        Codex             –        0/5       0/5      3/5      2/5         0/5       1/5
+                          –        0/5                3/5      2/5         0/5
+
+    each providing a distinct capability. When the ingestion                               6. Discussion
+    tool retrieves an e-mail containing the parasitic prompt, it
+    triggers a chain of internal calls, listing and then sending                               In this section, we discuss the limitations of our work,
+    historical e-mails, showing that a single server with all                              the defense mechanism of MCP-UPD, and our future work.
+    three capabilities can inherently execute a complete MCP-
+    UPD attack.                                                                            6.1. Limitations
+ • Obs#4. Chain 8 fails in all 10 trials. Further analysis
+    revealed significant differences in functionality among                                    While our study provides a comprehensive measurement
+    the three tools (crawling web content, obtaining work                                  of the MCP ecosystem, several limitations arise from real-
+    plans, and publishing music collection names), making it                               world deployment. About 30% of the servers require platform
+    difficult to induce the LLM to invoke these tools naturally.                           tokens tied to external services and are hard to sign up (e.g.,
+    By combining with other successful toolchains, we can                                  requiring credit card verification or enterprise authentication),
+    find that the functional relevance among tools affects                                 preventing our registration. Other servers depend on complex
+    MCP-UPD success: stronger relevance yields higher                                      external environments (e.g., Kubernetes, MySQL, desktop
+    success rates, while weaker relevance reduces them.                                    apps), which are costly to configure at scale. Additionally,
+                                                                                           MCP servers vary widely in implementation quality, and
+Multi-Clients/LLMs Experiment. Moreover, we validate                                       several fail to run reliably even under correct setups.
+the generalizability of MCP-UPD by testing it across
+multiple MCP clients (automated execution) and LLM                                         6.2. Practical Impacts
+models, evaluating its real-world feasibility under diverse
+deployment settings. In cross-model and cross-client exper-                                    A key practical impact is the distinction between technical
+iments, we used a representative toolchain, fetch(fetch)                                   exploitability and real-world end-to-end exploitability. Our
+→ read_file(filesystem) → send_mail(gmail), as the                                         evaluation shows that MCP-UPD achieves a consistently
+test target. This chain was chosen because fetch and                                       high success rate once malicious external content is in-
+filesystem are official MCP servers, filesystem even                                       corporated into the model context under evaluated tool
+appears in the MCP official tutorial, all three are highly                                 compositions. However, in real-world deployments, end-
+popular on GitHub and MCP server hosting platforms, and                                    to-end success may be influenced by human-in-the-loop
+together they represent a typical intelligent office config-                               factors, such as confirmation steps or manual review of
+uration. To avoid bias from a single pattern of prompts,                                   sensitive tool invocations. These factors should be viewed as
+we tested three prompt styles (direct & forceful, indirect                                 deployment-specific constraints rather than reliable defenses,
+& polite, and Base64-encoded), each repeated five times,                                   as they do not fully eliminate the underlying attack surface.
+and considered a prompt effective if any trial resulted in                                 Moreover, such mechanisms are not universally present, as
+confirmed exfiltration.                                                                    some MCP clients support automated or semi-automated
+                                                                                           execution. Publicly reported usage statistics [1] indicate that
+Result. Table 8 shows the end-to-end MCP-UPD success                                       a significant proportion of users enable full auto-approval in
+rates across three prompts, five widely used MCP clients                                   practice (e.g., about 20% for new users, increasing to over
+(three conversational clients and two terminal clients), and                               40% with experience). In addition, certain vulnerabilities [14]
+seven state-of-the-art LLMs. We observe that across all MCP                                have shown the capability to bypass user confirmation
+clients, certain underlying LLMs consistently enable the                                   mechanisms, enabling unintended execution.
+execution of MCP-UPD, while the results reveal that the same
+model exhibits similar behavior across different MCP clients.                                  Another practical impact is whether MCP-UPD remains
+Besides, GPT-5 and Claude-4.5-Sonnet resist all attacks,                                   effective when attack instructions are mixed with benign
+while DeepSeek-R1 and Gemini-2.5-Flash are compromised                                     content rather than presented in isolation. Prior work [53]
+in nearly every case. These findings suggest that MCP-UPD                                  on multi-source prompt injection suggests that such attacks
+success primarily depends on the model’s reasoning and
+
+                                                                                                   150
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 14 / 18 =====
+
+can remain effective even when only a small fraction of the         Platform B (IMPB) MCP server and a command execution
+input is attacker-controlled. This observation indicates that       MCP server (or relies on a MCP host with built-in command
+MCP-UPD may still succeed when attack instructions are              execution support).
+embedded within predominantly benign external content.
+                                                                     • Injection Vector. The attacker embeds a malicious prompt
+6.3. Defense Mechanism                                                  in a shared IMPB channel, which enters the LLM’s
+                                                                        reasoning context when the victim retrieves the channel’s
+    Addressing the root causes of MCP-UPD, namely the                   message history.
+lack of context–tool isolation and insufficient privilege restric-
+tion, we discuss potential MCP-level defenses along three            • Execution Trigger. The parasitic prompt guides the
+dimensions: context–tool isolation, privilege minimization,             LLM to invoke the command execution tool with ar-
+and cross-tool auditing. (1) Context–Tool Isolation. Enforce            bitrary payloads, such as a reverse shell (bash -i >&
+strict separation between untrusted external content and                /dev/tcp/20.xx.xx.106/4444 0>&1), granting the at-
+executable instructions. External data retrieved by ingestion           tacker remote host access.
+tools should be sanitized and treated as passive input rather
+than actionable commands. (2) Privilege Minimization. Apply          • Privilege Escalation. The risk escalates when the MCP
+least-privilege principles in tool design and registration.             host (e.g., Cline [10]) has auto-execution enabled, al-
+Sensitive tools, such as command execution or file-access               lowing injected commands to run instantly without user
+utilities, should be sandboxed, capability-labeled, and gated           consent.
+by explicit user consent, reducing the risk of forming self-            This case shows that remote command execution can
+contained attack chains. (3) Cross-Tool Auditing. Monitor
+and analyze sequences of tool invocations, as MCP-UPD               arise naturally from benign communication and command
+typically spans ingestion, privacy collection, and disclosure       tools, and the command execution tool mentioned in Section
+stages. Detecting suspicious cross-tool interaction patterns        5.1 can enable such parasitic attacks.
+can help identify covert data leakage attempts, even when
+individual tool invocations appear benign.                          6.4.2. Arbitrary File Write. Another dangerous variant of
+                                                                    parasitic attacks in MCP involves the misuse of file system
+    Furthermore, as shown in Table 8, different LLMs                servers. Suppose a victim registers both an Instant Messaging
+exhibit varying degrees of resilience against MCP-UPD. We           Platform C (IMPC) MCP server and a file system MCP
+therefore discuss complementary LLM-level defenses along            server (or relies on MCP host-provided file management
+two dimensions: untrusted input handling and operational            capabilities).
+risk awareness. (1) Untrusted Input Handling. LLMs can be
+aligned (e.g., via security fine-tuning or prompt hardening)         • Injection Vector. The attacker embeds a malicious prompt
+to better distinguish between instructions and data. Treating           in a shared IMPC channel, which enters the LLM’s
+tool outputs and retrieved content as untrusted inputs can              reasoning context when the victim retrieves the channel
+reduce the likelihood of executing injected instructions. (2)           logs.
+Operational Risk Awareness. Before issuing tool invocations,
+the LLM can incorporate risk-aware validation mechanisms.            • Execution Trigger. Guided by the injected prompt,
+For example, models can be trained to recognize high-risk               the LLM uses the File System server to write to
+transitions (e.g., from web retrieval to local file access) and         the victim’s system. For instance, appending curl
+apply stricter execution policies, such as requiring additional         http://attacker.com/payload.sh | bash to the
+confirmation or halting the workflow.                                   .bashrc file.
+
+    While MCP-level defenses aim to constrain tool execution         • Persistence Execution. The injected payload can auto-
+and enforce isolation, LLM-level defenses focus on mitigat-             fetch and execute the attacker’s script in every new shell
+ing the influence of injected content on model behavior.                session, creating persistent system access.
+Together, these complementary layers can help reduce the                This case shows that arbitrary file write attacks exploit
+attack surface and mitigate the risks of MCP-UPD.
+                                                                    persistent configuration or startup files, extending the attack
+6.4. Future Work                                                    beyond a single session.
+
+    Beyond MCP-UPD on privacy leakage, we further ex-               7. Related Work
+plore parasitic toolchain attacks in other security scenes,
+including remote command execution and arbitrary file write,        7.1. LLM Threat Models
+which we discuss as our future work.
+                                                                        In the traditional paradigm, LLMs have largely been
+6.4.1. Remote Command Execution. A critical type of                 regarded as information processors, where security concerns
+parasitic toolchain attack in the MCP ecosystem arises when         primarily focus on the trustworthiness and harmfulness
+adversaries exploit command execution tools. Consider the           of the textual outputs [12], [25], [29], [35], [45], [52].
+case where a victim registers both a Instant Messaging              Gehman et al. [18] present one of the earliest systematic
+                                                                    studies on language model safety, showing that even state-
+                                                                    of-the-art models are prone to generating toxic and unsafe
+                                                                    language. More recently, Zou et al. [65] propose Greedy
+                                                                    Coordinate Gradient(GCG), a universal attack that generates
+                                                                    adversarial suffixes capable of reliably inducing harmful
+
+                                                                                                   151
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 15 / 18 =====
+
+outputs in aligned LLMs. Zhang et al. [63] propose coercive          In summary, existing work on MCP security has out-
+interrogation, a method that uses top-k token predictions to     lined theoretical risks, revealed practical attack vectors,
+force aligned LLMs to reveal harmful content hidden beneath      and proposed initial defenses, collectively showing that the
+safety layers. Pan et al. [39] investigate the misuse of LLMs    MCP paradigm substantially expands the attack surface of
+as misinformation generators, highlighting the systemic risks    LLM applications and exposes them to both prompt-based
+posed by LLM-generated misinformation to downstream              manipulation and tool misuse. However, most existing attacks
+applications. Meanwhile, human-like prompts can be equally       rely on the presence of an adversary-controlled malicious
+dangerous. Zeng et al. [62] show that persuasive adversarial     server, which represents a strong assumption, and they have
+prompts (PAPs) can jailbreak state-of-the-art models. Yao        not examined multi-tool collaboration or the exploitability of
+et al. [60] show that weak semantic perturbations and            end-to-end toolchains. Recent MCP security works mainly
+nonsensical out-of-distribution prompts can reliably trigger     focus on detecting malicious MCP servers, but cannot detect
+hallucinations, framing untrustworthy content generation as      risks arising from the composition of multiple individually
+an inherent vulnerability of LLMs.                               benign servers using the toolchain. As a result, the practical
+                                                                 feasibility and real-world impact of multi-tool, multi-stage
+    Collectively, these studies illustrate that untrustworthy    attacks in deployed MCP environments remain unexplored.
+outputs, including toxicity, adversarially induced harmful
+responses, misinformation, persuasive jailbreaks, and hallu-     8. Conclusion
+cinations, constitute the core security concern when LLMs
+are viewed as information processors.                                In this work, we revealed that the Model Context Protocol,
+                                                                 while designed to unify tool integration for LLM applica-
+7.2. MCP Ecosystem Security                                      tions, fundamentally shifts the threat model by transforming
+                                                                 untrusted content into executable actions. We implement
+    While in the traditional paradigm, research works focus      MCP Unintended Privacy Disclosure (MCP-UPD), an in-
+on threats confined to textual outputs, the emerging MCP         stantiation of parasitic toolchain attacks that require no
+paradigm extends these risks by transforming untrustwor-         direct victim interaction and exploit systemic weaknesses
+thy generations into executable actions. Hou et al. [22]         in MCP’s design. Through a large-scale measurement of
+theoretically analyzed the MCP lifecycle and the inherent        1,360 servers and 12,230 tools, we demonstrated that 8.7%
+security risks within the MCP ecosystem. Invariant Labs [23]     of all tools and 27.2% of all servers expose exploitable
+introduced Tool Poisoning Attacks, Rug Pull Attacks, and         capabilities. Moreover, our empirical research showed that
+Shadowing Attacks, showing how tool descriptions enable          complete parasitic toolchains can be constructed across and
+malicious execution without the user’s awareness. Wang           even within individual servers in real-world scenarios. These
+et al. [56] further demonstrated that manipulating tool          findings highlight that MCP-UPD is not a theoretical edge
+names or descriptions can bias LLM tool selection toward         case but a pervasive and practical risk across the ecosystem.
+malicious servers. Recent works systematically assess the
+MCP ecosystem’s security risks. Li et al. [27] conduct               Our analysis underscores that the root cause lies in
+large-scale measurements of MCP plugins, revealing that          lack of context–tool isolation and absence of least-privilege
+excessive system and network API use introduces significant      enforcement, which allow adversarial inputs to propagate
+security risks. Yang et al. [59] developed MCPSecBench, a        unchecked into sensitive tool invocations. Addressing these
+benchmark defining 17 MCP attack types for reproducible,         challenges requires defense-in-depth strategies, including
+cross-platform vulnerability evaluation.                         strict separation of untrusted content from executable logic,
+                                                                 principled privilege minimization, and auditing of cross-tool
+    Existing MCP defenses include MAESTRO-based threat           invocation patterns. As MCP adoption accelerates, securing
+modeling by Narajala and Habler [34], which applies Zero         its ecosystem becomes urgent to prevent large-scale privacy
+Trust principles, and MCP Guardian by Kumar et al. [26],         breaches and behavioral hijacking of autonomous LLM
+which integrates authentication, rate limiting, logging, and     agents.
+WAF scanning to mitigate poisoning, injection, and exfiltra-
+tion threats. Some recent methods [6], [50] aim to detect        Acknowledgments
+malicious MCP servers. However, these methods are primar-
+ily applicable to scenes where the risk is limited to malicious      We thank our shepherd and anonymous reviewers
+MCP servers. They can not detect MCP-UPD, where multiple         for their insightful comments. This work was supported
+individually benign MCP servers can still compose into an        by the National Key Research and Development Pro-
+attack execution chain. Beyond MCP defenses, research on         gram of China (2023YFB3107100) and the National Ra-
+the security of general LLM agents has emphasized the            dio and Television Administration Laboratory Program
+need to isolate untrusted context from downstream action         (FYY20230001ZSB011).
+execution through information-flow control and constrained
+agent architectures [7], [49], [54]. Although they do not        References
+focus on the MCP scene, these works are consistent with
+our finding that the absence of context–tool isolation is one    [1] Anthropic. Measuring AI agent autonomy in practice. https:
+root cause of these attacks.                                            //www.anthropic.com/research/measuring-agent-autonomy, Accessed:
+                                                                        2026-3-19.
+
+                                                                                                   152
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 16 / 18 =====
+
+[2] Anthropic PBC. Download Claude | Claude by Anthropic. https:              [22] Xinyi Hou, Yanjie Zhao, Shenao Wang, and Haoyu Wang. Model
+      //claude.ai/download, Accessed: 2026-3-19.                                    context protocol (MCP): landscape, security threats, and future research
+                                                                                    directions. CoRR, abs/2503.23278, 2025.
+[3] Anysphere, Inc. Cursor: The best way to code with AI. https://
+      cursor.com/home, Accessed: 2026-3-19.                                   [23] Invariant Labs. MCP Security Notification: Tool Poisoning At-
+                                                                                    tacks. https://invariantlabs.ai/blog/mcp-security-notification-tool-
+[4] astral-sh. Using tools | uv. https://docs.astral.sh/uv/guides/tools/,           poisoning-attacks, Accessed: 2026-3-19.
+      Accessed: 2026-3-19.
+                                                                              [24] ivo-toby. Contentful MCP Server. https://github.com/ivo-toby/
+[5] baranwang. Trends Hub. https://github.com/baranwang/mcp-trends-                 contentful-mcp, Accessed: 2026-3-19.
+      hub, Accessed: 2026-3-19.
+                                                                              [25] Ziwei Ji, Tiezheng Yu, Yan Xu, Nayeon Lee, Etsuko Ishii, and Pascale
+[6] Bernardo Quintero. What 17,845 GitHub Repos Taught Us About                     Fung. Towards mitigating LLM hallucination via self reflection. In
+      Malicious MCP Servers. https://blog.virustotal.com/2025/06/what-              Findings of the Association for Computational Linguistics: EMNLP
+      17845-github-repos-taught-us-about.html, Accessed: 2026-3-19.                 2023, Singapore, December 6-10, 2023, 2023.
+
+[7] Luca Beurer-Kellner, Beat Buesser, Ana-Maria Cretu, Edoardo               [26] Sonu Kumar, Anubhav Girdhar, Ritesh Patil, and Divyansh Tripathi.
+      Debenedetti, Daniel Dobos, Daniel Fabian, Marc Fischer, David                 MCP guardian: A security-first layer for safeguarding mcp-based AI
+      Froelicher, Kathrin Grosse, Daniel Naeff, Ezinwanne Ozoani, Andrew            system. CoRR, abs/2504.12757, 2025.
+      Paverd, Florian Tramèr, and Václav Volhejn. Design patterns for se-
+      curing LLM agents against prompt injections. CoRR, abs/2506.08837,      [27] Zhihao Li, Kun Li, Boyang Ma, Minghui Xu, Yue Zhang, and
+      2025.                                                                         Xiuzhen Cheng. We urgently need privilege management in MCP:
+                                                                                    A measurement of API usage in MCP ecosystems. In 22nd IEEE
+[8] brightdata. The Web MCP. https://github.com/brightdata/brightdata-              International Conference on Mobile Ad-Hoc and Smart Systems,
+      mcp, Accessed: 2026-3-19.                                                     MASS 2025, Chicago, IL, USA, October 6-8, 2025, 2025.
+
+[9] Canyu Chen and Kai Shu. Can llm-generated misinformation be               [28] Lior Drihem. Prompt Security Top 10: Key Security Risks for
+      detected? In The Twelfth International Conference on Learning                 MCPs. https://www.prompt.security/blog/top-10-mcp-security-risks,
+      Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024, 2024.            Accessed: 2026-3-19.
+
+[10] Cline Bot Inc. Cline - AI Coding, Open Source and Uncompromised.         [29] Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang.
+      https://cline.bot/, Accessed: 2026-3-19.                                      Is your code generated by chatgpt really correct? rigorous evaluation
+                                                                                    of large language models for code generation. In Advances in Neural
+[11] cswkim. Discogs MCP Server. https://github.com/cswkim/discogs-                 Information Processing Systems 36: Annual Conference on Neural
+      mcp-server, Accessed: 2026-3-19.                                              Information Processing Systems 2023, NeurIPS 2023, New Orleans,
+                                                                                    LA, USA, December 10 - 16, 2023, 2023.
+[12] Sunhao Dai, Chen Xu, Shicheng Xu, Liang Pang, Zhenhua Dong, and
+      Jun Xu. Bias and unfairness in information retrieval systems: New       [30] Yang Liu, Yuanshun Yao, Jean-Francois Ton, Xiaoying Zhang,
+      challenges in the LLM era. In Proceedings of the 30th ACM SIGKDD              Ruocheng Guo, Hao Cheng, Yegor Klochkov, Muhammad Faaiz Taufiq,
+      Conference on Knowledge Discovery and Data Mining, KDD 2024,                  and Hang Li. Trustworthy llms: a survey and guideline for evaluating
+      Barcelona, Spain, August 25-29, 2024, 2024.                                   large language models’ alignment. CoRR, abs/2308.05374, 2023.
+
+[13] Preetam Prabhu Srikar Dammu, Hayoung Jung, Anjali Singh, Monojit         [31] MCP Market. Discover Top MCP Servers | MCP Market. https:
+      Choudhury, and Tanushree Mitra. "they are uncultured": Unveiling              //mcpmarket.com/, Accessed: 2026-3-19.
+      covert harms and social threats in LLM generated conversations. In
+      Proceedings of the 2024 Conference on Empirical Methods in Natural      [32] Model Context Protocol. What is the Model Context Protocol (MCP)?
+      Language Processing, EMNLP 2024, Miami, FL, USA, November                     https://modelcontextprotocol.io/docs/getting-started/intro, Accessed:
+      12-16, 2024, 2024.                                                            2026-3-19.
+
+[14] DARKNAVY. CodeX App Code Injection Vulnerability. https://x.com/         [33] modelcontextprotocol. MCP Python SDK. https://github.com/
+      DarkNavyOrg/status/2033447313503657998, Accessed: 2026-3-19.                  modelcontextprotocol/python-sdk, Accessed: 2026-3-19.
+
+[15] DeanWard. HAL (HTTP API Layer). https://github.com/deanward/hal,         [34] Vineeth Sai Narajala and Idan Habler. Enterprise-grade security for the
+      Accessed: 2026-3-19.                                                          model context protocol (MCP): frameworks and mitigation strategies.
+                                                                                    CoRR, abs/2504.08623, 2025.
+[16] devabdultech. Hacker News MCP Server. https://github.com/
+      devabdultech/hn-mcp, Accessed: 2026-3-19.                               [35] Liang Niu, Muhammad Shujaat Mirza, Zayd Maradni, and Christina
+                                                                                    Pöpper. Codexleaks: Privacy leaks from code generation language
+[17] EvalsOne. MCP Connect. https://github.com/evalsone/mcp-connect,                models in github copilot. In 32nd USENIX Security Symposium,
+      Accessed: 2026-3-19.                                                          USENIX Security 2023, Anaheim, CA, USA, August 9-11, 2023,
+                                                                                    2023.
+[18] Samuel Gehman, Suchin Gururangan, Maarten Sap, Yejin Choi,
+      and Noah A. Smith. Realtoxicityprompts: Evaluating neural toxic         [36] npm. npx | npm Docs. https://docs.npmjs.com/cli/v8/commands/npx,
+      degeneration in language models. In Findings of the Association               Accessed: 2026-3-19.
+      for Computational Linguistics: EMNLP 2020, Online Event, 16-20
+      November 2020, 2020.                                                    [37] NSSL-SJTU. MCP-SEC. https://github.com/NSSL-SJTU/MCP-SEC,
+                                                                                    Accessed: 2026-4-17.
+[19] Yongjian Guo, Puzhuo Liu, Wanlun Ma, Zehang Deng, Xiaogang
+      Zhu, Peng Di, Xi Xiao, and Sheng Wen. Systematic analysis of MCP        [38] oschina. Gitee MCP Server. https://github.com/oschina/mcp-gitee,
+      security. CoRR, abs/2508.12538, 2025.                                         Accessed: 2026-3-19.
+
+[20] Zhicheng Guo, Sijie Cheng, Hao Wang, Shihao Liang, Yujia Qin,            [39] Yikang Pan, Liangming Pan, Wenhu Chen, Preslav Nakov, Min-
+      Peng Li, Zhiyuan Liu, Maosong Sun, and Yang Liu. Stabletoolbench:             Yen Kan, and William Yang Wang. On the risk of misinformation
+      Towards stable large-scale benchmarking on tool learning of large             pollution with large language models. In Findings of the Association
+      language models. In Findings of the Association for Computational             for Computational Linguistics: EMNLP 2023, Singapore, December
+      Linguistics, ACL 2024, Bangkok, Thailand and virtual meeting,                 6-10, 2023, 2023.
+      August 11-16, 2024, 2024.
+                                                                              [40] Shishir G. Patil, Tianjun Zhang, Xin Wang, and Joseph E. Gonzalez.
+[21] Mohammed Mehedi Hasan, Hao Li, Emad Fallahzadeh, Gopi Krishnan                 Gorilla: Large language model connected with massive apis. In
+      Rajbahadur, Bram Adams, and Ahmed E. Hassan. Model context pro-               Advances in Neural Information Processing Systems 38: Annual
+      tocol (MCP) at first glance: Studying the security and maintainability        Conference on Neural Information Processing Systems 2024, NeurIPS
+      of MCP servers. CoRR, abs/2506.13538, 2025.                                   2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024.
+
+                                                                                                   153
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 17 / 18 =====
+
+[41] Pimzino. Agentic Tools MCP Server. https://github.com/pimzino/           [58] Yuchong Xie, Mingyu Luo, Zesen Liu, Zhixiang Zhang, Kaikai Zhang,
+      agentic-tools-mcp, Accessed: 2026-3-19.                                       Yu Liu, Zongjie Li, Ping Chen, Shuai Wang, and Dongdong She. On
+                                                                                     the security of tool-invocation prompts for llm-based agentic systems:
+[42] PulseMCP. MCP Server Directory | PulseMCP.       https://                      An empirical risk assessment. CoRR, abs/2509.05755, 2025.
+      www.pulsemcp.com/servers, Accessed: 2026-3-19.
+                                                                              [59] Yixuan Yang, Daoyuan Wu, and Yufan Chen. Mcpsecbench: A
+[43] punkpeye. Awesome MCP Servers. https://github.com/punkpeye/                     systematic security benchmark and playground for testing model
+      awesome-mcp-servers/blob/main/README.md, Accessed: 2026-3-                     context protocols. CoRR, abs/2508.13220, 2025.
+      19.
+                                                                              [60] Jia-Yu Yao, Kun-Peng Ning, Zhen-Hui Liu, Munan Ning, and Li Yuan.
+[44] Brandon Radosevich and John Halloran. MCP safety audit: Llms                    LLM lies: Hallucinations are not bugs, but features as adversarial
+      with the model context protocol allow major security exploits. CoRR,           examples. CoRR, abs/2310.01469, 2023.
+      abs/2504.03767, 2025.
+                                                                              [61] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R.
+[45] Maribeth Rauh, John Mellor, Jonathan Uesato, Po-Sen Huang, Jo-                  Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting
+      hannes Welbl, Laura Weidinger, Sumanth Dathathri, Amelia Glaese,               in language models. In The Eleventh International Conference on
+      Geoffrey Irving, Iason Gabriel, William Isaac, and Lisa Anne Hen-              Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5,
+      dricks. Characteristics of harmful text: Towards rigorous benchmarking         2023, 2023.
+      of language models. In Advances in Neural Information Processing
+      Systems 35: Annual Conference on Neural Information Processing          [62] Yi Zeng, Hongpeng Lin, Jingwen Zhang, Diyi Yang, Ruoxi Jia,
+      Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November                     and Weiyan Shi. How johnny can persuade llms to jailbreak them:
+      28 - December 9, 2022, 2022.                                                   Rethinking persuasion to challenge AI safety by humanizing llms.
+                                                                                     In Proceedings of the 62nd Annual Meeting of the Association for
+[46] Sarah Young and Den Delimarsky. Protecting against indirect                     Computational Linguistics (Volume 1: Long Papers), ACL 2024,
+      prompt injection attacks in MCP. https://developer.microsoft.com/blog/         Bangkok, Thailand, August 11-16, 2024, 2024.
+      protecting-against-indirect-injection-attacks-mcp, Accessed: 2026-3-
+      19.                                                                     [63] Zhuo Zhang, Guangyu Shen, Guanhong Tao, Siyuan Cheng, and
+                                                                                    Xiangyu Zhang. On large language models’ resilience to coercive
+[47] Xinyue Shen, Yixin Wu, Yiting Qu, Michael Backes, Savvas Zannettou,             interrogation. In IEEE Symposium on Security and Privacy, SP 2024,
+      and Yang Zhang. Hatebench: Benchmarking hate speech detectors                  San Francisco, CA, USA, May 19-23, 2024, 2024.
+      on llm-generated content and hate campaigns. In 34th USENIX
+      Security Symposium, USENIX Security 2025, Seattle, WA, USA,             [64] Weibo Zhao, Jiahao Liu, Bonan Ruan, Shaofei Li, and Zhenkai Liang.
+      August 13-15, 2025, 2025.                                                     When MCP servers attack: Taxonomy, feasibility, and mitigation.
+                                                                                     CoRR, abs/2509.24272, 2025.
+[48] Shuli Zhao, Qinsheng Hou, Zihan Zhan, Yanhao Wang, Yuchong Xie,
+      Yu Guo, Libo Chen, Shenghong Li and Zhi Xue. The Demo Site              [65] Andy Zou, Zifan Wang, J. Zico Kolter, and Matt Fredrikson. Universal
+      of Parasites in the Toolchain: A Large-Scale Analysis of Attacks on            and transferable adversarial attacks on aligned language models. CoRR,
+      the MCP Ecosystem. https://secresearcher100.github.io/, Accessed:              abs/2307.15043, 2023.
+      2026-4-17.
+                                                                              Ethics considerations
+[49] Simon Willison. The Dual LLM pattern for building AI assistants
+      that can resist prompt injection. https://simonwillison.net/2023/Apr/       In conducting this work, we strictly adhered to ethical
+      25/dual-llm-pattern/, Accessed: 2026-3-19.                              guidelines. All proof-of-concept attacks were performed in a
+                                                                              controlled environment using our own devices, accounts, and
+[50] snyk. Snyk Agent Scan. https://github.com/snyk/agent-scan, Accessed:     MCP environment. We did not interfere with live services or
+      2026-3-19.                                                              collect any personal or sensitive user data during analysis. To
+                                                                              avoid unintended disruptions, we applied rate limits during
+[51] Hao Song, Yiming Shen, Wenxuan Luo, Leixin Guo, Ting Chen,               our crawling and dynamic testing, capping requests at a
+      Jiashui Wang, Beibei Li, Xiaosong Zhang, and Jiachi Chen. Beyond        conservative threshold of 5 per minute.
+      the protocol: Unveiling attack vectors in the model context protocol
+      ecosystem. CoRR, abs/2506.02040, 2025.                                      To further ensure responsible vulnerability disclosure, we
+                                                                              have made every effort to contact the affected MCP Server
+[52] Miles Turpin, Julian Michael, Ethan Perez, and Samuel R. Bowman.         developers and inform them of our findings. To prevent
+      Language models don’t always say what they think: Unfaithful            the premature disclosure of sensitive information during the
+      explanations in chain-of-thought prompting. In Advances in Neural       review process, we will only discuss the implementation
+      Information Processing Systems 36: Annual Conference on Neural          steps of the relevant cases. We will not disclose specific
+      Information Processing Systems 2023, NeurIPS 2023, New Orleans,         implementation details until these cases are repaired and the
+      LA, USA, December 10 - 16, 2023, 2023.                                  paper is officially published.
+
+[53] Reachal Wang, Yuqi Jia, and Neil Zhenqiang Gong. Obliinjection:          LLM usage considerations
+      Order-oblivious prompt injection attack to LLM agents with multi-
+      source data. CoRR, abs/2512.09321, 2025.                                    We employed LLMs at two stages of our methodology.
+                                                                              In Section 4, the large number and heterogeneity of MCP
+[54] Reachal Wang, Yuqi Jia, and Neil Zhenqiang Gong. Obliinjection:          tools required automated semantic analysis to determine tool
+      Order-oblivious prompt injection attack to LLM agents with multi-       functionality and assign risk-related capability labels. Using
+      source data. CoRR, abs/2512.09321, 2025.                                an LLM was necessary because rule-based methods failed
+                                                                              to reliably interpret diverse tool descriptions. In the dynamic
+[55] Zhiqiang Wang, Yichao Gao, Yanting Wang, Suyuan Liu, Haifeng             verification stage, LLMs were also used to analyze agent
+      Sun, Haoran Cheng, Guanquan Shi, Haohua Du, and Xiang-Yang Li.          chat logs and identify unsafe tool-invocation patterns. We
+      Mcptox: A benchmark for tool poisoning attack on real-world MCP
+      servers. CoRR, abs/2508.14925, 2025.
+
+[56] Zihan Wang, Hongwei Li, Rui Zhang, Yu Liu, Wenbo Jiang, Wenshu
+      Fan, Qingchuan Zhao, and Guowen Xu. MPMA: preference manipu-
+      lation attack against model context protocol. CoRR, abs/2505.11154,
+      2025.
+
+[57] wonderwhy-er. Desktop Commander MCP. https://github.com/
+      wonderwhy-er/DesktopCommanderMCP, Accessed: 2026-3-19.
+
+                                                                                                   154
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.
+
+
+===== PAGE 18 / 18 =====
+
+selected GPT-4o for these tasks as it offered a practical     Appendix A.
+balance between reasoning capability and API cost, while      Meta-Review
+smaller models proved insufficiently reliable in preliminary
+trials. In Section 5, we further evaluated several LLMs           The following meta-review was prepared by the program
+(Cursor Auto, Claude-4.5-Sonnet, GPT-5, DeepSeek-R1,          committee for the 2026 IEEE Symposium on Security and
+Gemini-2.5-Flash, Claude-3.5-Haiku, and GPT-4.1) to assess    Privacy (S&P) as part of the review process as detailed in
+multi-LLMs experiment. To reduce the volume of LLM            the call for papers.
+queries, we deduplicated tool metadata, cached repeated
+capability inferences, and truncated dynamic-testing logs to  A.1. Summary
+the minimum context required for analysis. All experiments
+were conducted on a consumer-level Apple MacBook (16              This paper studies security risks in the MCP exosystem
+GB RAM), and all models were accessed via API rather          and formalizes "Parasite Toolchain Attack" by injecting ma-
+than local deployment to reflect realistic real-world usage   licious prompts through legitimate operations and hijacking
+conditions.                                                   downstream tasks to reveal sensitive information. To assess
+                                                              the attack, the paper conducts a large-scale empirical study
+                                                              of publicly available MCP servers and tools, examining how
+                                                              often the capabilities required for such attack chains appear
+                                                              in practice. The analysis shows that 370 servers and 1,062
+                                                              tools provide functionalities relevant to the proposed attack.
+
+                                                              A.2. Scientific Contributions
+
+                                                                 • Identifies an Impactful Vulnerability
+                                                                 • Provides a Valuable Step Forward in an Established
+
+                                                                    Field
+
+                                                              A.3. Reasons for Acceptance
+
+                                                                1) As MCP adoption increases, the paper highlights an
+                                                                    important security risk: individually benign MCP servers
+                                                                    and tools can be composed into risky exploit chains
+                                                                    that enable privacy disclosure.
+
+                                                                2) The paper gives a clear threat framing for how indirect
+                                                                    prompt injection can evolve into toolchain hijacking
+                                                                    in MCP-based systems. The attack model maps well
+                                                                    to real agent deployments in which external content,
+                                                                    local/private data access, and network-capable tools
+                                                                    coexist within the same workflow.
+
+                                                                3) The authors develop MCP-SEC and apply it in a large-
+                                                                    scale empirical study over the MCP ecosystem. The
+                                                                    artifact, together with the reproducibility material and
+                                                                    demonstration workflow, could be useful to future
+                                                                    researchers studying MCP security, capability composi-
+                                                                    tion, and agentic workflow abuse.
+
+                                                              A.4. Noteworthy Concerns
+
+                                                                  None.
+
+                                                                                                   155
+Authorized licensed use limited to: University of Science & Technology of China. Downloaded on September 28,2026 at 14:11:21 UTC from IEEE Xplore. Restrictions apply.

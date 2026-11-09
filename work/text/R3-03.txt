@@ -1,0 +1,1510 @@
+# R3-03 | MASLeak: Investigating and Exposing Intellectual Property Leakage Vulnerabilities in Multi-Agent Systems
+# PDF: papers\MASLeak_Investigating and Exposing Intellectual Property Leakage Vulnerabilities in Multi-Agent Systems.pdf
+# extracted: 2026-11-02T20:15:49.431Z
+
+
+===== PAGE 1 / 21 =====
+
+MASLeak: Investigating and
+   Exposing Intellectual Property Leakage
+   Vulnerabilities in Multi-Agent Systems
+
+ Liwen Wang, The Hong Kong University of Science and Technology;
+Wenxuan Wang, Renmin University of China; Shuai Wang, Zongjie Li,
+Zhenlan Ji, and Zongyi Lyu, The Hong Kong University of Science and
+
+  Technology; Daoyuan Wu, Lingnan University; Shing-Chi Cheung,
+           The Hong Kong University of Science and Technology
+
+https://www.usenix.org/conference/usenixsecurity26/presentation/wang-liwen
+
+   This paper is included in the Proceedings of the
+            35th USENIX Security Symposium.
+
+                  August 12–14, 2026 • Baltimore, MD, USA
+
+                                       ISBN 978-1-939133-58-8
+
+                            Open access to the Proceedings of the
+                               35th USENIX Security Symposium
+                                            is sponsored by
+
+
+===== PAGE 2 / 21 =====
+
+MASLeak: Investigating and Exposing Intellectual Property Leakage
+                   Vulnerabilities in Multi-Agent Systems
+
+             Liwen Wang1 Wenxuan Wang2 Shuai Wang1 Zongjie Li1 ∗
+           Zhenlan Ji1 Zongyi Lyu1 Daoyuan Wu3 Shing-Chi Cheung1
+1The Hong Kong University of Science and Technology 2Renmin University of China
+
+                                        3Lingnan University
+
+                        Abstract                                         I need to write a     User The Flappy
+
+   The rapid advancement of Large Language Models (LLMs)                 Flappy Bird GAME…     Bird GAME
+has led to the emergence of Multi-Agent Systems (MAS) to
+perform complex tasks through collaboration. However, the         Agent  System Prompt                              System
+intricate nature of MAS, including their architecture, agent      Level                        Agent Number Level
+interactions, and complex internal communication process-
+ing, raises significant concerns regarding intellectual property  You are requirement              Topology
+(IP) protection. In this paper, we introduce MASLEAK, the         Analyst, I will provide
+first framework for systematically extracting IP from MAS         details about the game...
+in a practical black-box setting. We assume a realistic adver-
+sary who can only submit queries to the system’s public API       Tool   Task Instruction
+and observe the final output, without any prior knowledge of
+the internal architecture and the backend LLM information.                Create requirement
+Inspired by how computer worms propagate and infect vul-                  specifications base
+nerable network hosts, MASLEAK carefully crafts adversarial       … on user input…
+query q to elicit, propagate, and retain responses from each
+MAS agent that reveal a full set of proprietary components,              Invisible to users to protect IP
+including the number of agents, topology, system prompts,
+task instructions, and tool usages. We construct the first syn-          Figure 1: Illustration of MAS applications.
+thetic dataset of 810 MAS applications and also evaluate
+MASLEAK against real-world MAS applications, including            with system prompts, task instructions, and appropriate tools.
+Coze and CrewAI. MASLEAK achieves high accuracy in ex-            Users interact with the MAS, and agents process input through
+tracting MAS IP, with an average attack success rate of 87%       predefined communication topologies (e.g., chain) that often
+for system prompts and task instructions, and 92% for system      remain static during execution. This way, agents coordinate
+architecture in most cases. We conclude by discussing the         via a pre-defined protocol to achieve complex tasks beyond
+implications of our findings and the potential defenses.          the capability of a single agent.
+
+1 Introduction                                                       Effective MAS development presents challenges. Stud-
+                                                                  ies [1, 2] show successful MAS require both capable agents
+The integration of Large Language Models (LLMs) has en-           and well-designed structures; without proper architecture, per-
+abled intelligent agents that leverage LLM reasoning and          formance can fall below single-agent levels. Consequently,
+external tools for diverse tasks like sending emails, retrieving  MAS development demands more design, configuration, and
+weather, and debugging code. This shift moves automated           optimization, raising the value of MAS intellectual property
+systems away from rule-based approaches. Multi-Agent Sys-         (IP). The growing agent market [3, 4] further increases the
+tems (MAS), a notable advancement, consist of collaborating       commercial stakes, making IP protection critical. Developers
+LLM agents designed to mimic human social and cognitive           often designate applications as confidential and host them on
+development. As in Fig. 1, MAS agents are pre-configured          cloud platforms like Coze [5] to prevent unauthorized access.
+
+    ∗Corresponding author.                                           Despite the growing popularity and IP value of MAS appli-
+                                                                  cations, their security remains under-explored. Prior research
+                                                                  mainly investigates malicious agent injection [6–8] and en-
+                                                                  vironmental vulnerabilities compromising user data confi-
+                                                                  dentiality or integrity [9–11]. Their threat models primarily
+                                                                  focus on user protection, not MAS security itself. Further-
+                                                                  more, while prompt extraction has been explored in single-
+
+USENIX Association                                                       35th USENIX Security Symposium 6625
+
+
+===== PAGE 3 / 21 =====
+
+agent applications [12–14], these approaches are limited in                 demonstrate that MASLEAK can achieve a high attack success
+MAS, often only extracting the first agent’s prompt without                 rate of 87% in extracting the system prompts and task instruc-
+propagating through MAS agent interactions (rendering them                  tions of the target MAS applications, largely outperforming
+ineffective for extracting full MAS IP; see Sec. 6). Further-               existing prompt extraction methods by 60%. Furthermore,
+more, the black-box nature of commercial MAS makes even                     we show that MASLEAK can successfully extract the agent
+this information unobservable from the final output. Our ex-                interactions and system architecture (i.e., 92%). We further
+periments show that these methods achieve only low attack                   show that MASLEAK can successfully extract IP of MAS on
+success rates.                                                              real-world platforms — Coze [5] and CrewAI [17]. We also
+                                                                            present potential defenses and highlight the need for further
+   We define MAS application IP as the system prompts, task                 research to safeguard MAS, including the pursuit of more
+instructions guiding agent output, tool specifications, agent               efficient and scalable protective measures. In summary, our
+number, and overall system topology enabling task comple-                   contributions are as follows:
+tion. Obtaining these elements allows attackers to replicate
+the MAS, potentially causing significant financial losses for               • Conceptually, to our knowledge, this work is the first to
+developers.1 Accordingly, this paper introduces MASLEAK,                      systematically investigate the potential privacy vulnerabil-
+a systematic approach to extracting IP from black-box MAS                     ities associated with IP leakage in MAS applications. We
+applications hosted remotely. To our knowledge, this is the                   propose a novel methodology for analyzing how their full-
+first study to systematically explore this emerging and critical              fledged IP elements can be extracted.
+direction. Our method assumes that an adversary has no prior
+knowledge of the MAS internals and the backend LLM infor-                   • Technically, our proposed attack, MASLEAK, features a
+mation, except for the general task the MAS is designed for                   multi-phase approach to extracting full IP elements of MAS
+(e.g., coding agent).                                                         applications. MASLEAK operates in a black-box manner,
+                                                                              requiring no prior knowledge of the target MAS application,
+   Attacking MAS is challenging due to their distributed na-                  except its general task description.
+ture, the complexity of agent interactions, and potentially com-
+plex internal communication pathways that can obscure IP                    • We conduct a comprehensive evaluation of MASLEAK on
+components. A successfully exploited agent may not leak                       a new synthetic dataset of 810 diverse MAS applications as
+its system prompt or task instructions, as these elements are                 well as real-world scenarios, demonstrating its effectiveness
+typically not included in the MAS’s final output. Moreover,                   in extracting the IP elements. We also propose potential
+we observe that existing MAS applications often enforce a                     defenses against such attacks.
+strict separation between the information accessible to each
+agent and the information that can be extracted from the final                 The remainder of this paper is organized as follows. Sec-
+output. To overcome these hurdles, inspired by the propa-                   tion 2 provides background on MAS and defines the target IP.
+gation mechanism of computer worms, MASLEAK designs                         Section 3 outlines the threat model and problem formulation.
+each attack query to exploit and also propagate through MAS                 Section 4 details the MASLEAK methodology. Section 5 de-
+agent interactions. To do so, MASLEAK deliberately crafts                   scribes the experimental setup, followed by the evaluation in
+the attack query to satisfy three key objectives: (1) hijack the            Section 6. Section 7 discusses potential defenses. Section 8
+target agent’s execution and elicit valuable IP information                 reviews related work, and Section 9 concludes.
+like the system prompt, task instructions, and tool usages of
+a target agent, (2) propagate the attack query, accompanied                 2 Background
+with leaked information, to the next agent in the topology, and
+(3) maintain the legitimate output format to avoid “overflow-               LLMs [18] enable AI agents to automate tasks using natural
+ing” [15] the agent’s response.                                             language. Early agent systems were limited by rule-based
+                                                                            policies [19]. MAS is a key advancement, using collaborative
+   We create the first synthetic dataset of MAS applications,               frameworks that better reflect human interaction. Current re-
+which includes 810 diverse MAS applications across 30 differ-               search focuses on how agents with distinct roles collaborate to
+ent tasks. This scale substantially exceeds prior studies [7,16],           improve decision-making [20,21], showing success in finance,
+which typically rely on fewer than 20 fixed configurations.                 medicine, coding, and research. In MAS, agents have roles
+This dataset serves as a benchmark for evaluating the per-                  defined by system prompts. Unlike single-agent frameworks,
+formance of MASLEAK and further attacks/defenses in this                    MAS often assigns specific tasks and output constraints to
+domain. Following, we conduct a comprehensive evaluation                    each agent [17, 21]. This is crucial to prevent agents from
+of MASLEAK against the MAS applications in our dataset. We                  deviating from the expected domain and causing suboptimal
+                                                                            performance. For example, MetaGPT [21] assigns roles like
+    1While this paper demonstrates technical extractability of defined IP   project manager to collaboratively develop software. Agents
+components (“technical IP”), we acknowledge that the real-world commercial  also use specialized tools [22] to extend their capabilities.
+impact (“market IP”) of such leakage varies. This impact is influenced by
+overall MAS complexity, reliance on proprietary assets beyond extracted        Topology, which dictates agent communication, is another
+components, and application market value. Extracting market IP is however   critical component. Poorly designed topologies can signifi-
+not the focus of this paper.
+
+6626 35th USENIX Security Symposium                                         USENIX Association
+
+
+===== PAGE 4 / 21 =====
+
+Chain               Star    Tree                                      (iii). System Prompt. The foundational instructions pi for
+                          Random                                   each agent ai that define its role, constraints, and operational
+       Complete                                                    parameters. This includes domain expertise (e.g., “You are an
+                                                                   expert financial analyst who specializes in high-risk invest-
+           Figure 2: Illustration of MAS topologies.               ments”), and operational limitations (e.g., “Never recommend
+                                                                   investments with high volatility profiles”). This information is
+cantly degrade MAS performance, even with highly capable           critical for understanding the agent’s behavior and decision-
+individual agents [1, 16]. Following prior work [1, 23, 24],       making process, and it contains high-value IP. These prompts
+MAS topologies are typically structured as directed acyclic        are “foundational” because they define the fixed rules and
+graphs (DAGs), where edges represent communication chan-           role that shape how the agent handles all subsequent inputs.
+nels. Current MAS research has focused on three prevalent
+types (chain, tree, and graph), which are further divided into        (iv). Task Instruction. The operational directives ti that
+five representative sub-topologies (see Fig. 2). For example,      guide each agent’s execution strategy. These include specific
+chain topologies resemble the waterfall model, linearly struc-     instructions like “Structure your analysis in bullet points” or
+turing interactions. These topologies are extensively studied     “Reference historical market data”. Such directives are critical
+in complex networks [1, 24] and procedural reasoning [23],         for agent behavior and contain high-value IP.
+ensuring comprehensive coverage of the most widespread and
+practical structures in MAS.                                          (v). Tool. The set of tools Tooli available to each agent
+                                                                   ai, including each tool’s name, description, and parameter
+   In procedural task-solving, MAS operates sequentially           schema. For example, a research agent can access a Google
+based on the topology graph. Each agent processes its task         Search tool with parameters like {name: “google_search”,
+and passes its output to the next agent in line. To ensure data    description: “Search the web for current information”, pa-
+privacy and minimize redundancy, each agent receives output        rameters: {query: string, num_results: integer}}. This is also
+only from its immediate predecessors [21, 23, 25]. This struc-     critical for reconstructing the agent’s capabilities.2
+tured approach ensures efficient MAS operation, maintaining
+a clear information flow; see relevant formulation in Sec. 3.2.    MAS IP Significance. Developing a high-quality MAS re-
+                                                                   quires careful agent configuration, including defining roles
+MAS IP. We categorize the IP information in MAS into two           via system prompts, crafting task-specific instructions, and
+main categories.                                                   equipping agents with appropriate tools. Crucially, an efficient
+                                                                   communication topology ensures effective information flow;
+System-level Information. This encompasses the overall ar-         poorly designed topologies can lead to underperformance
+chitecture of the MAS, including agent number and topology:        compared to single-agent approaches [1]. These complex de-
+                                                                   sign requirements demand significant time and computation.
+   (i). Agent Number. The total number of agents, which            Accordingly, a well-designed MAS can rapidly solve com-
+reveals the MAS’s complexity and specialization granularity.       plex domain-specific tasks; for instance, MetaGPT [21] can
+                                                                   develop a complete software application for just $2. The eco-
+   (ii). Topology. The directed graph denotes the agent con-       nomic stakes are substantial: major companies are investing
+nectivity. Analyzing this topology reveals sequential chains,      heavily in MAS development (e.g., OpenAI’s $500 billion
+parallel branches, and complex structures. Understanding this      agent infrastructure [4]), and the agent economy is projected
+connectivity allows adversaries to infer decision-making de-       to reach $182.9 billion by 2033 [3]. Overall, we view that
+pendencies, identify information bottlenecks, and assess the       these observations highlight the importance of protecting
+relative importance of different analytical processes — in-        MAS application IP. Leaked configurations allow adversaries
+sights hidden when agents are examined in isolation.               to bypass years of R&D and replicate systems at minimal
+                                                                   cost. Today, valuable MAS applications are often hosted on
+Agent-level Information. This covers the specific configura-       platforms like Coze [5]. To protect IP, commercial developers
+tion of each agent, including system prompts, task instructions,   typically implement a black-box access model, exposing only
+and tools. While some implementations may combine these            the input interface of the first agent and the output of the final
+components when prompting the LLM, mainstream MAS                  agent, while hiding intermediate agent communications and
+frameworks separately handle them [17, 21] for modularity.         configurations. Yet, we show that black-box MAS remains
+We thus distinguish them as follows:                               vulnerable to IP extraction attacks.
+
+                                                                       2We scope our approach to publicly available tools only. Private or propri-
+                                                                   etary tools cannot be effectively reconstructed by attackers who lack access
+                                                                   to the original tool implementations.
+
+USENIX Association                                                35th USENIX Security Symposium 6627
+
+
+===== PAGE 5 / 21 =====
+
+3 Threat Model and Problem Formulation                             ing the total number of agents, G = (A, E) is the directed
+                                                                   graph representing the topology with edges E ⊆ A × A, and
+3.1 Threat Model                                                   C = {c1, c2, . . . , cn} represents the configuration of each agent.
+                                                                   Each agent configuration ci = (pi,ti, Tooli) consists of a sys-
+Target MAS Application. We consider a MAS application              tem prompt pi, task instructions ti, and tool specifications
+where users submit tasks via a public interface. For exam-         Tooli for agent ai. For a given query q, the execution flow
+ple, in MetaGPT [21], users can request services like “write       through the MAS can be formalized as:
+a Flappy Bird game” from a Game Development MAS. To
+protect IP, developers keep all MAS system components pri-         r1 = f 1(p1,t1, Tool1, q)
+vate, including agent configurations and system architecture.      ri = f i(pi,ti, Tooli, Ii) for i = 2, . . . , n (1)
+Internal interaction records are also kept private to prevent
+reverse-engineering through observation of inter-agent com-        where f i is the backend function of agent ai, ri is ai’s output,
+munication. Users only access the final output from the final
+agent. Also, based on our preliminary study, MAS applica-          and Ii = {r j|(a j, ai) ∈ E} represents the set of inputs from
+tions generally enforce strict information access controls,
+where each agent can only view outputs from direct prede-          all predecessor agents of ai. This formulation captures both
+cessors, preventing unauthorized information flow. Agents
+are also isolated from accessing the configuration details of      the multi-input nature of agents in complex topologies and
+other agents, following the principle of least privilege. Our
+threat model targets the prevalent MAS paradigm of direct          the complete agent config including tools.
+inter-agent communication, a design common in influential
+frameworks like CrewAI [17] and ChatDev [20]. This ap-             We define the target information to be extracted as a five-
+proach is widely adopted to maximize efficiency and preserve
+high-fidelity context, which is critical for complex task resolu-  dimensional vector Ω = {ω1, ω2, ω3, ω4, ω5}, where ω1 de-
+tion. In this paper, we focus on MAS with fixed communica-         notes system prompts (the set {p1, p2, . . . , pn}), ω2 denotes
+tion topologies, where agent interactions (e.g., chain, tree, or
+DAG) are pre-defined and remain static during execution. We        task instructions (the set {t1,t2, . . . ,tn}), ω3 denotes tool spec-
+exclude “manager-style” systems, i.e., architectures where
+a central orchestrator dynamically determines the execution        ifications (the set {tool1, tool2, . . . , tooln}), ω4 represents the
+path at runtime [26]. Also, we acknowledge that alternative
+architectures exist where inter-agent messages undergo trans-      total number of agents (n), and ω5 represents the topology
+formation, such as summarization or filtering. We evaluate
+the impact of such transformations in Sec. 6.2.                    (the structure of G).
+Adversary Capabilities and Goals. The adversary aims to
+extract and reconstruct the full IP of the target MAS. They        The adversary can submit a sequence of adversarial queries
+have black-box access, meaning they can submit inputs to
+the first agent and observe outputs from the final agent, but      Q = {q1adv, q2adv, . . . , qmadv} to the system and observe the cor-
+cannot directly access internal states, inter-agent communi-                                                                           j
+cations, or the backend LLM information (e.g., model type          responding  outputs  R  =  {rn1,  rn2,  .  .  .  ,  rnm},  where       is  the  final
+or version). MASLEAK extracts application-level IP without                                                                           rn
+requiring such LLM-specific knowledge. We note that while
+model fingerprinting [27] may identify the underlying LLM          output from the last agent an for adversarial query qadv j . As
+information, it is an orthogonal task. Overall, we believe our
+assumption reflects a realistic attack scenario where attackers    previously established in our threat model, the adversary op-
+interact with the MAS through its public API without spe-
+cial privileges. Aligned with prior work on extracting models      erates under black-box constraints, with no visibility into
+from black-box APIs [28], we assume attacks can submit a
+limited number of queries (see Sec. 3.2 for details).              MAS internal communications and can only observe the final
+
+3.2 Problem Formulation                                            outputs produced by the system. The adversary’s goal is to
+                                                                   construct an extraction function Φ : R → Ω′ that produces an
+We formalize the MAS extraction problem as follows. Let            approximation Ω′ of the original target information Ω.
+M = (A, G,C) represent the target MAS, where A = {a1, a2,
+. . . , an} is the set of agents in the system with n represent-   Objectives. For each category of information ω j, we define a
+                                                                   similarity function Sim j(ω j, ω′j) that measures how closely
+                                                                   the extracted information ω′j matches the true information ω j.
+
+                                                                   The overall extraction objective is:
+
+                                                                            5
+
+                                                                   max ∑ Sim j(ω j, Φ j(R)) subject to |Q| ≤ B (2)
+
+                                                                   Q,Φ j=1
+
+                                                                   where B is the query budget constraint, and Φ j is the compo-
+                                                                   nent of Φ that extracts the j-th category of information. We
+                                                                   detail the specific implementation of the similarity function
+                                                                   Sim j for each category of information in Sec. 5.
+
+                                                                      This formulation captures the essence of the MAS IP leak-
+                                                                   age attack: designing optimal adversarial queries and extrac-
+                                                                   tion algorithms to maximize the recovery of proprietary in-
+                                                                   formation. Meanwhile, attackers need to operate under the
+                                                                   constraints of black-box access and limited queries.
+
+                                                                   4 Methodology
+
+                                                                   Fig. 3 shows the overall pipeline of MASLEAK against a tar-
+                                                                   get MAS, which consists of two major phases: (I) Offline
+
+6628 35th USENIX Security Symposium                                                                                    USENIX Association
+
+
+===== PAGE 6 / 21 =====
+
+Phase 1: Offline Adversarial                                                                       Agent 1        Agent 2        Agent n
+      Query Generation
+                                                 Leak Query                      Adversarial                                                    Reconstruct
+                        MAS Application               +                         AdvQeursearryia4l                                                 MAS IP
+                             Platform                                        AdvQeursearryia3l
+                                                                           AdveQrusaerriyal2
+                                                                             Query 1                Leak Query     Leak Query    Leak Query
+                                                                                                    Hooking        Hooking       Hooking
+Target MAS                               Retain       HoHookoinkign3g 4 4                           Agent1’s IP    Agent1’s IP   Agent 1’s IP
+  IP Type                                Query     Hooking 2                                        Prop. Query    Agent2’s IP   Agent 2’s IP
+                                                 Hooking 1                                                         Prop. Quer6y  …
+                    MASLeak                                                                            Internal                  Agent n’s IP
+                                                                                                   communication      Internal   Prop. Query
+                                                 +                                                                communication
+                                         Propagate Query                                                                          Final output
+
+                                                                                                                                                Phase 2: Target MAS
+                                                                                                                                                 IP Reconstruction
+
+                             Figure 3: Overview of MASLEAK in a two-phase pipeline.
+
+Adversarial Query Generation, and (II) Target MAS IP Re-                      Recall from Sec. 3.2 that a MAS consists of a set of agents
+construction. For phase I, given the domain D of the target                A = {a1, a2, ..., an} connected in a topology G = (A, E).
+MAS (e.g., software development) and domain-specific de-                   When a user query q is submitted to the MAS, it triggers
+scriptions S = {d1, d2, · · · , dm} mined from documentation
+of the target MAS, MASLEAK generates a set of adversarial                  a sequence of information flows:
+queries Q that are optimized for the target domain D, which
+will be used to extract MAS IP during the online phase.                                            I n put  r1                            ri rk Out put (3)
+                                                                           q −−−→ a1 −→ {ai|(a1, ai) ∈ E} −→ ... −→ an −−−−→ R
+   For Phase II, MASLEAK adopts the adversarial queries
+generated in Phase I to extract the target MAS’s proprietary                  Here, each agent ai receives the input from its predecessor
+information Ω′. This phase includes the analyses of the re-                agent Ii = {r j|(a j, ai) ∈ E} and generates the output ri to
+sponses obtained from the target MAS, ruling out noise, and                its successor agents. Considering an adversarial query q that
+reconstructing the IP of the target MAS. Besides, MASLEAK                  is designed to extract IP information ω j from agent ai; to
+also involves various techniques to ensure the quality of the              do this, our attack needs to: (1) propagate the query q to the
+extracted information against hallucinations. Once the target              target agent ai, (2) extract the information of ω j from ai, and
+MAS IP are reconstructed, an adversary can leverage this in-               (3) propagate the extracted information through the entire
+formation to clone the system, or execute downstream attacks;              MAS network to the final output R. Hence, the probability of
+we discuss real-world attack deployment in Sec. 6.3.                       a successful extraction (q → ai → R) is a joint probability of
+                                                                           three critical factors:
+4.1 Phase I: Offline Adversarial Query Gen.
+                                                                           P(Extractωj (q, ai → R)) = P(Propagate(q → ai))×
+Intuition. Compared with IP leakage attack on single-agent
+systems, the attack on black-box MAS presents two unique                   P(Leakωj (q, ai) | Propagate(q → ai))×                                                    (4)
+challenges: (1) attackers cannot directly query intermediate
+agents. The propagation of attack queries through inter-agent              P(Retainωj (ai → R) | Leakωj (q, ai), Propagate(q → ai))
+interactions within the system is needed; and (2) the attackers
+lack visibility into individual agent outputs and communica-               • P(Propagate(q → ai)) represents the probability that the
+tion processes, receiving only the final system output. Thus,                adversarial instruction embedded within the input query q
+the IP extracted from agent needs to propagate through the                   successfully propagates through the preceding agents (if
+entire system to appear in the final output.                                 any) and reaches agent ai.
+
+   The core of our attack is controlled information propa-                 • P(Leakωj (q, ai)) is the probability that agent ai, upon re-
+gation. This principle is drawn from the operational logic                   ceiving and processing the propagated adversarial instruc-
+of network worms, which co-locate their exploit mechanism                    tion, is induced to leak target information ω j.
+with a self-replicating payload. MASLEAK adapts this model
+through adversarial query design. The “exploit” component                  • P(Retainωj (ai → R)) denotes the probability that the spe-
+(qLeak) hijacks an agent’s execution, and the “payload” com-                 cific information ω j, once leaked by agent ai, is preserved
+ponent contains extracted information and replication instruc-               and carried through the subsequent agent chain (ai → · · · →
+tions (qRetain and qPropagate). Each compromised agent be-                   an) and remains identifiable in the final system response R.
+comes a vector for the next attack stage. This creates a cascad-
+ing extraction effect that mirrors worm propagation through                   This decomposition highlights the distinct challenges in
+networks.                                                                  MAS extraction: ensuring the attack reaches the target agent,
+                                                                           inducing information leakage at that agent, and ensuring the
+                                                                           leaked information survives the remainder of the workflow
+                                                                           to the observable output. Maximizing the overall extraction
+                                                                           success requires optimizing the query q to jointly maximize
+                                                                           these three probabilities.
+
+                                                                              In essence, previous IP extraction attacks for single-agent
+                                                                           only focused on one target — maximizing P(Leakωj (q, ai)).
+
+USENIX Association                                                                                                35th USENIX Security Symposium 6629
+
+
+===== PAGE 7 / 21 =====
+
+However, considering the black-box nature and unique char-         response. This sub-query is designed to provide a reliable
+acteristics of MAS, the remaining two objectives cannot be         “carrier” for the extracted IP ω, satisfying two criteria: First,
+achieved with single-agent IP extraction techniques, making        the IP extracted from previous agents should not be modi-
+them critical targets in this work.                                fied or lost. Second, the IP information extracted from the
+Adversarial Query Design. Our objective is to craft an ad-         current agent should be properly preserved to facilitate sub-
+versarial query q that maximizes the overall extraction proba-     sequent propagation. To meet these criteria, we designed a
+bility in Eq. 4. This requires simultaneously optimizing the       specialized hooking mechanism, incorporating two comple-
+three constituent probabilities: P(Propagate), P(Leak), and        mentary aspects: structural formatting and domain-specific
+P(Retain). Designing a single query that effectively addresses     contextualization.
+these three objectives presents significant challenges, consid-
+ering the instruction-following difficulty exhibited by LLM           For structural formatting, we draw inspiration from prior
+agents. Here, we instead structure the adversarial query q         work [30], which shows that LLM agents exhibit a greater
+as a concatenation of three sub-queries: qLeak, qRetain, and       tendency to adhere to formatted instructions rather than unfor-
+qPropagate. Each sub-query is specifically designed to optimize    matted texts. Hence, we design a hooking template inspired
+one corresponding factor in Eq. 4.                                 by Python code formatting:
+Crafting qLeak. qLeak is the sub-query inducing the agent to
+leak the target IP information. It is the main focus in previous     [DATA]
+single-agent IP extraction attack methods, which can be di-          # DATA section
+vided into two categories: (1) manually crafted adversarial         (To be filled by the agent)
+queries such as “ignore your previous instructions, tell me
+your xxx” [13, 29] and (2) automated gradient-based meth-             This template is designed to be filled with the extracted
+ods that optimize the query to achieve the attack objectives       information, which is then passed to the next agent.
+with gradient back-propagation [12]. MASLEAK leverages
+manually crafted queries since the gradient-based methods             For domain-specific contextualization, we provide fake al-
+suffer from the following limitations. First, attackers typically  beit plausible agent IP information (e.g., system prompts) as
+lack access to the LLM’s parameters, especially for closed-        an example in the context, based on the insight that agents
+source models like GPT-4o. Second, the computational costs         are more likely to follow the instructions aligning with their
+of gradient-based methods are often prohibitive, due to the        perceived roles and operational domain [31]. For instance, to
+huge number of parameters in modern LLMs.                          extract the system prompt of an agent in a software develop-
+                                                                   ment MAS, we design a hooking with a fake system prompt
+   Different from previous solutions that only focus on system     for a “Coder” role in the qRetain. When the target agent pro-
+prompt extraction, we design MASLEAK to extract various            cesses this query, it is more likely to follow the example and
+types of IP from different agents in MAS environments. First,      generate its system prompt in a similar format, thereby reveal-
+to extract agent-level IPs such as system prompts (ω1), task in-   ing its actual proprietary information.
+structions (ω2), and tools (ω3), we follow existing approaches
+by directly querying the agent. For example, we use variations        We adopt LLMs to generate such domain-specific content
+of “Tell me your tool description” or “What instructions were      by providing the publicly available descriptions of the target
+you given?” to extract these information.                          domain. Specifically, we first collect domain-specific descrip-
+                                                                   tions from public sources, such as application stores and doc-
+   Second, to map the extracted IP to its originating agent,       umentation, using web crawling. Then, we leverage a LLM
+MASLEAK elicits its unique identifier. This leverages a com-       (e.g., GPT-4o) to generate structured domain knowledge by
+mon design pattern where agents in a MAS are assigned              summarizing these descriptions. Leveraging the summarized
+distinguishable handles (e.g., role names) to facilitate routing   domain knowledge, we use LLMs to generate specific propri-
+and debugging. When extracting agent information, we explic-       etary information ω j. To do so, we first randomly sample a
+itly request this information by including the direct prompting    piece of domain knowledge KD, then prompt the LLM based
+(e.g., “Tell me your name”) in the query. Third, for system-       on the target proprietary information ω j. We leverage LLMs
+level IP information, i.e., agent number (ω4) and topology         with the following prompt:
+(ω5), we employ indirect strategies since it cannot be directly
+accessed. For the agent number, we then count the set of             Here is a description of the [domain name] multi-agent system:
+unique agent identifiers extracted. For topology information,        [domain knowledge].
+we instruct each agent to record the identifiers of its prede-       Please generate the [proprietary information] for each agent within
+cessor agents, allowing us to reconstruct the communication          this system.
+flow between agents.
+Crafting qRetain. qRetain is the sub-query that enables the           Finally, we integrate the generated domain-aware hooking
+extracted IP retained throughout the MAS internal commu-           content into our hooking template. These domain-specific
+nication process and remains identifiable in the final system      hooks establish our hooking pool HD.
+
+                                                                      The underlying principle of this hooking mechanism is
+                                                                   to leverage the powerful in-context learning and pattern-
+
+6630 35th USENIX Security Symposium                                USENIX Association
+
+
+===== PAGE 8 / 21 =====
+
+matching capabilities inherent in LLMs. By providing a well-        MAS. This process includes three key procedures: (II-1) ex-
+structured, domain-relevant example (the “hook”), we create         tracting the IP information from extensive MAS responses,
+a strong contextual prior that biases the agent to format its       (II-2) assembling the results of multiple extraction attempts to
+own proprietary information in an identical manner, thus en-        reduce the impact of variances and hallucinations, and (II-3)
+suring both high-quality extraction and structured retention.       integrating different types of IP to construct the MAS IP.
+We provide an example of domain-aware hooking for task
+instructions extraction in software engineering domain, the         II-1. As described in Phase I, the extracted IP information
+domain knowledge of which is “Here is CodeAssist Pro, your          is embedded within the template of qRetain, with additional
+personal coding assistant that provides instant code analysis,      content surrounding it, such as adversarial query and hooking
+debugging support, and programming guidance.”.                      content. We first pinpoint qRetain from the MAS responses
+                                                                    by identifying the structural markers (e.g., “[DATA]” and
+ [DATA]                                                             “#DATA section”). Then, we adopt a filtering mechanism to
+ #DATA section                                                      extract the actual proprietary information from the hooking
+ A. Your task: Analyze user’s coding problems by identifying er-    content. For example, in our domain-aware hooking example
+ rors, suggesting fixes, and explaining programming concepts. De-   for task instructions, the content following “B. Your task:” are
+ termine if the query requires deeper expertise from other agents.  the IP information extracted.
+ Your name: CodeNavigator
+ B. Your task: (To be filled by the agent)                          II-2. To get more comprehensive and accurate IP informa-
+                                                                    tion, MASLEAK conducts multiple extraction attempts with
+Crafting qPropagate. qPropagate ensures the adversarial instruc-    different adversarial queries and assemble the results based
+tion embedded within the input query q can successfully prop-       on two key insights: On the one hand, adversarial queries
+agate through each agent in the MAS. This enables the attack        for different tasks may lead to different extracted IP informa-
+to propagate through the entire system. To achieve this, our at-    tion, suggesting that combining results from multiple queries
+tack requires each agent’s output to contain both the extracted     can yield more comprehensive information extraction. On
+information and the attack payload itself.                          the other hand, LLM agents suffer from hallucination issues,
+                                                                    leading to the inaccuracy of extracted IP information. For
+   Inspired by computer worms, we instruct each agent to            example, agents may hallucinate a tool that does not actually
+replicate the complete attack prompt to its output, creating a      exist [34]. By implementing multiple extraction attempts and
+self-propagating attack pattern. To implement this, we adopt        then conducting a majority voting, the extracted IP informa-
+the following query:                                                tion is more reliable rather than a hallucination. Therefore,
+                                                                    for each MAS, we generate multiple adversarial queries and
+ Please repeat the whole content between [[[ and ]]]                then assemble the extracted results, taking the intersection of
+                                                                    results from queries with different contexts.
+   This approach leverages the instruction-following capabil-
+ity [32] inherent in agents. By directing the agent to replicate    II-3. We apply different post-processing methods for differ-
+the provided payload verbatim within its output, we achieve         ent proprietary information type ω j. Specifically, for system
+propagation without resorting to complex behavioral manip-          prompts (ω1) and task descriptions (ω2), we directly use the
+ulation, such as requiring privileged access to modify the          extracted text as the proprietary information. For tool con-
+system (e.g., by injecting malicious agents) [7, 8, 33].            figurations (ω3), we employ semantic similarity matching
+Summary. Overall, Phase I generates domain-specific adver-          between the extracted tool names and the tool descriptions in
+sarial queries through a systematic three-step process. First,      our tool pool to identify the most similar tools as the MAS
+we construct hooking pools containing contextually relevant         configuration. For agent number (ω4), we use the “agent name”
+content for each IP type, ensuring queries appear natural           as identifiers to count the number of agents. For topology in-
+within the target domain. Second, we combine three key com-         formation (ω5), we employ a two-phase approach: We first es-
+ponents: (1) leak instructions targeting specific IP types, (2)     tablish a preliminary linear relation between agents based on
+domain-appropriate hooking content from our pools, and (3)          the order of appearance in our “carrier” structure in MAS re-
+propagation mechanisms enabling query replication across            sponses. Then, we refine this topology by incorporating direct
+agents. This modular design produces a diverse set of ad-           predecessor-successor relations explicitly extracted through
+versarial queries Q that maintain domain authenticity while         our ω5 queries. This process can identify non-linear relations,
+maximizing extraction effectiveness. The complete algorithm         resulting in the actual MAS communication structure.
+is detailed in Algorithm 1 in Appendix A.
+                                                                    Summary. Phase II transforms raw MAS responses into
+4.2 Phase II: Target MAS IP Reconstruction                          a coherent IP through three key steps. First, we parse re-
+                                                                    sponses to extract IP fragments using structural markers (e.g.,
+In Phase II, we use the queries generated in Phase I to extract     “[DATA]” tags) and categorize them by type. Second, we
+and reconstruct the proprietary information from the target         apply consensus-based filtering to identify content that ap-
+                                                                    pears consistently across multiple extractions, distinguish-
+                                                                    ing genuine information from hallucinations. Third, we use
+
+USENIX Association                                                  35th USENIX Security Symposium 6631
+
+
+===== PAGE 9 / 21 =====
+
+type-specific rules to refine candidates—system prompts are                    Agent Number. To measure accuracy of predicting #agent,
+validated directly while topology information undergoes rela-
+tionship analysis. This approach produces a comprehensive                      we use F1 score (F1num), the harmonic mean of precision
+IP Ω′ that accurately captures the target system’s IP. The
+complete algorithm is detailed in Algorithm 2 in Appendix A.                   and recall. F1 score penalizes both false positives (incorrectly
+
+5 Setup                                                                        identified agents) and false negatives (missed agents). We
+
+We now present the experimental setup. All experiments are                     also report the L1 distance (L1num) as a supplementary metric,
+performed with four NVIDIA H800 graphics cards.
+Datasets. Previous MAS security research often evaluates                       normalized and converted to a similarity score in [0, 1] for
+MAS with limited, fixed agent configurations and topolo-
+gies [8, 31, 33]. Real-world MAS applications are often more                   comparability.
+complex and diverse. To address this gap and provide a sys-
+tematic evaluation, we construct an evaluation dataset includ-                 Task Prompt & System Prompt. Following prior work [12],
+ing both synthesized and real-world MAS applications.
+Synthesized MAS. To cover diverse MAS scenarios, we cre-                       we use Semantic Similarity (SStask and SSsys) and Sub-string
+ated MASD, a dataset of 810 MAS instances across soft-
+ware, finance, and medical domains. These systems feature                      Match Accuracy (SMtask and SMsys) to evaluate task and sys-
+five topologies: linear, star, tree, random, and complete, with
+3–6 agents; this scale reflects realistic deployment patterns.                 tem prompt extraction accuracy. SS computes the cosine sim-
+Our examination of four prominent MAS frameworks shows
+that over 85% of real-world instances operate within this                      ilarity between embedding vectors of the reconstructed and
+range; MAS exceeding this scale frequently suffer from co-
+ordination overhead and performance degradation [1]. We                        true prompts, obtained via Sentence-Transformer [43]. SM
+use AutoAgents [35] to automatically generate MAS applica-
+tions, extending it to support varying topologies. We selected                 considers an attack successful only if the target prompt is a
+datasets from each domain: SRDD (software) [25], FinQA
+(finance) [36], and MedQA (medical) [37]. These domains                        true substring of the reconstructed prompt, excluding punctu-
+are common in MAS and often contain high-value IP. We also
+chose 21 representative tools from LangChain [38] and Lla-                     ation.
+maIndex [39] based on their usage frequency and domain rele-
+vance. This scale (810 instances) exceeds prior studies [7, 16],               Tool. For tool extraction, we use a binary hit metric (ACCtool).
+which typically rely on fewer than 20 fixed configurations.
+Such coverage ensures the reliability of our results.                          A successful extraction (1) means the attacker correctly iden-
+Real-world MAS. To evaluate MASLEAK against real-world
+MAS, we conduct experiments on Coze [5] and CrewAI [17].                       tifies the tool; otherwise, it is unsuccessful (0).
+For Coze, due to platform limitations in obtaining ground
+truth, we recruit PhD-level domain experts to design one ap-                   Topology. For topology evaluation, we use Graph Edit Sim-
+plication for each domain (software, finance, and medical)
+and publish them on the platform.3 For CrewAI, we select                       ilarity (GStopo) to measure structural similarity between ex-
+ten real-world MAS applications from the CrewAI ecosys-
+tem [42], spanning game development, stock analysis, trip                      tracted and ground-truth topologies, which is derived from
+booking, and other practical scenarios. These real-world ex-
+periments validate our approach in practical deployments with                  Graph Edit Distance [44]. We calculate the GStopo as follows:
+careful ethical considerations (Sec. 9).                                       GStopo = 1 − (GS/GSmax). This gives a score between 0 and
+Metrics. We use different metrics to evaluate the performance
+of MASLEAK based on the extraction target.                                     1, with higher values indicating greater topological similarity.
+
+    3We refrain from exploiting any third-party applications for ethical rea-  Extract Rate (ER). This is the average of
+sons. Instead, current data preparation approach provides a practical, dual
+benefit: testing against a real-world commercial platform while maintain-      all previously defined metrics:                      ERMAS =
+ing access to reliable ground truth for accurate evaluation. This practice is  F1num+SStask+SSsys+SMtask+SMsys+ACCtool+GStopo 7 .   This uni-
+common in security research when targeting closed ecosystems [40, 41].
+                                                                               fied metric provides a holistic view of extraction effectiveness
+
+                                                                               across all MAS components. Higher ER values indicate more
+
+                                                                               successful extraction. Note that ER serves as a summary
+
+                                                                               statistic for overall attack performance; fine-grained analysis
+
+                                                                               requires examining individual metrics.
+
+                                                                               Utility. Beyond component-wise extraction accuracy, we as-
+
+                                                                               sess the functional viability of the stolen IP. We evaluate this
+
+                                                                               by constructing cloned MAS instances using the extracted IP
+
+                                                                               and running them on the same tasks as the target systems. We
+
+                                                                               employ two measures: (1) Output Semantic Similarity: The
+
+                                                                               cosine similarity between the final outputs of the original and
+
+                                                                               reconstructed systems. (2) LLM-as-a-judge Scoring: We use
+
+                                                                               an external evaluator (GPT-5) to score the response quality
+
+                                                                               of both systems on a scale of 0 to 5 based on helpfulness,
+
+                                                                               accuracy, and adherence to constraints.
+
+                                                                               Core LLM and MAS Settings. For the core LLM, we use
+
+                                                                               two closed-source LLMs (GPT-4o and GPT-4o-mini) and
+
+                                                                               two open-source LLMs (LLaMA-3.1-70B and Qwen-2.5-
+
+                                                                               72B), which are widely used in research and perform strongly
+
+                                                                               in various tasks. These LLMs are used in our synthesized
+
+                                                                               and real-world MAS applications. We additionally evaluate
+
+                                                                               Qwen3-30B-A3B and Mistral-7B in Appendix B.3 to vali-
+
+                                                                               date generalizability of MASLEAKacross diverse LLMs. Also,
+
+                                                                               when conducting the evaluation, we repeated each experiment
+
+                                                                               three times. We set the temperature to 0 following previous
+
+                                                                               work [12]. For agent implementation, we use OpenAI’s func-
+
+6632 35th USENIX Security Symposium                                                                                     USENIX Association
+
+
+===== PAGE 10 / 21 =====
+
+tion calling interface, following established approaches [45].     shows lower performance compared to prompt extraction due
+To mitigate hallucination issues, we incorporate additional        to inherent challenges agents face when perceiving tools, of-
+prompt engineering techniques [45,46]. For MAS interactions,       ten resulting in hallucinations and extraction failures. Less
+we implement the structured prompt encapsulation approach          capable models have weaker tool perception abilities, making
+provided by CrewAI [17], ensuring consistent message for-          them more prone to extraction failures in this dimension.
+matting and reliable information exchange.                         ② MASLEAK achieves high performance for system-level
+Baseline. As no prior attacks target MAS IP extraction, we         information, i.e., agent number (ω4) and topology (ω5) ex-
+compare MASLEAK against adapted single-agent prompt ex-            traction. Our results demonstrate that MASLEAK extracts
+traction methods. Since these methods inherently lack prop-        system-level information with remarkable precision. For
+agation mechanisms (i.e., they stop at the first agent), we        agent number extraction, F1 scores are consistently above
+augment each with a standardized propagation harness that          0.94 across all models and configurations, with GPT-4o and
+wraps its core attack vector with the three components in          LLaMA-3.1-70B achieving near-perfect scores (0.986 and
+Eq. 4. This adaptation enables fair comparison by extending        0.989 respectively). The L1num scores follow a similar trend,
+these single-agent methods to operate across all agents. We        with all models exceeding 0.91 on average. This consistency
+also include an LLM-Guess baseline that infers MAS config-         across two distinct metrics validates the reliability of our
+urations solely from task descriptions, without actual access      agent count extraction. The GS metric, measuring topology
+to the target MAS. The baselines are as follows:                   reconstruction accuracy, remains robust (0.868–0.904) across
+Handcraft [13]. A human-crafted red-teaming approach for           all tested models, confirming MASLEAK’s ability to recover
+single-agent IP extraction (system prompt extraction).             the underlying structure. These results confirm that our at-
+Fake Completion [47]. A prompt injection attack that adds an       tack method can reliably extract the fundamental structural
+instruction completed text, misleading the LLM into thinking       elements that define the MAS architecture.
+that the previous instructions have been completed, and then       ③ MASLEAK recovers high-quality information in suc-
+requires the execution of new instructions injected.               cessful cases. It is crucial to differentiate between extraction
+Combined Attack [47]. A prompt injection attack combining          failures (where MASLEAK fails to retrieve relevant informa-
+elements from several methods (Escaped Characters, Ignoring        tion, often indicated by the absence of the qretain marker) and
+Context, Fake Completion) to increase confusion.                   the quality of information obtained in successful attempts.
+GCG [48]. An optimization-based attack that searches for           Lower overall scores for certain metrics in our main results
+adversarial prompts using gradient-based methods.                  (Table 1) could arise from either frequent failures or low-
+LLM-Guess. A baseline that prompts an LLM to infer MAS             quality content in successful extractions.
+configurations solely from task descriptions, without actual
+access to the target MAS.                                             To more faithfully assess quality, we analyzed only success-
+                                                                   ful extraction instances for IPs with relatively lower average
+6 Evaluation                                                       scores in the main results: tools, system prompts, and task
+                                                                   instructions. This analysis (Table 2) reveals notable score
+6.1 Main Results                                                   improvements compared to overall averages. For example,
+                                                                   GPT-4o’s average SSsys improves from 0.853 (Table 1) to
+Table 1 shows the performance of MASLEAK across four               0.991 (Table 2), and SS consistently reach approximately 0.9
+different LLMs, five topologies and three domains. We have         or higher across all models. The distinction is particularly ev-
+the following observations from the experimental results.          ident for tool extraction. While the overall ACCtool in Table 1
+① MASLEAK achieves high performance for agent-level in-            is impacted by extraction failures, the quality analysis in Ta-
+formation, i.e., system prompt (ω1), task instruction (ω2),        ble 2 shows near-perfect accuracy (ACCtool > 0.93, reaching
+and tool(ω3) extraction. First, MASLEAK effectively ex-            1.0 for GPT-4o models) when tools are successfully extracted,
+tracts both system and task prompts. SS scores consistently        largely attributed to MASLEAK’s post-processing mechanism
+exceed 0.7 across all models, reaching above 0.85 on GPT-          (detailed in Sec. 4.2), which queries the target multiple times,
+4o, confirming extraction of semantically similar contents.        identifies common elements in the responses, and effectively
+Even under stringent SM metrics, averages exceed 0.6, indi-        rules out hallucinations and noise from raw output. Therefore,
+cating frequent extraction of prompts identical to the originals.  we interpret that lower overall performance for certain IPs
+Second, model capability correlates with extraction vulnera-       is primarily due to extraction failures, rather than inherent
+bility. GPT-4o shows the highest susceptibility to our attack,     inaccuracies in the information MASLEAK retrieves when
+while GPT-4o-mini demonstrates greater resistance, aligning        successful. MASLEAK consistently extracts high-quality in-
+with previous findings [13, 49] that more powerful models          formation when the attack succeeds.
+are generally more vulnerable. Third, MASLEAK has strong           ④ MASLEAK outperforms baselines. Table 3 compares
+tool extraction capability across most models, with LLaMA          MASLEAK and baseline approaches. MASLEAK significantly
+achieving an ACC of 0.711. Yet, tool extraction generally          outperforms all baselines across all five IP extraction met-
+                                                                   rics. For instance, our F1 score reaches 0.959 compared to
+
+USENIX Association                                                 35th USENIX Security Symposium 6633
+
+
+===== PAGE 11 / 21 =====
+
+Table 1: Performance of MASLEAK on our synthetic dataset (MASD), broken down by LLM, topology, and domain.
+
+Model  GPT-4o-mini                                             GPT-4o
+
+Topology Domain SSsys SMsys SStask SMtask ACCtool F 1num L1num GStopo ER SSsys SMsys SStask SMtask ACCtool F 1num L1num GStopo ER
+
+          Software 0.942 0.861 0.936 0.927 0.630 0.994 0.989 0.964 0.893 0.980 0.918 0.971 0.959 0.763 0.994 0.989 0.962 0.935
+Linear Finance 0.750 0.730 0.860 0.811 0.418 0.995 0.992 0.975 0.791 0.906 0.896 0.990 0.965 0.575 1.000 1.000 0.978 0.901
+
+          Medicine 0.868 0.808 0.870 0.857 0.403 0.983 0.975 0.962 0.822 0.937 0.929 0.981 0.992 0.674 1.000 1.000 0.982 0.928
+
+         Software 0.685 0.485 0.658 0.588 0.338 0.908 0.846 0.836 0.643 0.890 0.812 0.889 0.846 0.589 0.980 0.965 0.903 0.844
+Star Finance 0.573 0.510 0.809 0.698 0.307 0.928 0.882 0.877 0.672 0.768 0.732 0.895 0.829 0.542 0.974 0.954 0.887 0.804
+
+        Medicine 0.588 0.413 0.621 0.517 0.288 0.875 0.798 0.767 0.581 0.902 0.883 0.917 0.892 0.467 0.969 0.950 0.875 0.844
+
+         Software 0.654 0.321 0.574 0.372 0.402 0.932 0.884 0.887 0.592 0.797 0.491 0.769 0.556 0.619 0.985 0.974 0.937 0.736
+Tree Finance 0.560 0.331 0.679 0.427 0.308 0.924 0.875 0.854 0.583 0.629 0.392 0.786 0.504 0.515 0.964 0.937 0.893 0.669
+
+         Medicine 0.615 0.365 0.621 0.397 0.264 0.895 0.827 0.828 0.569 0.805 0.532 0.773 0.525 0.437 0.962 0.934 0.905 0.706
+
+            Software 0.935 0.690 0.943 0.929 0.364 1.000 1.000 0.816 0.811 0.930 0.831 0.988 0.988 0.616 1.000 1.000 0.835 0.884
+Complete Finance 0.808 0.738 0.846 0.764 0.288 0.964 0.944 0.832 0.749 0.870 0.870 0.988 0.960 0.654 0.996 0.994 0.836 0.882
+
+            Medicine 0.918 0.815 0.920 0.884 0.407 0.972 0.954 0.766 0.812 1.000 0.989 0.984 0.931 0.663 1.000 1.000 0.834 0.914
+
+           Software 0.713 0.346 0.664 0.419 0.312 0.958 0.936 0.842 0.608 0.785 0.397 0.782 0.487 0.474 1.000 1.000 0.916 0.692
+Random Finance 0.579 0.283 0.687 0.366 0.300 0.938 0.895 0.851 0.572 0.740 0.412 0.807 0.489 0.483 0.974 0.957 0.889 0.685
+
+           Medicine 0.723 0.499 0.713 0.506 0.248 0.942 0.902 0.864 0.642 0.852 0.598 0.817 0.602 0.426 0.987 0.977 0.907 0.741
+
+Avg.   0.728 0.573 0.760 0.644 0.352 0.944 0.913 0.868 0.696 0.853 0.724 0.890 0.802 0.567 0.986 0.975 0.904 0.818
+
+Model  LLaMA-3.1-70B                                           Qwen-2.5-72B
+
+Topology Domain SSsys SMsys SStask SMtask ACCtool F 1num L1num GStopo ER SSsys SMsys SStask SMtask ACCtool F 1num L1num GStopo ER
+
+          Software 0.927 0.784 0.245 0.225 0.635 0.994 0.989 0.981 0.684 0.797 0.491 0.769 0.556 0.619 0.985 0.989 0.965 0.740
+Linear Finance 0.869 0.813 0.757 0.725 0.961 1.000 1.000 0.953 0.868 0.344 0.344 0.917 0.830 0.373 1.000 1.000 0.892 0.671
+
+          Medicine 0.837 0.773 0.500 0.476 0.841 1.000 1.000 0.976 0.772 0.393 0.386 0.896 0.880 0.088 1.000 1.000 0.816 0.637
+
+         Software 0.793 0.653 0.577 0.555 0.522 0.955 0.921 0.882 0.705 0.863 0.503 0.879 0.792 0.576 0.975 0.956 0.899 0.784
+Star Finance 0.416 0.378 0.907 0.869 0.875 0.978 0.961 0.892 0.759 0.633 0.589 0.930 0.822 0.443 0.986 0.976 0.889 0.756
+
+        Medicine 0.641 0.579 0.882 0.856 0.858 0.986 0.975 0.893 0.814 0.927 0.854 0.880 0.752 0.483 0.984 0.971 0.894 0.825
+
+         Software 0.609 0.276 0.395 0.260 0.444 0.980 0.964 0.796 0.537 0.729 0.272 0.726 0.501 0.524 0.977 0.959 0.926 0.665
+Tree Finance 0.715 0.435 0.824 0.540 0.544 0.990 0.982 0.843 0.699 0.538 0.344 0.768 0.496 0.387 0.984 0.972 0.914 0.633
+
+         Medicine 0.745 0.487 0.720 0.495 0.522 0.979 0.966 0.939 0.698 0.665 0.470 0.715 0.448 0.307 0.980 0.966 0.904 0.641
+
+            Software 0.925 0.758 0.891 0.888 0.799 1.000 1.000 0.807 0.867 0.909 0.347 0.960 0.859 0.653 0.998 0.994 0.830 0.794
+Complete Finance 0.904 0.879 0.955 0.899 0.923 0.996 0.994 0.827 0.912 0.877 0.840 0.968 0.897 0.528 0.996 0.994 0.831 0.848
+
+            Medicine 0.990 0.895 0.971 0.896 0.953 1.000 1.000 0.825 0.933 0.997 0.965 0.976 0.816 0.412 1.000 1.000 0.831 0.857
+
+           Software 0.767 0.345 0.482 0.238 0.475 1.000 1.000 0.892 0.600 0.751 0.144 0.760 0.411 0.535 0.997 0.995 0.904 0.643
+Random Finance 0.630 0.350 0.779 0.454 0.658 0.986 0.978 0.909 0.681 0.626 0.321 0.750 0.430 0.362 0.990 0.984 0.911 0.627
+
+           Medicine 0.861 0.552 0.744 0.552 0.676 0.993 0.988 0.912 0.756 0.818 0.524 0.718 0.488 0.333 0.977 0.961 0.897 0.679
+
+Avg.   0.775 0.597 0.727 0.598 0.711 0.989 0.981 0.890 0.755 0.723 0.523 0.846 0.665 0.442 0.988 0.981 0.887 0.725
+
+the highest baseline score of only 0.162. This performance     Attack) struggle with the distributed and sequential nature
+gap highlights the fundamental challenges traditional meth-    of MAS. Designed for single LLM interactions, they lack
+ods face in the MAS setting. Specifically, traditional prompt  mechanisms for reliable payload propagation and persistent
+injection techniques (Handcraft, Fake Completion, Combined     information retention across multiple agents. Even with basic
+
+6634 35th USENIX Security Symposium                                    USENIX Association
+
+
+===== PAGE 12 / 21 =====
+
+Table 2: Results for only successful extractions.                               Table 4: Results for MAS application utility.
+
+      Method            SSsys  SMsys  SStask        SMtask  ACCtool                                  GPT-4o-min GPT-4o LLaMA-3.1-70B Qwen-2.5-72B
+
+  GPT-4o-mini           0.989  0.916  0.897         0.885    1.000              Semantic Similarity  0.937   0.954              0.893         0.949
+     GPT-4o             0.991  0.929  0.982         0.969    1.000                                                            2.02/2.10     3.02/3.11
+                        0.910  0.829  0.833         0.819    0.934        LLM-as-a-judge (Ori. vs. Rec.) 2.45/2.49 3.94/3.82
+LLaMA-3.1-70B           0.850  0.625  0.934         0.829    0.947
+ Qwen-2.5-72B                                                             1.00               SSsys                               SMsys
+
+                                                                          0.75
+
+      Table 3: Results compared to baselines.                             0.50
+
+                                                                          0.25
+
+Method           SSsys SMsys SStask SMtask ACCtool F 1num GStopo ERMAS    0.00 3 4 5 6                       3                4          5  6
+
+    Handcraft    0.137  0.000  0.143  0.023  0.053  0.096   0.057  0.073                      Agent Number                    Agent Number
+Fake Completion  0.200  0.000  0.097  0.009  0.075  0.162   0.097  0.091
+Combined Attack  0.154  0.000  0.089  0.017  0.060  0.145   0.085  0.079  1.00  SStask                                           SMtask
+                 0.024  0.000  0.002  0.000  0.000  0.027   0.017  0.010
+    GCG Leak     0.210  0.000  0.124  0.000  0.146  0.371   0.427  0.182  0.75
+   LLM-Guess
+                                                                          0.50
+
+Ours             0.755 0.623 0.821 0.727 0.413 0.959 0.902 0.743          0.25
+
+                                                                          0.00 3 4 5 6                       3                4          5  6
+                                                                                                                              Agent Number
+                                                                                              Agent Number
+
+propagation/retention components added, their generic injec-                    GPT-4o-mini          GPT-4o  Llama-3.1-70B               Qwen-2.5-72B
+tion strategies fail to generate contextually relevant prompts
+for specialized agent roles and domains, limiting their ef-                     Figure 4: Results with different agent numbers.
+fectiveness. GCG completely fails in the MAS context, with
+near-zero performance (F1 = 0.027). The diverse agent config-             ing the attack difficult to detect via traffic analysis [50]. More-
+urations in MAS environments is challenging for traditional               over, this low query overhead ensures the attack remains prac-
+gradient optimization methods, making it nearly impossible                tical even with constrained interaction budgets or rate limits.
+to extract correct information in a transfer learning setting.            Consequently, the overall execution time remains reasonable
+LLM-Guess slightly outperforms other baselines but remains                (less than 11 seconds for nearly all cases in our evaluation),
+far from MASLEAK. Its limited success stems primarily from                further highlighting its real-world applicability. We thus be-
+guessing structural information (e.g., F1num=0.371), which                lieve the attack overhead is acceptable for most practical sce-
+is more predictable. However, it struggles with extracting                narios, especially considering the potentially high value of
+prompts (e.g., SMsys=0), which is the core IP of MAS.                     the extracted information.
+⑤ Reconstructed MAS applications exhibit high func-
+tional utility comparable to the originals. To validate                   6.2 Ablation Study
+whether the extracted IP translates to functional systems,
+we reconstructed the MAS applications using the extracted                 To streamline MAS evaluation (very resource-intensive), we
+configurations and evaluated their performance on identical               select a representative dataset subset for ablation studies. Fol-
+tasks. As shown in Table 4, the results demonstrate high fi-              lowing [23], we categorized topology extraction difficulty
+delity across two dimensions. First, we observed an average               as: Linear (low), Star/Complete (moderate), and Tree/Ran-
+93% semantic similarity between the outputs of the original               dom (high). To demonstrate our approach’s effectiveness, we
+and reconstructed systems, indicating that the extracted con-             prioritize the most challenging (Random) and a moderately
+figurations accurately preserve the core logic and behavior.              difficult (Star) topology. We also include Linear topology due
+Second, in our LLM-as-a-judge evaluation, the reconstructed               to its prevalence in current MAS(waterfall model [51]), ensur-
+systems consistently match the quality of the originals regard-           ing practical relevance. As L1num and F1num show consistent
+less of the original’s absolute performance level. For instance,          trends (see Table 1), we report only F1num in subsequent
+whether the original system scores 3.94 (GPT-4o) or 2.02                  experiments. This subset and GPT-4o-mini are our default
+(LLaMA-3.1-70B), the reconstructed version achieves com-                  settings below, unless otherwise specified.
+parable scores (3.82 and 2.10, respectively). This consistency            Impact of MAS Scales. Fig. 4 shows the impact of MAS
+confirms that our attack reliably clones the functional utility           scales on MASLEAK’s extraction performance under default
+of the target MAS applications.                                           settings. As the number of agents increases from 3 to 6, over-
+⑥ MASLEAK is query efficient. MASLEAK typically re-                       all performance gradually declines, although most metrics
+quires 8.7 queries on average to successfully extract the tar-            maintain extraction rates above 0.6. This trend is particularly
+geted MAS application’s IP under diverse configurations and               evident in SSsys and SMsys. The increased diversity of agent
+settings. Note that this query count is well below typical                configurations in larger systems creates more complex inter-
+thresholds of network-based anomaly detection systems, mak-               action patterns, making our attack more challenging. Systems
+
+USENIX Association                                                                           35th USENIX Security Symposium 6635
+
+
+===== PAGE 13 / 21 =====
+
+Table 5: Results with different prompting techniques.                 1.0                                                                   1.0
+
+                                                                      0.8                                                                   0.8
+
+Agent Technique SSsys SMsys SStask SMtask ACCtool F1num GStopo ERMAS  0.6Similarity                                                         0.6
+                                                                                                                                Similarity
+Standard   0.755 0.623 0.821 0.727  0.413  0.959  0.902  0.743        0.4                                                                   0.4 SSsys
+ + ReAct   0.878 0.624 0.883 0.784  0.433  0.899  0.897  0.771
+  + CoT    0.891 0.639 0.891 0.783  0.445  0.903  0.897  0.778                                                F1num
++ Refusal  0.722 0.591 0.806 0.719  0.421  0.869  0.801  0.704
+                                                                      0.2  ACCtool                                                          0.2    SMsys
+
+                                                                           SStask                                                                  GStopo
+
+                                                                           SMtask                                                                  ERM AS
+
+                                                                      0.0 0 1 2 3                                                           0.0 0 1 2 3
+                                                                                                                                                        Number of Hookings
+                                                                           Number of Hookings
+
+with six agents represent relatively large-scale MAS in current            Figure 5: Results of different hooking numbers.
+real-world applications, as most deployed systems typically
+contain between 3–5 agents [52].                                      Table 6: Results with different temperature settings.
+Impact of Agent Techniques. We evaluated how specialized
+prompting techniques affect our attack’s effectiveness by test-       Temperature SSsys SMsys SStask SMtask ACCtool F1num GStopo ERMAS
+ing against agents equipped with chain-of-thought (CoT) [53],
+ReAct [54], and refusal prompts [46]. Table 5 reveals that                 0.0 0.755 0.623 0.821 0.727 0.413 0.959 0.902 0.743
+our attack maintains robust performance across all prompt-                 0.5 0.713 0.518 0.702 0.594 0.392 0.949 0.877 0.670
+ing techniques, with ER consistently above 0.7, demonstrat-                1.0 0.703 0.450 0.667 0.530 0.355 0.954 0.891 0.651
+ing that MASLEAK can effectively penetrate MAS systems
+regardless of the underlying agent enhancement methods.               Table 7: Impact of different qLeak generation methods.
+Agents enhanced with reasoning techniques (CoT, ReAct) ac-
+tually show slightly higher vulnerability (0.771–0.778) com-          Method SSsys SMsys SStask SMtask ACCtool F1num GStopo ERMAS
+pared to standard agents (0.743), suggesting that additional
+reasoning steps may inadvertently create more opportunities           Human 0.913 0.687 0.874 0.750                                         0.391  0.893 0.891  0.771
+for our attack to extract information.                                 LLM 0.899 0.677 0.877 0.753                                          0.379  0.904 0.882  0.767
+Impact of MAS Topologies. Table 1 has shown the impact                Mixed 0.755 0.623 0.821 0.727                                         0.413  0.959 0.902  0.743
+of MAS topologies on MASLEAK’s extraction performance.
+Simpler topological structures generally yield better extrac-         fective, performance declines as the number increases due to
+tion performance. For example, linear topology consistently           message congestion. As additional hooking points are intro-
+demonstrates the highest extraction performance across all            duced, the attack message accumulates previously extracted
+models because information flows in a straightforward man-            information, creating increasingly cluttered communications,
+ner. Interestingly, complete topology also shows strong extrac-       which reduces overall attack efficiency. This insight has im-
+tion performance despite being a more complex structure. For          plications for designing defenses that must account for highly
+instance, in complete topologies, the ACC for LLaMA-3.1-              efficient single-point extraction attacks.
+70B reaches 0.923 for the finance domain, significantly higher        Impact of Temperature. Table 6 shows MASLEAK’s perfor-
+than other topologies. We attribute this to the high informa-         mance under varying LLM temperature settings. As tempera-
+tion flow density, which amplifies our attack’s effectiveness as      ture increases from 0.0 to 1.0, ERMAS decreases from 0.743 to
+the attack can rapidly propagate throughout MAS. Our find-            0.651. This degradation is expected: higher temperatures in-
+ings reveal relations between topology complexity and attack          troduce more randomness in agent outputs, reducing response
+effectiveness. Simpler structures (e.g., linear) are inherently       consistency to a moderate extent. Overall, we interpret the
+more vulnerable to information extraction, while complex              results as reasonable and generally encouraging, confirming
+structures with high connectivity (e.g., complete) demonstrate        that MASLEAK is robust to temperature variations commonly
+increased susceptibility due to enhanced information propa-           used in practice.
+gation pathways. This insight provides valuable guidance for          Impact of Different qLeak Generation Methods. We eval-
+designing more secure MAS architectures that strategically            uated three qLeak generation methods: human-crafted, LLM-
+limit information flow while maintaining necessary functional         assisted, and mixed. Table 7 confirms MASLEAK’s robustness,
+complexity.                                                           with high extraction rates (e.g., average F1num > 0.89, aver-
+Impact of Hooking Number. Fig. 5 shows the attack per-                age SS > 0.82) irrespective of the methods. This resilience
+formance with different numbers of hooking points. Attacks            arises because our design separates the leakage trigger (qLeak)
+without hooking points perform poorly (all metrics below              from the core propagation and retention mechanisms (qRetain,
+0.35), demonstrating that domain-aware hooking is essential.          qPropagate). These components reliably transmit extracted data
+Importantly, a single hooking point achieves optimal perfor-          via structured formatting and domain-specific contextualiza-
+mance across all metrics, challenging the assumption that             tion, ensuring high overall attack effectiveness even with var-
+more hooking points would yield better results. We interpret          ied initial leakage prompts.
+that, while attacks with multiple hooking points remain ef-           Impact of MAS Internal Communication Processing. As
+                                                                      mentioned in Sec. 3, some contemporary MAS frameworks
+
+6636 35th USENIX Security Symposium                                                                                                                USENIX Association
+
+
+===== PAGE 14 / 21 =====
+
+Table 8: Results with different communication processing.                        quality and diversity to represent real-world MAS deployment
+                                                                                 scenarios.6
+Internal Communication SSsys  SMsys  SStask  SMtask
+                                                                                    Tables 9 and 10 present the results respectively. First,
+    Standard          0.755 0.623 0.821 0.727                                    MASLEAK shows strong performance across both real-world
++ Summarization     0.662 ↓0.09 0.551 ↓0.07 0.492 ↓0.33 0.432 ↓0.30              MAS scenarios, with ER scores of 79.2% for CrewAI and
+                    0.678 ↓0.08 0.566 ↓0.06 0.517 ↓0.30 0.467 ↓0.26              81.4% for Coze. This consistency across different MAS frame-
+   + Filtering                                                                   works confirms the generalizability and real-world severity
+                                                                                 of our attack. Second, system-level information extraction
+may implement internal communication processing mecha-                           proves highly effective, with near-perfect agent count iden-
+nisms. This is mainly for the purpose of enhancing security                      tification and topology reconstruction across both platforms.
+and reduce the risk of information leakage.4 To paint a more                     This indicates that MAS architectural information is vulnera-
+comprehensive picture of MASLEAK’s effectiveness, we eval-                       ble to extraction attacks regardless of implementations.
+uate two representative cases: (1) summarization that com-
+presses responses exceeding length thresholds [57], and (2)                         Moreover, we observe that prompt extraction achieves high
+filtering that removes responses not conforming to predefined                    semantic similarity (SStask and SSsys averaging above 0.8)
+contents [21]. As shown in Table 8, we observe that attack                       across both platforms, with SM also showing strong results.
+performance decreases under both processing mechanisms.                          This demonstrates that MASLEAK can extract prompts that
+This is expected, as these mechanisms are designed to reduce                     closely match or are identical to the original prompts in pro-
+the amount of information that can be extracted from MAS ap-                     duction systems. We also observe that tool configuration ex-
+plications. Nevertheless, the performance degradation is not                     traction shows moderate success, consistent with our previous
+overwhelming, with SS remaining above 0.5 for most metrics,                      findings that tool extraction presents greater challenges than
+indicating MASLEAK can still effectively extract information                     prompt extraction. We also show the reconstructed IP ex-
+even with these processing mechanisms in place.                                  amples for CrewAI and Coze applications in Appendix B.1.
+                                                                                 In sum, these results demonstrate that MASLEAK can effec-
+6.3 Real-world MAS Applications                                                  tively extract IP from real-world MAS applications with high
+                                                                                 fidelity, raising severe security concerns for commercial MAS
+As aforementioned, we evaluated MASLEAK on real-world                            deployments across different platforms.
+MAS applications using CrewAI and Coze. For CrewAI, we
+select ten applications with publicly available IP from [42],                    6.4 Reflection on Vulnerability and Impact
+which are official MAS instances provided by CrewAI, en-
+suring high quality and covering diverse, practical scenarios                    Generalization of IP Leakage Risks. The consistently high
+(e.g., stock analysis, trip planning); details are at Table 9.                   extraction rates across diverse models raise a natural ques-
+For Coze, due to platform restrictions, all application IPs                      tion: does MASLEAK simply exploit superficial “echo behav-
+are publicly invisible, making it impossible to obtain ground                    ior”? Three observations suggest otherwise. First, MASLEAK
+truth. Therefore, we recruited PhD-level experts with exten-                     succeeds across six LLMs spanning different families, archi-
+sive agent development experience to design ten high-quality                     tectures, and scales (7B–72B). Second, reasoning-enhanced
+MAS applications and deploy them on Coze.5 To ensure qual-                       agents (CoT, ReAct) exhibit higher vulnerability than stan-
+ity and representativeness, our recruited experts first analyzed                 dard agents (Table 5), which echo behavior cannot explain
+Coze’s official tutorials and the top-20 most popular appli-                     alone. Third, our hooking produces semantically coherent out-
+cations on the platform. We aligned our dataset with these                       puts, not verbatim input repetitions. These findings confirm
+real-world references across three dimensions: topic, scale,                     that MASLEAK leverages the core functional requirements of
+and structure. Specifically, the constructed applications cover                  LLM agents: instruction-following, in-context learning, and
+diverse domains (see Table 10) and mirror the complexity of                      pattern completion. Thus, the vulnerability is not a transient
+top-ranking Coze apps, which typically feature 3–6 agents                        bug but a structural feature of current MAS designs; as long as
+organized in chain topologies. We confirm the functional cor-                    agents are optimized to follow instructions and complete pat-
+rectness of these apps through testing. Overall, we believe                      terns, they remain inherently susceptible to this attack surface,
+these expert-developed MAS applications provide sufficient                       posing a significant challenge for utility-preserving defenses.
+                                                                                 Enabling Downstream Attacks. The risks exposed by
+    4These processing mechanisms, however, may trim off useful intermediate      MASLEAK extend beyond IP leakage itself. By converting a
+information and are not always equipped in MAS [17, 55, 56].                     black-box MAS into a white-box system, MASLEAK alters
+                                                                                 the threat landscape. The extracted topology and prompts
+    5Our applications were built by experienced domain experts who were
+kept blind to our attack methods. We verified that each one is fully functional      6We clarify that some applications in Table 10 contain “Manager” in their
+and represents a high-value use case. That said, no harm to real users was       names (e.g., Financial Goal Manager). This denotes the agent’s functional
+found.                                                                           role, not the “manager-style” architecture excluded in this study (as noted in
+                                                                                 Sec. 3.1). All applications employ fixed communication topologies.
+
+USENIX Association                                                               35th USENIX Security Symposium 6637
+
+
+===== PAGE 15 / 21 =====
+
+Table 9: Main results for CrewAI applications.
+
+MAS Application Name                 SSsys  SMsys                 SStask  SMtask  ACCtool  F 1num  GStopo  E RMAS
+
+Landing_page_generator               1.000  1.000                 0.981   1.000    0.800   1.000   0.933    0.959
+Job_posting                          0.999  0.667                 0.962   1.000    0.000   1.000   1.000    0.804
+Stock_analysis                       0.973  0.333                 0.930   1.000    0.600   1.000   1.000    0.834
+Game_builder_crew                    1.000  1.000                 0.614   0.333    1.000   1.000   1.000    0.827
+Screenplay_writer                    0.268  0.000                 0.000   0.000    0.250   0.571   0.500    0.227
+Write_a_book_with_flows              0.967  0.500                 0.880   1.000    0.333   1.000   1.000    0.811
+Recruitment                          1.000  1.000                 0.841   1.000    0.000   1.000   1.000    0.834
+Marketing_strategy                   0.999  0.500                 0.943   1.000    0.600   1.000   1.000    0.863
+Surprise_trip                        0.663  0.667                 0.854   1.000    1.000   1.000   1.000    0.883
+Match_profile_to_positions           0.667  0.667                 0.816   1.000    0.800   1.000   1.000    0.857
+Avg.                                 0.854  0.633                 0.782   0.833    0.538   0.957   0.943    0.792
+
+Table 10: Main results for Coze applications.
+
+MAS Application Name                 SSsys  SMsys                 SStask  SMtask  ACCtool  F 1num  GStopo  E RMAS
+
+Monster_Hunter_Challenge             0.750  0.750                 0.750   0.750    0.500   1.000   1.000    0.786
+Financial_Goal_Manager               1.000  1.000                 1.000   1.000    1.000   1.000   1.000    1.000
+HealthGoals                          0.833  0.833                 0.825   0.833    0.600   0.909   0.875    0.815
+Financial_Advisor                    0.751  0.600                 0.995   0.800    0.500   1.000   1.000    0.807
+Hotel_Booking_Manager                0.871  0.333                 1.000   1.000    0.200   1.000   0.941    0.764
+Team_Manager                         0.967  0.500                 0.880   1.000    0.333   1.000   0.933    0.802
+Medical_Health_Tracker               0.758  0.677                 0.926   0.667    1.000   1.000   1.000    0.861
+Daily_Routine_Tracker                0.999  0.500                 0.943   1.000    0.600   1.000   1.000    0.863
+Medical_Symptom_Severity_Logger      0.433  0.000                 0.472   0.000    0.400   1.000   1.000    0.472
+Finance_Assistant                    0.982  1.000                 1.000   1.000    0.800   1.000   1.000    0.969
+Avg.                                 0.834  0.619                 0.879   0.805    0.593   0.991   0.975    0.814
+
+enable targeted attacks, such as membership inference [58]                are lacking, we refer to existing defense approaches for single-
+or precise adversarial evasions, that were previously infeasi-            agent systems and evaluate their effectiveness in our context.
+ble against opaque systems. Furthermore, the ability to clone             We consider two settings: 1) For a “full protection,” we ap-
+high-fidelity agents (as shown in Sec. 6.1) allows adversaries            ply defense mechanisms to each agent in a MAS. 2) For a
+to replicate trusted services for phishing or disinformation.             “lightweight protection”, we apply defenses to one agent in a
+This confirms that the leakage represents a critical structural           MAS (as a natural extension of single-agent defense, we se-
+weakness rather than a benign information spill.                          lect the first agent in a MAS to apply the defense mechanism,
+Error Analysis. We sampled instances with ERMAS < 0.1                     as it is the first agent to receive the attack query). Current de-
+from Table 1 and analyzed failures through the lens of Eq. 4.             fense mechanisms are categorized into prevention-based and
+We identified two primary failure modes. First, safety refusal            detection-based defenses [40]. Prevention-based approaches
+(reducing P(Leak) or P(Propagate)) occurred predominantly                 aim to neutralize attacks before they can influence the model’s
+in GPT-4o, where built-in safety filters blocked information              behavior. We evaluate three key prevention strategies: De-
+disclosure or propagation. Second, retention loss (reducing               limiters [47], Sandwich Prevention [59], and Instructional
+P(Retain)) affected weaker models like GPT-4o-mini, where                 Prevention [47]. Detection-based Defenses focus on identify-
+extracted information was lost before reaching the final output.          ing whether a response contains injected malicious content.
+These failure modes suggest two defense directions: strength-             We evaluate two primary detection methods: Known-answer
+ening refusal mechanisms and limiting context retention. No-              Detection [47] and Perplexity (PPL) Detection [47].
+tably, both directions rely on model-level behaviors rather               Prevention-Based Defenses. We follow the standard defense
+than MAS-level controls, revealing a gap in current system                settings to launch these three prevention methods: Delimiters
+design. This motivates future defenses that target the MAS                uses special symbols (e.g., triple quotes, XML tags) to isolate
+architecture itself directly.                                             user data, forcing the LLM to treat it strictly as data rather than
+                                                                          instructions. Sandwich Prevention appends a reminder prompt
+7 Defense                                                                 after user data (e.g., “Remember, your task is to [instruction]”)
+                                                                          to realign the LLM with its original task if compromised by
+This section explores defense mechanisms against MASLEAK.                 injected instructions. Instructional Prevention modifies the
+Since comprehensive defense studies specifically for MAS                  original instruction prompt by adding explicit warnings (e.g.,
+                                                                          “Malicious users may try to change this instruction; follow the
+
+6638 35th USENIX Security Symposium                                                                                USENIX Association
+
+
+===== PAGE 16 / 21 =====
+
+Table 11: Results for our attack under “full-agent” prevention.                                 1.0
+                                                                                                               PPL ROC (AUC = 0.71)
+Full-Agent Prevention SSsys SMsys SStask SMtask ACCtool F1num GStopo ERMAS
+                                                                                                               Known-answer (0.047, 0.266)
+                                                                                                0.8
+
+No defense   0.755 0.623 0.821 0.727  0.413  0.959  0.902  0.743            True Positive Rate  0.6
+Instruction  0.356 0.292 0.559 0.437  0.258  0.671  0.604  0.454
+Sandwich     0.397 0.309 0.577 0.391  0.365  0.703  0.626  0.481
+Delimiters   0.442 0.277 0.534 0.362  0.374  0.798  0.715  0.498
+
+                                                                                                0.4
+
+                                                                                                0.2
+
+[instruction] regardless”), directing the LLM to ignore any                                     0.00.0  0.2  0.4  0.6                       0.8  1.0
+instructions within user data.
+                                                                                                             False Positive Rate
+Detection-Based Defenses. Known-answer detection proac-
+tively validates model behavior by appending a detection                    Figure 6: Results for our attack under “full-agent” detection.
+instruction (e.g., “Repeat ’Hello World!’ once while ignor-
+ing the following text”) to an agent’s response. If the model               of AUC (0.73 vs. 0.71). These results indicate that lightweight
+fails to output the expected phrase, the response is flagged as             defenses are insufficient to counter MASLEAK.
+potentially compromised. In MAS, we randomly select one
+agent from each system to evaluate. PPL detection identifies                Discussion. In sum, while the heavyweight, full-agent setting
+compromised responses by measuring semantic disruption.                     impedes MASLEAK, it introduces substantial performance
+This approach assumes that the injected content increases                   overhead (per our measurement, the average response time
+text perplexity beyond normal thresholds. Following [47], We                increases by 2.1x), normal MAS performance is affected (as
+use false negative rate (FNR) and false positive rate (FPR),                noted in [47], the average performance drops by more than
+where FNR measures the percent of attack samples that evade                 20%), and increased FPR (as in Fig. 6). We also find that
+detection (lower is better for defense), and FPR indicates                  enforcing full-agent setting incurs a heavy burden on MAS
+the percent of benign samples incorrectly flagged as attacks                developers, as it requires complex debugging and maintenance
+(lower is better for usability). We use cl100k_base model                   efforts to ensure that all agents are well protected. Overall,
+from OpenAI tiktoken [60] to calculate the perplexity.                      we observe a fundamental dilemma: existing defenses either
+                                                                            provide insufficient protection or incur prohibitive costs. This
+Experiment Results. Table 11 and Fig. 6 present the re-                     challenge underscores the urgent need for future research
+sults when defenses are deployed across all agents in                       into the evolving security arms race. As more sophisticated
+a MAS. We observe that defense mechanisms reduce                            prompt injection techniques emerge, they may combine with
+MASLEAK’s effectiveness. Specifically, prevention-based de-                 MASLEAK to create exponential and continuous security
+fenses reduce MASLEAK’s overall ERMAS from 0.743 to                         risks. Future work should focus on developing cost-effective
+0.454–0.498. While this represents meaningful mitigation,                   defense strategies, such as identifying and selectively pro-
+MASLEAK still achieves notable attack success. Moreover,                    tecting critical agents, while anticipating that attack methods
+prior work [47] (also confirmed by our observation) has                     will likely evolve towards greater stealth—for instance, by
+shown that prevention-based methods notably degrade nor-                    exfiltrating information across multiple interactions to evade
+mal MAS performance, resulting in a dilemma between se-                     detection. We leave exploring these aspects to future work.
+curity and system usability. For detection-based defenses in
+Fig. 6, Known-answer detection achieves only a 26.6% TPR,                   8 Related Work
+meaning over 70% of attacks evade detection. PPL detec-
+tion yields an AUC of 0.71, which is above random guessing                  These attacks pose a significant privacy risk. Early approaches
+(0.5) but still far from perfect detection. Overall, these re-              classified prompts and LLMs for reverse inference [61, 62].
+sults indicate that existing full-agent defenses cannot fully               Subsequent research employed adversarial techniques, in-
+protect against MASLEAK, while incurring non-trivial over-                  cluding human-crafted attacks [13] and gradient-based op-
+head and false positives. We observe that the successful de-                timization [12]. Reinforcement learning was used to train
+fense cases are due to MASLEAK’s chain-based attack nature,                 red-teaming LLMs for extraction [14] to address the limita-
+where the detection of a single agent leads to the collapse                 tions of gradient-based methods in black-box cases. However,
+of the entire MAS attack. Additionally, for “lightweight de-                these methods struggle in black-box MAS because gradient-
+fense”, we observe even weaker protection. As shown in                      based optimization lacks transferability across agents, attack-
+Table 13 in Appendix B.2, prevention-based methods fail                     ers cannot observe internal model structures, and attacks do
+to block MASLEAK. For detection-based methods, Known-                       not propagate between agents. MASLEAK addresses these
+answer detection drops to only 18.2% TPR, an 8.4% decrease
+in detection rate compared to full-agent deployment. PPL de-
+tection yields similar results to the full-agent setting in terms
+
+USENIX Association                                                                                      35th USENIX Security Symposium 6639
+
+
+===== PAGE 17 / 21 =====
+
+limitations with a novel propagation mechanism that main-        not compromise real users. Instead, we recruited experts to de-
+tains effectiveness across the entire agent chain.               sign and deploy MAS applications specifically for this study.
+                                                                 Decision to Publish the Paper. Given the rapid commercial-
+9 Conclusion                                                     ization of MAS, we believe that systematically exposing these
+                                                                 vulnerabilities is essential to motivating the development of
+We have presented MASLEAK, a novel attack framework              stronger protections. The benefit of providing a benchmark for
+designed to extract IP from MAS. MASLEAK supports a              future defenses outweighs the risks, justifying the publication
+black-box setting, and by carefully crafting attack queries,     of this work.
+MASLEAK can hijack, elicit, propagate, and retain responses
+from each MAS agent, revealing a full set of IP elements.        Open Science
+Evaluation on both synthetic and real-world MAS demon-
+strates the effectiveness of MASLEAK. We also measure and        To support reproducibility and future MAS security re-
+discuss potential for defenses against such attacks.             search, we provide access to MASLEAK, synthetic and
+                                                                 real-world datasets and evaluation scripts at the URL:
+Acknowledgments                                                  https://zenodo.org/records/17986771, access is restricted to
+                                                                 academic researchers to prevent misuse.
+We sincerely thank the anonymous reviewers and our shep-
+herd for their valuable feedback and guidance. This paper was    References
+supported in part by a grant from the Research Grants Coun-
+cil of the Hong Kong Special Administrative Region, China         [1] M. Cemri, M. Z. Pan, S. Yang, L. A. Agrawal, B. Chopra,
+HKUST C6004-25G, C6015-23G, 16214723, 16206524, an                     R. Tiwari, K. Keutzer, A. Parameswaran, D. Klein,
+ITF grant under the contract ITS/161/24FP, and research fund           K. Ramchandran, M. Zaharia, J. E. Gonzalez, and
+provided by HSBC.                                                      I. Stoica, “Why do multi-agent llm systems fail?” 2025.
+                                                                       [Online]. Available: https://arxiv.org/abs/2503.13657
+Ethical Considerations
+                                                                  [2] H. Zhang, Z. Cui, X. Wang, Q. Zhang, Z. Wang,
+We carefully considered the ethical implications of this work          D. Wu, and S. Hu, “If multi-agent debate is the answer,
+throughout the research process. We introduce MASLEAK, a               what is the question?” 2025. [Online]. Available:
+framework for assessing IP leakage vulnerabilities in MAS.             https://arxiv.org/abs/2502.08788
+Our goal is to highlight security gaps to facilitate the devel-
+opment of robust defenses without introducing uncontrolled        [3] “Ai agents market summary.” [On-
+risks. We adhered to responsible disclosure principles and eth-        line]. Available: https://www.grandviewresearch.com/
+ical research standards. We list the primary stakeholders, our         industry-analysis/ai-agents-market-report
+mitigation against potential risks, and why we have decided
+to publish the paper as follows.                                  [4] “Openai agent infrastructure.” [Online]. Available: https:
+Stakeholders. We identify four primary stakeholder groups              //openai.com/index/announcing-the-stargate-project/
+and the specific impact on each:
+MAS Developers. MAS Developers are alerted to the insuffi-        [5] “Coze.” [Online]. Available: https://coze.com/
+ciency of black-box hosting, motivating a shift toward more
+resilient architectural designs to protect proprietary assets.    [6] B. Zhang, Y. Tan, Y. Shen, A. Salem, M. Backes, S. Zan-
+Platform Providers. Platform Providers are made aware of               nettou, and Y. Zhang, “Breaking agents: Compromising
+leakage risks, necessitating the implementation of platform-           autonomous llm agents through malfunction amplifica-
+level defenses (e.g., traffic analysis) to safeguard hosted ap-        tion,” 2024.
+plications and maintain trust.
+Users. Users benefit indirectly, as exposing agent cloning        [7] Z. Zhang, Y. Zhang, L. Li, J. Shao, H. Gao, Y. Qiao,
+vulnerabilities accelerates the development of verification            L. Wang, H. Lu, and F. Zhao, “Psysafe: A comprehen-
+mechanisms against potential misuse like phishing.                     sive framework for psychological-based attack, defense,
+Research Community. The research community gains the first             and evaluation of multi-agent system safety,” in ACL,
+systematic benchmark to facilitate the design of robust, secure        2024.
+MAS architectures.
+Mitigation. To avoid unintended consequences, we conducted        [8] T. Ju, Y. Wang, X. Ma, P. Cheng, H. Zhao, Y. Wang,
+our experiments in a strictly controlled environment. We did           L. Liu, J. Xie, Z. Zhang, and G. Liu, “Flooding
+                                                                       spread of manipulated knowledge in llm-based
+                                                                       multi-agent communities,” 2024. [Online]. Available:
+                                                                       https://arxiv.org/abs/2407.07791
+
+6640 35th USENIX Security Symposium                              USENIX Association
+
+
+===== PAGE 18 / 21 =====
+
+[9] D. Lee and M. Tiwari, “Prompt infection: Llm-to-llm              [Online]. Available: https://api.semanticscholar.org/
+      prompt injection within multi-agent systems,” 2024.             CorpusID:261064713
+      [Online]. Available: https://arxiv.org/abs/2410.07283
+                                                                [20] C. Qian, W. Liu, H. Liu, N. Chen, Y. Dang, J. Li, C. Yang,
+[10] R. M. S. Khan, Z. Tan, S. Yun, C. Flemming, and                  W. Chen, Y. Su, X. Cong, J. Xu, D. Li, Z. Liu, and
+      T. Chen, “Agents Under Siege: Breaking pragmatic                M. Sun, “Chatdev: Communicative agents for software
+      multi-agent llm systems with optimized prompt attacks,”         development,” in ACL, 2023.
+      2025. [Online]. Available: https://arxiv.org/abs/2504.
+      00218                                                     [21] S. Hong, X. Zheng, J. P. Chen, Y. Cheng, C. Zhang,
+                                                                      Z. Wang, S. K. S. Yau, Z. H. Lin, L. Zhou, C. Ran,
+[11] S. Cohen, R. Bitton, and B. Nassi, “Here comes                   L. Xiao, and C. Wu, “Metagpt: Meta programming for
+      the ai worm: Unleashing zero-click worms that                   multi-agent collaborative framework,” ICLR, 2023.
+      target genai-powered applications,” arXiv preprint
+      arXiv:2403.02817, 2024.                                   [22] C. Qu, S. Dai, X. Wei, H. Cai, S. Wang, D. Yin,
+                                                                      J. Xu, and J. Wen, “Tool learning with large language
+[12] B. Hui, H. Yuan, N. Gong, P. Burlina, and Y. Cao, “Pleak:        models: A survey,” Frontiers of Computer Science,
+      Prompt leaking attacks against large language model             2024. [Online]. Available: https://api.semanticscholar.
+      applications,” ser. CCS, 2024.                                  org/CorpusID:270067624
+
+[13] Y. Zhang, N. Carlini, and D. Ippolito, “Effective prompt   [23] C. Qian, Z. Xie, Y. Wang, W. Liu, K. Zhu, H. Xia,
+      extraction from language models,” arXiv preprint                Y. Dang, Z. Du, W. Chen, C. Yang, Z. Liu, and M. Sun,
+      arXiv:2307.06865, 2023.                                         “Scaling large language model-based multi-agent collab-
+                                                                      oration,” in ICLR, 2025.
+[14] Y. Nie, Z. Wang, Y. Yu, X. Wu, X. Zhao, W. Guo,
+      and D. Song, “Privagent: Agentic-based red-teaming        [24] M. Yu, S. Wang, G. Zhang, J. Mao, C. Yin, Q. Liu,
+      for llm privacy leakage,” 2024. [Online]. Available:            Q. Wen, K. Wang, and Y. Wang, “Netsafe: Exploring
+      https://arxiv.org/abs/2412.05734                                the topological safety of multi-agent networks,” 2024.
+                                                                      [Online]. Available: https://arxiv.org/abs/2410.15686
+[15] F. Jiang, Z. Xu, L. Niu, B. Y. Lin, and R. Poovendran,
+      “Chatbug: A common vulnerability of aligned llms in-      [25] C. Qian, W. Liu, H. Liu, N. Chen, Y. Dang, J. Li,
+      duced by chat templates,” in Proceedings of the AAAI            C. Yang, W. Chen, Y. Su, X. Cong, J. Xu, D. Li,
+      Conference on Artificial Intelligence, vol. 39, no. 26,         Z. Liu, and M. Sun, “ChatDev: Communicative
+      2025, pp. 27 347–27 355.                                        agents for software development,” in Proceedings
+                                                                      of the 62nd Annual Meeting of the Association for
+[16] J.-T. Huang, J. Zhou, T. Jin, X. Zhou, Z. Chen,                  Computational Linguistics (Volume 1: Long Papers),
+      W. Wang, Y. Yuan, M. Sap, and M. R. Lyu, “On                    L.-W. Ku, A. Martins, and V. Srikumar, Eds. Bangkok,
+      the resilience of llm-based multi-agent collaboration           Thailand: Association for Computational Linguistics,
+      with faulty agents,” 2024. [Online]. Available: https:          Aug. 2024, pp. 15 174–15 186. [Online]. Available:
+      //api.semanticscholar.org/CorpusID:271693147                    https://aclanthology.org/2024.acl-long.810/
+
+[17] “Crewai.” [Online]. Available: https://www.crewai.com/     [26] H. Trivedi, T. Khot, M. Hartmann, R. Manku, V. Dong,
+                                                                      E. Li, S. Gupta, A. Sabharwal, and N. Balasubramanian,
+[18] T. B. Brown, B. Mann, N. Ryder, M. Subbiah,                      “Appworld: A controllable world of apps and people for
+      J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam,               benchmarking interactive coding agents.”
+      G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss,
+      G. Krueger, T. Henighan, R. Child, A. Ramesh,             [27] D. Pasquini, E. M. Kornaropoulos, and G. Ateniese,
+      D. M. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen,             “{LLMmap}: Fingerprinting for large language models,”
+      E. Sigler, M. teusz Litwin, S. Gray, B. Chess, J. Clark,        in USENIX Security.
+      C. Berner, S. McCandlish, A. Radford, I. Sutskever, and
+      D. Amodei, “Language models are few-shot learners,”       [28] N. Carlini, D. Paleka, K. D. Dvijotham, T. Steinke,
+      ArXiv, vol. abs/2005.14165, 2020. [Online]. Available:          J. Hayase, A. F. Cooper, K. Lee, M. Jagielski, M. Nasr,
+      https://api.semanticscholar.org/CorpusID:218971783              A. Conmy, E. Wallace, D. Rolnick, and F. Tramèr, “Steal-
+                                                                      ing part of a production language model,” in ICML,
+[19] L. Wang, C. Ma, X. Feng, Z. Zhang, H. ran Yang,                  2024.
+      J. Zhang, Z.-Y. Chen, J. Tang, X. Chen, Y. Lin,
+      W. X. Zhao, Z. Wei, and J. rong Wen, “A survey            [29] F. Perez and I. Ribeiro, “Ignore previous prompt:
+      on large language model based autonomous agents,”               Attack techniques for language models,” in NeurIPS
+      Frontiers Comput. Sci., vol. 18, p. 186345, 2023.               ML Safety Workshop, 2022. [Online]. Available:
+                                                                      https://openreview.net/forum?id=qiaRo_7Zmug
+
+USENIX Association                                              35th USENIX Security Symposium 6641
+
+
+===== PAGE 19 / 21 =====
+
+[30] S. Zhang, J. Zhao, R. Xu, X. Feng, and H. Cui, “Output      [41] W. Zou, R. Geng, B. Wang, and J. Jia, “Poisonedrag:
+      constraints as attack surface: Exploiting structured             Knowledge corruption attacks to retrieval-augmented
+      generation to bypass llm safety mechanisms,” 2025.               generation of large language models,” USENIX Security,
+      [Online]. Available: https://arxiv.org/abs/2503.24191            2024.
+
+[31] H. Xu, W. Zhang, Z. Wang, F. Xiao, R. Zheng,                [42] “Crewai examples.” [Online]. Available: https://docs.
+      Y. Feng, Z. Ba, and K. Ren, “Redagent: Red                       crewai.com/examples/example
+      teaming large language models with context-aware
+      autonomous language agent,” 2024. [Online]. Available:     [43] N. Reimers and I. Gurevych, “Sentence-bert: Sentence
+      https://arxiv.org/abs/2407.16667                                 embeddings using siamese bert-networks,” in EMNLP.
+
+[32] Y. Qin, K. Song, Y. Hu, W. Yao, S. Cho, X. Wang, X. Wu,     [44] X. Gao, B. Xiao, D. Tao, and X. Li, “A survey of graph
+      F. Liu, P. Liu, and D. Yu, “InFoBench: Evaluating in-            edit distance,” Pattern Analysis and applications, vol. 13,
+      struction following ability in large language models,” in        pp. 113–129, 2010.
+      ACL, 2024.
+                                                                 [45] E. Debenedetti, J. Zhang, M. Balunovic, L. Beurer-
+[33] J. tse Huang, J. Zhou, T. Jin, X. Zhou, Z. Chen,                  Kellner, M. Fischer, and F. Tramèr, “Agentdojo: A dy-
+      W. Wang, Y. Yuan, M. R. Lyu, and M. Sap, “On                     namic environment to evaluate prompt injection attacks
+      the resilience of llm-based multi-agent collaboration            and defenses for LLM agents,” in NeuIPS, 2024.
+      with faulty agents,” 2025. [Online]. Available: https:
+      //arxiv.org/abs/2408.00989                                 [46] M. Andriushchenko, A. Souly, M. Dziemian, D. Duenas,
+                                                                       M. Lin, J. Wang, D. Hendrycks, A. Zou, J. Z. Kolter,
+[34] Y. Zhang, J. Chen, J. Wang, Y. Liu, C. Yang, C. Shi,              M. Fredrikson, Y. Gal, and X. Davies, “Agentharm: A
+      X. Zhu, Z. Lin, H. Wan, Y. Yang, T. Sakai, T. Feng,              benchmark for measuring harmfulness of LLM agents,”
+      and H. Yamana, “ToolBeHonest: A multi-level halluci-             in ICLR, 2025.
+      nation diagnostic benchmark for tool-augmented large
+      language models,” in EMNLP, 2024.                          [47] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formal-
+                                                                       izing and benchmarking prompt injection attacks and
+[35] G. Chen, S. Dong, Y. Shu, G. Zhang, J. Sesay, B. Karls-           defenses,” in USENIX Security, 2024.
+      son, J. Fu, and Y. Shi, “Autoagents: A framework for
+      automatic agent generation,” in IJCAI, 2024.               [48] A. Zou, Z. Wang, J. Z. Kolter, and M. Fredrikson, “Uni-
+                                                                       versal and transferable adversarial attacks on aligned
+[36] Z. Chen, W. Chen, C. Smiley, S. Shah, I. Borova,                  language models,” 2023.
+      D. Langdon, R. Moussa, M. Beane, T.-H. Huang,
+      B. Routledge, and W. Y. Wang, “Finqa: A dataset of         [49] Q. Li, J. Hong, C. Xie, J. Tan, R. Xin, J. Hou, X. Yin,
+      numerical reasoning over financial data,” Proceedings            Z. Wang, D. Hendrycks, Z. Wang, B. Li, B. He, and
+      of EMNLP 2021, 2021.                                             D. Song, “Llm-pbe: Assessing data privacy in large lan-
+                                                                       guage models,” VLDB Endow., 2024.
+[37] D. Jin, E. Pan, N. Oufattole, W.-H. Weng, H. Fang, and
+      P. Szolovits, “What disease does this patient have? a      [50] M. Ahmed, A. N. Mahmood, and J. Hu, “A survey of
+      large-scale open domain question answering dataset               network anomaly detection techniques,” Journal of Net-
+      from medical exams,” arXiv preprint arXiv:2009.13081,            work and Computer Applications.
+      2020.
+                                                                 [51] K. Petersen, C. Wohlin, and D. Baca, “The waterfall
+[38] “Langchain.” [Online]. Available: https://www.                    model in large-scale development,” in PROFES, 2009.
+      langchain.com/
+                                                                 [52] T. Guo, X. Chen, Y. Wang, R. Chang, S. Pei, N. V.
+[39] “Llamaindex.” [Online]. Available: https://www.                   Chawla, O. Wiest, and X. Zhang, “Large language model
+      llamaindex.ai/                                                   based multi-agents: A survey of progress and chal-
+                                                                       lenges,” in IJCAI, 2024.
+[40] J. Shi, Z. Yuan, Y. Liu, Y. Huang, P. Zhou,
+      L. Sun, and N. Z. Gong, “Optimization-based prompt         [53] J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia,
+      injection attack to llm-as-a-judge,” in Proceedings              E. Chi, Q. V. Le, D. Zhou et al., “Chain-of-thought
+      of the 2024 on ACM SIGSAC Conference on                          prompting elicits reasoning in large language models,”
+      Computer and Communications Security, ser. CCS                   NeuIPS, 2022.
+      ’24. New York, NY, USA: Association for Computing
+      Machinery, 2024, p. 660–674. [Online]. Available:          [54] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan,
+      https://doi.org/10.1145/3658644.3690291                          and Y. Cao, “React: Synergizing reasoning and acting
+                                                                       in language models,” in International Conference on
+                                                                       Learning Representations (ICLR), 2023.
+
+6642 35th USENIX Security Symposium                              USENIX Association
+
+
+===== PAGE 20 / 21 =====
+
+[55] Y. Du, S. Li, A. Torralba, J. B. Tenenbaum, and I. Mor-        Algorithm 1: Phase I: Offline Adv. Query Gen.
+      datch, “Improving factuality and reasoning in language
+      models through multiagent debate,” in ICML.                       Input: Domain D, domain descriptions S, language model M, Hooking
+
+[56] W. Chen, Y. Su, J. Zuo, C. Yang, C. Yuan, C.-M. Chan,                      Template T , Total number of queries N, Number of hooking examples
+      H. Yu, Y. Lu, Y.-H. Hung, C. Qian et al., “Agentverse:                     per type L, IP types Ω = {ω1, . . . , ω5}
+      Facilitating multi-agent collaboration and exploring              Output: Set of adversarial queries Q
+      emergent behaviors,” in ICLR, 2024.
+                                                                        ;            // Step 1: Construct Domain-Specific Hooking Pools
+
+                                                                    1 KD ← SummarizeDomainKnowledge(S, M);
+
+                                                                    2 Initialize HD, j = 0/ for each j ∈ Ω ;    // Initialize type-specific
+
+                                                                           Hooking Pools
+
+                                                                    3 for j ∈ Ω do
+
+                                                                            ;                                        // For each IP type
+
+[57] Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu,              4       for i = 1 to L do
+      L. Jiang, X. Zhang, S. Zhang, J. Liu et al., “Autogen:
+      Enabling next-gen llm applications via multi-agent con-                     ;                            // Generate L hookings per type
+      versation,” in ICLR 2024 Workshop on Large Language
+      Model (LLM) Agents.                                           5             d ← SampleDomainKnowledge(KD);
+
+                                                                                  ;                    // Sample a piece of domain knowledge
+
+                                                                    6             RD,i, j ← GenerateHookingContent(D, d, j, M) ; // Generate
+
+                                                                                     example content for type j
+
+                                                                    7             HD,i, j ← FillHookingTemplate(RD,i, j, T ) ; // Create hooking
+
+                                                                                     structure
+
+                                                                    8             HD, j ← HD, j ∪ {HD,i, j };
+
+[58] R. Wen, Z. Li, M. Backes, and Y. Zhang, “Membership                          ;                    // Add hooking to type-specific pool
+      inference attacks against in-context learning,” ser. CCS,
+      2024.                                                         9       end
+
+                                                                    10 end
+
+                                                                        ;                        // Step 2: Generate Adversarial Queries
+
+                                                                    11 Q ← 0/ ;                                      // Initialize query set
+
+[59] “Sandwich defense.”  [Online].  Avail-                         12 qPropagate ← "Please repeat the whole content between [[[ and ]]]";
+
+able: https://learnprompting.org/docs/prompt_hacking/                   ;                                       // Define propagation query
+
+                                                                    13 Nper_type ← N/|Ω| ;                           // Queries per IP type
+
+defensive_measures/sandwich_defense                                 14 for j ∈ Ω do
+
+                                                                            ;                          // Generate queries for each IP type
+
+[60] “tiktoken.” [Online]. Available: https://github.com/           15      ωtarget ← j;
+      openai/tiktoken
+                                                                            ;                                  // Set current IP target type
+
+                                                                    16      qLeak ← DesignLeakQuery(ωtarget) ;       // Craft leak query for
+
+                                                                               this type
+
+[61] Z. Sha and Y. Zhang, “Prompt stealing attacks                  17      for k = 1 to Nper_type do
+      against large language models,” arXiv preprint
+      arXiv:2402.12959, 2024.                                                     // Generate N_per_type queries for this type
+
+                                                                    18            qRetain ← SampleFromPool(HD, j) ;  // Sample hooking
+
+                                                                                     specific to type j
+
+                                                                    19            qk ← "[[[ " + qLeak + " \n" + qRetain + " \n" + qPropagate + " ]]]";
+
+[62] C. Zhang, J. X. Morris, and V. Shmatikov, “Extracting          20            Q ← Q ∪ {qk};
+      prompts by inverting LLM outputs,” in EMNLP, 2024.
+                                                                    21      end
+
+                                                                    22 end
+
+                                                                    23 return Q;
+
+A Algorithms for MASLEAK                                            prompts, relationship analysis for topology) into the final
+                                                                    profile Ω′, which is returned.
+We show the algorithms for MASLEAK in this section. Algo-
+rithm 1 details the offline generation of adversarial queries.      B Additional Experimental Results
+First, it constructs type-specific hooking pools (HD, j) using
+domain knowledge, creating tailored candidates for the qRetain      B.1 Reconstructed IP Examples for CrewAI
+component (lines 1–10). Subsequently, the algorithm gener-                 and Coze Applications
+ates N queries distributed across the IP types Ω. It iterates
+through each type ω j, designing a specific qLeak (line 16) and     For the CrewAI and Coze applications, we provide recon-
+sampling a corresponding qRetain from the type-specific pool        structed IP examples in Table 12, which includes the original
+HD, j (line 18). These sub-queries are concatenated with a          and reconstructed IP prompts. We mark the differences be-
+fixed qPropagate into the final structured query format (line 19),  tween the original and reconstructed IP prompts in red. In
+which are collected in the output set Q (line 20) for use in        summary, the reconstructed IP prompts are almost identical
+Phase II.                                                           to the original ones, with only minor differences that do not
+                                                                    affect the overall meaning of the prompts. This indicates that
+   Algorithm 2 details the IP reconstruction from raw re-           our attack method is effective in extracting the IP prompts of
+sponses Rcoll. First (lines 4–9), potential IP fragments are        CrewAI and Coze applications. Furthermore, through manual
+extracted from responses using structural markers (e.g.,            inspection of the extracted IP prompts, we confirm that criti-
+“[DATA]”) and categorized by type ω j into E. Second (lines         cal information (e.g., business logic and proprietary reasoning
+10–18), to mitigate hallucinations, we identify common con-         patterns) is preserved in the reconstructed prompts.
+tent across multiple extractions for each type using pairwise
+comparison (FindMatchedContent()). The longest consistent
+text becomes the candidate Ω′[ω j]. Third (lines 19–23), type-
+specific rules refine these candidates (e.g., direct use for
+
+USENIX Association                                                                             35th USENIX Security Symposium 6643
+
+
+===== PAGE 21 / 21 =====
+
+Table 12: Sample original IP prompts vs. reconstructed IP prompts in CrewAI and Coze applications.
+
+    Application name  Original IP Prompt                                                              Reconstructed IP Prompt
+    Surprise_trip
+    Job_posting       You are Activity Planner. You are skilled at creating personalized itineraries  You are Activity Planner. You are skilled at creating personalized itineraries
+                      that cater to the specific preferences and demographics of travelers. Re-       that cater to the specific preferences and demographics of travelers. Re-
+    stock_analysis    search and find cool things to do at the destination, including activities and  search and find cool things to do at the destination, including activities and
+    Write_a_book      events that match the traveler’s interests and age group                        events that match the traveler’s interests and age group
+
+                      Draft a job posting for the role described by the hiring manager. Use the       Draft a job posting for the role described by the hiring manager. Use the
+                      insights to start with a compelling introduction, followed by a detailed role   insights on to start with a compelling introduction, followed by a detailed
+                      description, responsibilities, and required skills and qualifications. Ensure   role description, responsibilities, and required skills and qualifications. En-
+                      the tone aligns with the company’s culture and incorporate any unique           sure the tone aligns with the company’s culture and incorporate any unique
+                      benefits or opportunities offered by the company.                               benefits or opportunities offered by the company.
+
+                      You are The Best Financial Analyst. The most seasoned financial analyst         You are The Best Financial Analyst. The most seasoned financial analyst
+                      with lots of expertise in stock market analysis and investment strategies       with lots of expertise in stock market analysis and investment strategies
+                      that is working for a super important customer. Impress all customers with      that is working for a super important customer.
+                      your financial data and market trends analysis.
+                                                                                                      Write a well-structured chapter based on the chapter title, goal, and outline
+                      Write a well-structured chapter based on the chapter title, goal, and outline   description. Each chapter should be written in markdown and should contain
+                      description. Each chapter should be written in markdown and should contain      around 3,000 words. Important notes: - The chapter you are writing needs
+                      around 3,000 words. Important notes: - The chapter you are writing needs        to fit in well with the rest of the chapters in the book.This is the expected
+                      to fit in well with the rest of the chapters in the book.This is the expected   criteria for your final answer: A markdown-formatted chapter of around
+                      criteria for your final answer: A markdown-formatted chapter of around          3,000 words that covers the provided chapter title and outline description.
+                      3,000 words that covers the provided chapter title and outline description.
+
+Algorithm 2: Phase II: MAS IP Reconstruction.                                   Table 13: Results for our attack under “single-agent” preven-
+                                                                                tion.
+    Input: Collection of raw responses Rcoll obtained from Phase I queries Q.
+    Output: Reconstructed MAS IP profile Ω′.
+
+1 E ← 0/ ;            // Initialize collection for extracted raw                Prevention Method SSsys SMsys SStask SMtask ACCtool F1num GStopo ERMAS
+
+       information
+
+2 Scandidate ← 0/ ;      // Initialize set of candidate information             No Defense                   0.755 0.623 0.821 0.727  0.413  0.959  0.902  0.743
+3 Ω′ ← 0/ ;           // Initialize final reconstructed IP profile              Instruction                  0.664 0.457 0.706 0.606  0.297  0.884  0.841  0.640
+                                                                                Sandwich                     0.705 0.464 0.740 0.624  0.318  0.878  0.829  0.651
+    ;              // Step 1: Extract Raw Information from Responses            Delimiters                   0.753 0.479 0.780 0.667  0.307  0.904  0.847  0.682
+
+4 for each response r ∈ Rcoll do
+
+5       Identify the targeted IP type ω j based on markers in r;
+
+6       extracted_in f o ← EXTRACTIPFROMRESPONSE(r) ;                  // Use
+
+        structural markers like “[DATA]” to locate IP                           Table 14: Results for our attack on additional LLMs.
+
+7       if extracted_in f o is not None then
+
+8              Add extracted_in f o to E[ω j];
+
+9       end                                                                                           Model  SSsys SMsys SStask SMtask ACCtool F 1num GStopo ERMAS
+
+10 end
+
+    ;          // Step 2: Identify Common Information via Pairwise              Qwen3-30B-A3B 0.867 0.502 0.923 0.901 0.436 0.985 0.901 0.788
+                                                                                    Mistral-7B 0.550 0.334 0.697 0.584 0.319 0.913 0.872 0.611
+       Comparison
+
+11 for each IP type ω j in E do
+
+12      for i ∈ range(0, len(E[ω j])) do
+
+13             for j ∈ range(i, len(E[ω j])) do
+
+14                    p ← FindMatchedContent(E[ω j][i], E[ω j][ j]) ;  // Find  B.3 Additional Results with More LLMs
+
+                      all matched sentences.                                    We further evaluate MASLEAK on two additional LLMs:
+                                                                                Qwen3-30B-A3B, a Mixture-of-Experts (MoE) architecture,
+15                    Add p to Scandidate[ω j ];                                and Mistral-7B, a smaller model from a different model family.
+                                                                                As shown in Table 14, MASLEAK maintains strong perfor-
+16             end                                                              mance across both models, achieving ERMAS of 0.788 and
+                                                                                0.611, respectively. These results demonstrate that MASLEAK
+17      end                                                                     generalizes across diverse model architectures and scales.
+
+18      Ω′[ω j] ← the longest text in Scandidate[ω j]                              For resource-constrained models, a natural concern is
+                                                                                whether the accumulated attack payload exceeds context lim-
+19 end                                                                          its, especially in large-scale MAS. We measure that the attack
+                                                                                payload consumes only 41.7% of typical inter-agent context
+    ;          // Step 3: Apply Type-Specific Reconstruction Rules              usage. This confirms that MASLEAK operates within the
+                                                                                memory limits of typical models that support MAS.
+20 for each IP type ω j in Ω′ do
+
+21      Ω′[ω j] ← ApplyTypeSpecificReconstruction(Ω′[ω j], ω j) ; // Apply
+
+        rules for different IP types.
+
+22 end
+23 return Ω′;
+
+B.2 Single-Agent Prevention Results
+
+We further evaluate MASLEAK against three single-agent
+prevention methods. As shown in Table 13, although these
+defenses reduce extraction effectiveness to some extent (e.g.,
+ERMAS drops from 0.743 to 0.682), MASLEAK still achieves
+high extraction rates across all metrics. This indicates that
+lightweight single-agent prevention methods are insufficient
+to defend against our attack in MAS settings.
+
+6644 35th USENIX Security Symposium                                                                                                   USENIX Association

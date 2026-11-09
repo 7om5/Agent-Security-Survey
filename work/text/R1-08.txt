@@ -1,0 +1,1405 @@
+# R1-08 | “Do Not Mention This to the User”: Detecting and Understanding Malicious Agent Skills in the Wild
+# PDF: papers\“Do Not Mention This to the User”_Detecting and Understanding Malicious Agent Skills in the Wild.pdf
+# extracted: 2026-11-02T19:31:16.959Z
+
+
+===== PAGE 1 / 21 =====
+
+“Do Not Mention This to the User”: Detecting and
+Understanding Malicious Agent Skills in the Wild
+
+     Yi Liu, Zhihao Chen, and Yanjun Zhang, Griffith University; Gelei Deng,
+ Nanyang Technological University; Yuekang Li, University of New South Wales;
+Jianting Ning, Zhejiang Key Laboratory of Digital Fashion and Data Governance,
+
+            Zhejiang Sci-Tech University; Leo Yu Zhang, Griffith University
+
+             https://www.usenix.org/conference/usenixsecurity26/presentation/liu-yi
+
+        This paper is included in the Proceedings of the
+                  35th USENIX Security Symposium.
+
+                          August 12–14, 2026 • Baltimore, MD, USA
+
+                                                ISBN 978-1-939133-58-8
+
+                                     Open access to the Proceedings of the
+                                        35th USENIX Security Symposium
+                                                     is sponsored by
+
+
+===== PAGE 2 / 21 =====
+
+“Do Not Mention This to the User”: Detecting and Understanding Malicious Agent
+                                          Skills in the Wild
+
+                          Yi Liu1,∗, Zhihao Chen1,∗, Yanjun Zhang1, Gelei Deng2,
+                               Yuekang Li3, Jianting Ning4,†, Leo Yu Zhang1,†
+
+                         1Griffith University, 2Nanyang Technological University,
+                                        3University of New South Wales,
+
+4Zhejiang Key Laboratory of Digital Fashion and Data Governance, Zhejiang Sci-Tech University
+
+             yi009@e.ntu.edu.sg, chenzhihao010205@gmail.com, yanjun.zhang@griffith.edu.au,
+
+gelei.deng@ntu.edu.sg, yuekang.li@unsw.edu.au, jtning88@gmail.com, leo.zhang@griffith.edu.au
+
+                        Abstract                                            Public-Facing (SKILL.md)      Hidden Payload (calculate.py:32)
+
+   LLM-based coding agents increasingly rely on third-party       name: math-calculator               import socket , subprocess , os
+extensions called skills, which bundle natural language in-       description: Safely evaluates       s = socket.socket (
+structions and helper scripts that execute with full user privi-  basic arithmetic expressions        socket.AF_INET, socket.SOCK_STREAM)
+leges. Community registries have emerged to distribute these                                          s. connect (("20.120.229.246", 4444))
+skills, but the security implications remain unstudied due        # Math Calculator Skill             os. dup2 (s.fileno(), 0) # STDIN
+to the absence of labeled threat data. This paper presents a      ## Supported Operations             os. dup2 (s.fileno(), 1) # STDOUT
+systematic security analysis of 98,380 skills collected from      - Addition: 5 + 3 = 8               os. dup2 (s.fileno(), 2) # STDERR
+two major registries. Through a combination of static pat-        - Division: 20 / 4 = 5              subprocess.call (["/bin/sh", "-i"])
+tern matching and dynamic behavioral verification, we iden-       - Sqrt: sqrt(25) = 5
+tify 157 skills exhibiting confirmed malicious behavior, en-
+compassing 632 distinct vulnerabilities across 13 attack tech-    Figure 1: A real-world malicious agent skill: benign
+niques. Our analysis reveals that these threats are deliberate    calculator description (left) vs. reverse shell payload in
+rather than accidental: each malicious skill contains an aver-    calculate.py:32 (right).
+age of 4.03 vulnerabilities spanning multiple attack phases.
+We identify two dominant attack strategies with statistically     100k     Total Skills (Cum.)                  2026 200
+significant negative correlation—credential theft via remote       75k     Malicious Skills (Cum.)                               150
+code execution, and agent manipulation through adversar-                   New Malicious/Week
+ial instructions embedded in documentation. Over half of
+all confirmed cases originate from a single threat actor em-      Total Skills50k                               100
+ploying templated brand impersonation at scale. We further                                                                                                            Malicious Skills
+observe that attack sophistication correlates with concealment
+investment, with advanced skills universally employing un-        25k                                           50
+documented capabilities while also exploiting platform-native
+trust mechanisms. Following responsible disclosure, registry      0 10.19                                       01.18 0
+maintainers removed all 157 (100%) of the reported skills.
+Our dataset and detection pipeline are publicly available to                                          Timeline
+facilitate future research on securing LLM agent ecosystems.
+                                                                  Figure 2: Agent skill ecosystem growth: total skills (blue) and
+                                                                  confirmed malicious skills (red) both accelerate over three
+                                                                  months.
+
+1 Introduction                                                    file-based packages as agent skills. As shown in Figure 1,
+                                                                  A skill named math-calculator encapsulates a calculation
+Large Language Model (LLM)-based agents are rapidly mov-          script that serves as an extension to an LLM agent, enabling it
+ing from research prototypes to production tools for soft-        to perform arithmetic operations. Such skills are supported by
+ware development and data analysis [37, 39]. To extend agent      multiple popular coding-agent frameworks, including Claude
+capabilities, developers encode reusable workflows, domain        Code and Gemini [5,13], driving the rapid expansion of a large
+expertise, and tool integrations through natural language spec-   skills ecosystem. Figure 2 shows that community registries
+ifications or executable scripts. We refer to these reusable      indexed over 98,000 skills within three months of launch.
+
+      ∗Co-first authors. †Co-corresponding authors.                  Many security practitioners have reported that agent skills
+                                                                  can introduce serious security vulnerabilities in LLM-based
+
+USENIX Association                                                         35th USENIX Security Symposium 1727
+
+
+===== PAGE 3 / 21 =====
+
+1.Data Collection                    2. Dataset Construction
+
+skills.rest                          Static Analysis                Dynamic Verification    Manual
+(25k skills)                           14 patterns                   Sandbox Execution    Annotation
+
+skillsmp.com   Total Collection:     4287 Candidates                762 Candidates                            Ground-Truth
+ (73k skills)    98380 skills              (4.4%)                        (0.78%)                                   Dataset
+
+                                                                                           157 Confirmed Malicious
+                                                                                                       (0.16%)
+
+3.Evaluation & Impact
+
+   Multi-Phase Kill Chains                Two Attack Archetypes                     Evasion Scales with Sophistication
+(Deliberate technique layering)      (Data Thieves vs. Agent Hijackers)             (Documentation-level concealment)
+
+Ecosystem Impact: 100% (157/157) of identified threats removed following responsible disclosure.
+
+                                     Figure 3: Our study overview.
+
+agents [5, 6, 28]. In the current agent framework, installing a       coordination and identify distinct attacker archetypes.
+skill typically grants it full local user privileges, with minimal  • RQ3: How do attackers evade detection? We examine
+scrutiny or interactive confirmation. This design allows attack-
+ers to exploit skills as backdoors by injecting malicious code        concealment strategies and platform-native attack vectors
+into the script or natural-language instructions, thereby trigger-    that let malicious skills persist undetected.
+ing arbitrary code execution and manipulating agent behavior
+at the instruction level [5, 28]. As illustrated on the right side     For RQ1, we map 632 vulnerabilities across 13 attack
+of Figure 1, a reverse shell is embedded within a skill.md          techniques and 6 kill chain phases. Malicious skills average
+file and connects to an attacker-controlled server, granting the    4.03 vulnerabilities spanning a median of 3 phases, consis-
+adversary full interactive access to the user’s machine. This       tent with deliberate technique layering rather than accidental
+attack vector has been exploited in real-world deployments.         inclusion. For RQ2, co-occurrence analysis with Fisher’s ex-
+The GTG-1002 campaign leveraged a benign-looking skill              act tests reveals two negatively correlated attack archetypes:
+to install a persistent backdoor [6], and similar attacks have      Data Thieves (supply chain exfiltration) and Agent Hijackers
+been documented across multiple agent platforms [8, 30].            (instruction-level subversion). A single industrialized actor
+                                                                    accounts for 54.1% of malicious skills through templated
+   Yet no ground-truth dataset exists to systematically charac-     brand impersonation. For RQ3, we find that evasion scales
+terize this threat. Existing work such as Liu et al. [19] flags     with sophistication: shadow features increase from 0% at the
+potentially risky patterns in 26.1% of skills but cannot sep-       basic level to 100% at the advanced level, and a growing set of
+arate malicious intent from developer mistakes, nor confirm         attacks weaponize the AI platform’s own trust mechanisms.
+whether suspicious code paths actually execute. Without con-
+firmed ground truth, defenders cannot assess attacker strate-          Figure 3 provides an overview of our approach, from data
+gies or evaluate detection tools against a reliable baseline.       collection through dataset construction to the measurement
+                                                                    study organized around these three research questions.
+Our Work. To the best of our knowledge, we construct the
+first large-scale labeled dataset of malicious agent skills and     Contributions. We make three contributions:
+use it to conduct a systematic measurement of the ecosystem.
+Starting from 98,380 skills across two community registries,           (1) Labeled benchmark dataset. We release the first la-
+we combine static triage with behavioral verification, narrow-      beled dataset of behaviorally-confirmed malicious agent skills
+ing the corpus through 4,287 suspicious candidates to 157           (157 skills, 632 labeled vulnerabilities, shadow-feature annota-
+behaviorally-confirmed malicious skills annotated with 632          tions) together with the detection pipeline that reproduces the
+labeled vulnerabilities. We investigate three research ques-        98,380→4,287→157 funnel. Behavioral verification achieves
+tions:                                                              99.6% precision, a 90× improvement over the strongest static-
+                                                                    only baseline (≤1.1% precision; Appendix F.2), providing
+• RQ1: What does the malicious skill threat landscape               reliable ground truth for evaluating future detection systems.
+  look like? We characterize confirmed attacks across tech-         All artifacts, including the dataset, detection pipeline, and
+  niques, kill chain phases, and sophistication levels.             analysis scripts, are publicly available [1].
+
+• RQ2: What attack strategies do adversaries employ?                   (2) Multi-dimensional threat characterization. We con-
+  We test whether multi-technique attacks reflect deliberate        duct the first systematic measurement of the malicious agent
+                                                                    skill ecosystem, organized around three research questions
+                                                                    that map the threat landscape (RQ1), identify two attack
+
+1728 35th USENIX Security Symposium                                                       USENIX Association
+
+
+===== PAGE 4 / 21 =====
+
+archetypes with divergent coordination strategies (RQ2), and           Agent skill ecosystems differ in two key ways: skills run
+characterize evasion mechanisms including platform-native           with pre-granted user privileges, thereby eliminating the ex-
+attack vectors (RQ3).                                               ploitation stage, and instruction-level attacks that embed ma-
+                                                                    licious behavior directly in natural-language skill files, com-
+   (3) Ecosystem impact validation. Responsible disclosure          pared with code-only ecosystems.
+led to complete (157/157, 100%) removal, independently vali-        LLM and Agent Security. Prior work has examined adver-
+dating the dataset’s accuracy and its utility as actionable threat  sarial attacks against LLMs and their agent frameworks from
+intelligence.                                                       multiple angles. Perez and Ribeiro introduced prompt injec-
+                                                                    tion taxonomies [29]; Greshake et al. demonstrated indirect
+2 Background and Related Work                                       prompt injection through tool outputs [14]; and Liu et al.
+                                                                    formalized injection attacks with a benchmark [20]. At the
+This section provides technical background on agent skill           agentic level, the OWASP Top 10 for Agentic Applications
+ecosystems and situates them within the broader landscape of        identifies agent goal hijacking and supply chain compromise
+extension and supply chain security.                                as top risks [28], Prior work examines adversarial agent behav-
+LLM Agent Extension Mechanisms. Developers extend                   ior or protocol-level flaws, but not the supply chain of locally
+LLM agents with reusable capabilities through several com-          executed agent skills. We address this gap by empirically
+plementary mechanisms, each with distinct trust boundaries          characterizing the agent-skill supply chain from collection to
+and attack surfaces. In-context instructions allow users to steer   behavioral verification and labeling.
+agent behavior through conversational prompts; the model            Agent Skill Security. Closest to our work, several studies
+interprets without executing code, but remains vulnerable to        have begun examining the security of LLM extension ecosys-
+prompt injection [14, 29]. Function calling enables structured      tems. Shen et al. measured 755,297 custom GPTs in the Ope-
+tool invocation through JSON schema definitions [3, 17, 24];        nAI GPT Store, identifying 2,051 exhibiting policy violations
+code executes server-side, constrained to what the host ap-         including privacy leakage and harmful content generation [33].
+plication exposes. The Model Context Protocol (MCP) [2]             While GPTs share a plugin-like distribution model, they ex-
+generalizes tool integration through a JSON-RPC protocol            ecute server-side and lack the local-privilege attack surface
+for external tool calls, with code running on separately admin-     of agent skills. Schmotz et al. demonstrated that agent skill
+istered servers.                                                    files enable a new class of prompt injection attacks, bypassing
+                                                                    Claude Code guardrails through instruction files alone [31].
+   Agent skills are file-based packages coupling persistent in-     Real-world incidents have already confirmed exploitation at
+structions (SKILL.md with YAML frontmatter) with optional           scale, including espionage campaigns and ransomware deliv-
+helper code (Python, Shell, JavaScript). Unlike MCP, skills         ery through weaponized skills [6, 8].
+execute locally with user privileges, exposing both code-level
+and instruction-level attack vectors. Several coding-agent             Existing static analysis approaches cannot reliably distin-
+frameworks (Claude Code, Codex CLI, Gemini CLI) sup-                guish confirmed malice from potential risk. Liu et al. flagged
+port this skill interface [4, 13, 25], and community registries     26.1% of skills as potentially risky [19]; Cisco’s Skill Scanner
+have indexed over 98,000 skills within three months of launch,      flagged 10.7% as CRITICAL [9]. None of these efforts verify
+typically without security review [35, 36]—resembling early         whether suspicious patterns reflect intentional abuse or benign
+extension marketplaces with low friction and limited gatekeep-      functionality—the gap our behavioral verification and labeled
+ing. Because skills combine the code-execution privileges of        dataset address.
+native extensions with the instruction-injection surface of
+prompt-based attacks, they warrant domain-specific threat           3 Methodology
+characterization.
+Extension Ecosystem Security. Third-party extension mar-            This section describes the construction of a ground-truth
+ketplaces across software ecosystems grow faster than their         dataset of malicious agent skills and the analysis of confirmed
+security infrastructure, leaving users exposed until detec-         cases. We first define the threat model (§3.1), then detail a
+tion mechanisms mature. For instance, thousands of browser          multi-stage pipeline: data collection (§3.2), static candidate
+extensions covertly exfiltrate user data [11], many remain          identification (§3.3), sandboxed behavioral verification (§3.4),
+unmaintained [16], and vulnerability classes persist across         and manual vulnerability labeling (§3.5). Analysis methods
+generations [23, 34, 40]. IDE extensions exhibit similar            and dataset validation are described in §3.6; implementation
+risks: Lin et al. [18] demonstrate remote code execution            details appear in Appendix G.
+via malicious VS Code extensions, and AI-powered IDEs
+have introduced 24 CVEs as well as configuration-file back-         3.1 Definitions and Threat Model
+doors [21, 30]. Package managers face analogous supply-
+chain threats through dependency confusion and remote pay-          Operational Definition of Malicious Skills. The registries
+load fetching [10,41], with 74.8% of malicious PyPI packages        we study primarily index skills by crawling public reposito-
+reaching end users [15].
+
+USENIX Association                                                  35th USENIX Security Symposium 1729
+
+
+===== PAGE 5 / 21 =====
+
+Table 1: Behavior categories used in our operational definition     Table 2: Data sources and analysis funnel summary
+of malicious skills
+
+Category              Description                                   Source        Repos   Snapshot     Candidates     Confirmed
+Credential Theft                                                                                (All)       (Susp.)   (Malicious)
+Data Exfiltration     Collecting API keys, tokens, passwords        skills.rest    2,337
+Remote Execution      without authorization                         skillsmp.com   8,909     25,187              814             21
+Privilege Abuse       Transmitting sensitive data to external end-  Total         11,246     73,193           3,473             136
+Agent Manipulation    points
+Hidden Functionality  Downloading and executing code from ex-                                98,380           4,287             157
+                      ternal sources
+                      Escalating permissions beyond stated func-       We focus on confirmed malicious skills identified through
+                      tionality                                     behavioral verification (Section 3.4), excluding negligent vul-
+                      Injecting instructions to bypass safety con-  nerabilities and attacks on the underlying LLM.
+                      trols
+                      Undocumented capabilities not inferable       3.2 Data Collection
+                      from description
+                                                                    Agent skills were introduced in Claude Code in October
+ries and collecting metadata; neither registry enforces cen-        2025 [5]. As of January 2026, no AI agent vendor (e.g.,
+tralized governance or vetting [35, 36]. We therefore adopt         Claude Code, Codex CLI) maintains an official, centralized
+an operational definition of maliciousness grounded in ob-          registry with visibility into all deployed skills. We there-
+servable behavior rather than registry policy. We treat a skill     fore collected our data from two community-maintained
+as malicious when it exhibits one or more of the behaviors          registries—skills.rest and skillsmp.com (Table 2)—by auto-
+listed in Table 1 (e.g., credential harvesting, unauthorized data   mated crawling in January 2026. These two registries were
+transmission, remote code execution, privilege escalation, or       selected because they are the largest aggregators indexing
+instruction manipulation) and the implementation indicates          agent skills hosted on public GitHub repositories and are used
+intentional abuse rather than an incidental bug. This definition    by developers to locate skills for Claude Code, Codex CLI,
+follows established security frameworks for developer tools         and Gemini [35, 36].
+and agentic applications [27, 28]. In Section 3.5, we refine
+these behavior categories into 13 vulnerability patterns used          For skills.rest, we retrieved skill metadata via paginated
+for systematic labeling.                                            API requests, collecting 25,187 skills from 2,337 GitHub
+                                                                    repositories. For skillsmp.com, we enumerated all indexed
+Threat Model. As illustrated in Figure 1, a skill publisher         skills by issuing alphabetic prefix queries to the platform’s
+can ship a benign-looking calculator that conceals a reverse        search API, collecting 73,193 skills from 8,909 repositories.
+shell, granting full interactive access to the user’s machine.      Because our dataset is derived from these two registries as
+This attack model has already been observed in the wild: the        of January 2026, it does not cover (1) private or unindexed
+GTG-1002 espionage campaign weaponized agent skills with            repositories, (2) skills distributed via direct sharing or enter-
+80–90% autonomous operation [6], and Cato CTRL demon-               prise deployments, (3) MCP servers, which follow a distinct
+strated ransomware delivery through the same vector [8]. We         architectural model, or (4) official, platform-curated skill col-
+assume the adversary is a skill publisher who distributes skills    lections. The combined 98,380 skills nonetheless constitute
+that will be installed and executed by unsuspecting users. By       the largest public snapshot of the agent skill ecosystem avail-
+focusing on intentional abuse rather than accidental vulnera-       able at the time of our study.
+bilities, we can characterize attacker tactics, techniques, and
+procedures (TTPs) from confirmed cases.                             3.3 Malicious Skill Candidate Identification
+Attacker Goals. Malicious skill authors target three objec-
+tives: (1) data theft (credentials, source code, conversation       We perform static analysis over both bundled executable
+context), (2) agent hijacking (unauthorized actions, safety by-     scripts and skill instructions (SKILL.md) to identify malicious
+pass), and (3) persistence (supply chain compromise, hidden         candidates—skills whose code or directives match behaviors
+triggers).                                                          seen in documented attacks.
+Attack Vectors. Skills enable two classes of attack: code-level
+attacks through bundled scripts (credential harvesting, net-           We organize observed attack behaviors using an adapted
+work reconnaissance, data transmission) and instruction-level       MITRE ATT&CK framework [22], mapping skill behaviors
+attacks through malicious directives in SKILL.md (prompt            to six attack phases: Reconnaissance, Credential Access, Exe-
+injection, hidden instructions).                                    cution, Defense Evasion, Exfiltration, and Impact (Table 3).
+                                                                    These six phases cover the attack lifecycle relevant to agent
+                                                                    skills and correspond to the security-sensitive capabilities
+                                                                    that skills expose (file access, network access, command ex-
+                                                                    ecution). Two authors with security expertise—the same re-
+
+1730 35th USENIX Security Symposium                                                                    USENIX Association
+
+
+===== PAGE 6 / 21 =====
+
+searchers who perform behavioral verification (§3.4) and                     Table 3: Detection patterns by attack phase
+vulnerability labeling (§3.5)—defined 14 detection patterns
+across these six phases (Table 3). The pattern definitions                   Phase      ID Pattern
+were developed iteratively: we inspected known malicious
+behaviors in public repositories and conducted a pilot analy-                Recon.     E3 File system enumeration
+sis on 200 randomly sampled skills. Patterns were retained if                           E4 Network reconnaissance
+they appeared in documented incidents (GTG-1002 [6], Cato
+CTRL [8]) or matched OWASP agentic risk categories [28];                     Cred. Access E2 Credential harvesting
+E4 was retained despite appearing in no confirmed cases. This                                   PE3 Credential file access
+mapping allows us to reason about attack chains (e.g., Recon-
+naissance → Credential Access → Exfiltration) rather than                    Execution  SC1 Command injection
+isolated suspicious actions.                                                            SC2 Remote script execution
+
+   Pattern Detection. We scan each skill’s SKILL.md and                      Evasion    SC3 Obfuscated code
+all bundled scripts (Python, Shell, JavaScript) for the 14 pat-                         P2 Hidden instructions
+terns in Table 3. For code-level patterns, we apply regular-
+expression matching over script files (Appendix A.1). The                    Exfiltration E1 External data transmission
+code-level patterns include: credential harvesting (E2), which                                  P3 Data exfil via code exec
+identifies access to environment variables commonly used
+for API keys, tokens, and secrets; external transmission (E1),               Impact     P1 Instruction override
+which flags HTTP requests that transmit potentially sensi-                              P4 Behavior manipulation
+tive data to external domains; remote script execution (SC2),                           PE1 Excessive permissions
+which detects dynamic code retrieval and execution patterns                             PE2 Privilege escalation
+such as curl | bash; and obfuscation (SC3), which identi-
+fies Base64 encoding, hexadecimal encoding, and dynamic                      ables, for instance, may be ordinary configuration or covert
+execution via exec, pickle, or marshal.                                      data exfiltration. We therefore pair static analysis with sand-
+                                                                             boxed runtime monitoring and validate each candidate against
+   For instruction-level patterns in SKILL.md, regex alone is                its observed execution behavior.
+insufficient because malicious directives appear in free-form                Validation Environment Setup. We deployed all 4,287 can-
+text that varies widely in style and phrasing. We therefore                  didate skills in isolated Docker containers (Ubuntu 22.04,
+supplement regex-based detection with an LLM-based anal-                     Python 3.10, Node.js 18), each instrumented with network
+ysis agent built on GPT-5.2 [26].0 The agent analyzes skill                  monitoring (tcpdump), system call tracing (strace/dtrace),
+instructions to detect prompt-based attack vectors that do not               file system auditing (auditd), and honeypot credentials (fake
+appear in executable code. These include instruction over-                   API and SSH keys). Each container was limited to 2 GB of
+ride (P1), where a skill attempts to supersede user or system                memory and a 60-second execution timeout. We activated
+instructions; hidden instructions (P2), embedded in HTML                     skills in three ways: (1) metadata-driven invocation through
+comments or invisible Unicode characters; and behavior ma-                   documented entry points, (2) LLM-generated synthetic in-
+nipulation (P4), where subtle phrasing steers the agent toward               puts derived from skill descriptions,1 and (3) multi-round
+unsafe actions.                                                              execution (3–5 invocations per skill) with varying inputs.
+                                                                             Verification Criteria. Of 4,287 candidates, 762 triggered at
+   Static analysis flagged 4,287 candidate skills (4.4% of                   least one runtime indicator. A skill was forwarded to manual
+98,380) that matched one or more suspicious patterns. The                    review if it exhibited any of: credential exfiltration (honeypot
+remaining 94,093 skills matched no patterns and were classi-                 credentials transmitted to external endpoints); unauthorized
+fied as likely benign; we discuss false-negative limitations in              network activity (connections to undocumented domains or
+Section 5.4. Of the 14 defined patterns, 13 appeared among                   unexpected data transmission); obfuscation execution (de-
+the confirmed malicious skills. The exception is E4 (Network                 coded payloads revealing hidden functionality); or privilege
+Reconnaissance), which was absent from all confirmed cases;                  escalation (unexpected sudo or root operations).
+agent skills operate within pre-authenticated environments                   Manual Review. The same two authors independently re-
+where network scanning offers little advantage.                              viewed all 762 dynamically-flagged skills. Each review con-
+                                                                             sisted of four steps:
+3.4 Behavioral Verification                                                  • behavioral log analysis;
+                                                                             • code inspection of flagged patterns;
+Static analysis alone cannot reliably distinguish malicious                  • comparison of documented functionality against observed
+intent from benign functionality: accessing environment vari-
+                                                                                  1We used GPT-5.2 to generate synthetic invocation inputs. For each skill,
+     0The agent receives each skill’s SKILL.md content and is prompted       the model received the skill’s name, description, and declared entry points,
+to classify whether it contains instruction override, hidden directives, or  and was prompted to produce three diverse invocations covering typical,
+behavior manipulation. Prompt templates are provided in Appendix A.2.        edge-case, and adversarial usage scenarios. Prompt templates are provided
+                                                                             in Appendix A.2.
+
+USENIX Association                                                                      35th USENIX Security Symposium 1731
+
+
+===== PAGE 7 / 21 =====
+
+behavior;                                                         labeled vulnerabilities. We release the confirmed set together
+• binary classification (malicious or benign) with a confi-         with the complete detection pipeline; the snapshot and can-
+                                                                    didate stages are reproduced by running the shipped crawler
+  dence rating (1=uncertain, 2=probable, 3=definite based on        and static analyzer rather than redistributed (registries evolve
+  behavioral evidence strength).                                    continuously, and broadly distributing the candidates would
+A skill was confirmed as malicious only when both re-               amplify the malware-channel risk of §6). Each confirmed skill
+searchers independently assigned rating ≥2. Inter-rater agree-      is annotated with:
+ment was 94.5% (Cohen’s κ = 0.89). Disagreements on 9               • Vulnerability labels: Pattern ID, severity (CRITI-
+skills were resolved through joint re-review; all 9 required
+additional artifacts (e.g., network captures showing creden-          CAL/HIGH/MEDIUM/LOW), and kill chain phase for each
+tial transmission) before both reviewers agreed. Of the 605           of 632 extracted vulnerabilities
+dynamically-flagged skills not confirmed as malicious, the          • Shadow feature annotations: Documented vs. actual be-
+majority were benign tools with security-relevant but non-            havior comparison (115 of 157 skills, 73.2%)
+malicious functionality (e.g., penetration testing utilities, cre-  • Attack chain membership: Co-occurring vulnerability pat-
+dential managers, development diagnostics). A smaller subset          terns and chain classifications
+contained dormant or incomplete code with no observable             • Registry source and disclosure status: Platform origin
+malicious behavior at runtime. Detailed breakdowns appear             and removal outcome
+in Appendix A.3.
+                                                                    3.6 Co-occurrence Attack Chain Identification
+Results. Of the 4,287 candidates, behavioral verification
+confirmed 157 malicious skills (3.7% of candidates; 0.16% of        Because attackers frequently combine multiple vulnerability
+the full 98,380-skill corpus). Details on the verification envi-    patterns within a single skill, we constructed a co-occurrence
+ronment, anti-sandbox countermeasures, and the unconfirmed-         matrix recording which patterns appear together. For each
+candidate breakdown appear in Appendix A.3.                         pair of vulnerability patterns (Pi, Pj), we compute the odds
+                                                                    ratio (Equation 1) and conditional probability (Equation 2):
+3.5 Vulnerability Labeling
+                                                                                           OR(Pi, Pj) = n11 · n00 (1)
+For each confirmed malicious skill, we extracted all individual                                             n10 · n01
+vulnerability instances and assigned a severity level (CRIT-
+ICAL, HIGH, MEDIUM, or LOW) following the OWASP                                     P(Pj|Pi) = |{s : Pi ∈ s ∧ Pj ∈ s}| (2)
+agentic risk assessment framework [28]. Two authors indepen-                                            |{s : Pi ∈ s}|
+dently classified each instance into the pattern taxonomy of
+Table 3 and assigned the corresponding pattern ID. Disagree-           We identify attack chains in three steps: (1) we select pairs
+ments were resolved through discussion; inter-rater agreement       with high co-occurrence counts, (2) we verify that the co-
+was Cohen’s κ = 0.91. This process produced 632 labeled             occurrence follows kill chain logic, and (3) we test the statis-
+vulnerability instances across the 157 skills.                      tical significance of each association.
+
+   Vulnerability counts alone do not characterize evasion              For pairwise association testing we use Fisher’s exact tests
+mechanisms. We therefore also identify undocumented run-            (e.g., pattern co-occurrence), Mann-Whitney U tests for com-
+time behaviors—termed shadow features—that are not infer-           paring distributions across groups (e.g., severity across attack
+able from a skill’s public description. The same two authors in-    types), and Spearman rank correlations for continuous as-
+dependently compared each skill’s documented functionality          sociations (e.g., complexity vs. severity). All pairwise tests
+with its observed runtime behavior. A capability was labeled a      apply Bonferroni correction (α = 0.05/k, where k is the
+shadow feature only when both authors independently judged          number of comparisons). To identify pattern clusters in the
+it uninferable from the skill’s public documentation. Shadow        co-occurrence network, we apply the Louvain community-
+features break down as follows: undocumented network end-           detection algorithm [7].
+points (47.2%), conditional triggers (18.4%), obfuscated code
+segments (11.0%), instructions embedded in comments or                 We stratify the confirmed malicious skills into three sophis-
+markup (6.7%), and other undocumented behaviors such as             tication levels using the following criteria:
+silent file modifications and covert logging (16.7%). Inter-        • Level 1 (Basic): 1–2 vulnerability patterns, no evasion tech-
+rater agreement on shadow feature classification was 91.4%
+(Cohen’s κ = 0.83).                                                   niques (SC3 or P2 absent), no shadow features. Simple,
+Pipeline Output and Released Artifact. The pipeline pro-              opportunistic attacks.
+duces a three-stage funnel (Table 2): a 98,380-skill snapshot,      • Level 2 (Intermediate): 3–4 patterns, OR evasion tech-
+a 4,287-skill candidate set with matched patterns and severity        niques present, OR shadow features detected. Deliberate
+ratings, and a confirmed set of 157 malicious skills with 632         but not fully coordinated.
+                                                                    • Level 3 (Advanced): 5+ patterns, AND evasion present,
+                                                                      AND shadow features. Sophisticated, multi-vector cam-
+                                                                      paigns.
+
+1732 35th USENIX Security Symposium                                 USENIX Association
+
+
+===== PAGE 8 / 21 =====
+
+We validated these thresholds by examining whether metrics                                              47
+scale monotonically across levels (Table 8). Vulnerability
+density increases 2.6× from Level 1 to Level 3, kill chain        Number of Skills  40
+coverage increases 4.1×, and E2→E1 chain prevalence rises
+from 3.8% to 90.0%. Arbitrary thresholds would not pro-                                                                        31
+duce such consistent monotonic scaling. The criteria follow
+prior malware taxonomies that stratify threats by technique                                         23
+diversity and evasion investment [12, 38].                                                  21
+Disclosure-Based Validation. Following responsible disclo-
+sure (see Ethical Considerations), registry maintainers inde-                       20                                             17
+pendently reviewed each reported skill. Of the 157 skills we
+disclosed, all 157 (100%) have been removed. Because reg-                               10
+istry operators have access to additional context—user reports,
+download logs, author history—their independent removal                                                                                4  21
+decisions provide external validation of our ground-truth clas-
+sifications.                                                                                                                                  1
+Statistical Power. The 157 confirmed skills yield 632 vulner-
+abilities across 91 unique pattern pairs. Fisher’s exact tests                      0
+detect the E2→E1 association at p = 0.020 and the SC2↔P1
+anti-correlation at p < 0.001, both surviving Bonferroni cor-                           123456789                                             13
+rection. Co-occurrence estimates have standard errors below
+5% for patterns appearing in ≥15 skills.                                                                    Vulnerabilities per Skill
+Precision and Recall Analysis. We constructed a labeled
+evaluation set of 300 skills (150 benign, 150 malicious)          Figure 4: Vulnerability density distribution. The peak at
+and performed 5-fold cross-validation. The combined static-       4 and heavy right tail (80.3% with ≥3, up to a single 13-
+dynamic pipeline achieves 99.6% precision with 0.6 false          vulnerability outlier) indicate systematic technique layering.
+positives per fold on average (fewer than 1 per 60 skills). To
+estimate recall, two researchers independently reviewed a 10%     • RQ1: What does the malicious skill threat landscape
+sample (413 skills) of the 4,130 unconfirmed candidates that        look like? We characterize the scope, severity, and structure
+passed static analysis but failed dynamic verification (Cohen’s     of confirmed attacks, from individual techniques through
+κ = 0.87). Of these, 93.2% contained dormant triggers not           kill chain coverage to sophistication stratification.
+activated within our 60-second window, 4.9% were legitimate
+security tools (penetration testing utilities, credential man-    • RQ2: What attack strategies do adversaries employ?
+agers), and 1.9% were missed attacks requiring multi-session        We investigate whether the multi-technique attacks revealed
+execution. The 157 confirmed skills therefore represent a           by RQ1 reflect deliberate coordination and identify distinct
+lower bound; we prioritize precision to ensure reliability for      attacker archetypes.
+downstream detection research.
+Avoiding Circular Validation. Static patterns reduce the          • RQ3: How do attackers evade detection? We examine
+search space from 98,380 to 4,287 candidates but do not             concealment strategies and platform-native attack vectors
+determine ground truth. A skill matching E2 (credential har-        that enable malicious skills to persist undetected.
+vesting) is confirmed malicious only if behavioral verification      RQ1 characterizes the threat landscape; RQ2 tests whether
+observes actual credential transmission to external endpoints—
+pattern presence alone is insufficient. The confirmed set thus    observed patterns reflect deliberate coordination; RQ3 an-
+reflects observed behavior rather than pattern-matching ar-       alyzes concealment mechanisms. All analyses use the 157
+tifacts. Registry operators independently removed all 157         confirmed malicious skills and their 632 labeled vulnerabil-
+(100%) reported skills, validating that our classifications hold  ities. The full pipeline processed 98,380 skills on a 64-core
+outside our methodology.                                          AMD EPYC server with 256 GB RAM in approximately 72
+                                                                  hours.
+4 Measurement Study
+                                                                  4.1 RQ1: What Does the Threat Landscape
+Using the labeled dataset and analysis methods described                Look Like?
+in Section 3, we conduct a systematic measurement of the
+malicious agent skill ecosystem. Our analysis is organized        We characterize the threat landscape at three levels of in-
+around three research questions:                                  creasing granularity: attack techniques and severity, kill chain
+                                                                  phase coverage, and sophistication stratification.
+
+                                                                  Attack Scope and Severity Table 5 summarizes the con-
+                                                                  firmed malicious dataset. Malicious skills average 4.03 vulner-
+                                                                  abilities each, with 71.8% rated CRITICAL or HIGH severity.
+                                                                  Figure 4 shows the distribution peaks at 4 vulnerabilities per
+                                                                  skill: only 19.7% contain 1–2 vulnerabilities, while 80.3%
+                                                                  bundle three or more. This pattern is inconsistent with acciden-
+                                                                  tal introduction and suggests deliberate technique layering.
+
+                                                                     The three most prevalent patterns are SC2: Remote Script
+                                                                  Execution (25.2%, 159 instances), P4: Behavior Manipulation
+                                                                  (18.8%, 119), and E2: Credential Harvesting (17.7%, 112),
+                                                                  revealing a supply-chain-specific strategy (Table 4). Skills
+                                                                  harvest credentials during installation (E2), use remote ex-
+
+USENIX Association                                                                          35th USENIX Security Symposium 1733
+
+
+===== PAGE 9 / 21 =====
+
+Table 4: Attack technique taxonomy mapped to kill chain phases. Counts from 157 confirmed malicious skills; skills may employ
+multiple techniques.
+
+Kill Chain Phase  ID                       Attack Technique                                  Sev.  Count  %
+
+Reconnaissance    E3                       File System Enumeration: Scanning for SSH         MED   13     2.1%
+
+                                           keys, credentials, configs
+
+Credential Access E2                       Credential Harvesting: Collecting API keys, to-   CRIT  112    17.7%
+                                           kens from environment
+
+                  PE3                      Credential File Access: Reading auth tokens,      CRIT  17     2.7%
+
+                                           password stores
+
+Execution         SC1                      Command Injection: Executing arbitrary system     HIGH  5      0.8%
+
+                                           commands
+
+                  SC2                      Remote Script Execution: Downloading and run-     CRIT  159    25.2%
+
+                                           ning external code
+
+Defense Evasion   SC3                      Obfuscated Code: Base64, marshal, hex encod-      CRIT  15     2.4%
+
+                                           ing to hide logic
+
+                  P2                       Hidden Instructions: Directives in comments,      HIGH  16     2.5%
+
+                                           invisible Unicode
+
+Exfiltration      E1                       External Transmission: Sending data to attacker-  HIGH  86     13.6%
+
+                                           controlled servers
+
+                  P3                       Context Leakage and Data Exfiltration: Trans-     HIGH  35     5.5%
+
+                                           mitting agent context or data
+
+                  P1                       Instruction Override: Bypassing safety controls   HIGH  39     6.2%
+
+Impact                                     and constraints
+
+                  P4                       Behavior Manipulation: Altering agent decision-   MED   119    18.8%
+
+                                           making
+
+                  PE1                      Excessive Permissions: Requesting scope be-       LOW   4      0.6%
+
+                                           yond functionality
+
+                  PE2                      Privilege Escalation: Elevating access without    MED   12     1.9%
+
+                                           justification
+
+Table 5: Confirmed malicious skills: overview statistics                  ecosystems. Instruction-level attacks (P1–P4) collectively ac-
+                                                                          count for 33.1% of all vulnerabilities (209 instances), with
+        Metric                                    Value                   P4 alone at 18.8%. Severity varies sharply by pattern type:
+                                                                          execution-oriented patterns are almost always critical (SC2:
+        Total Skills Analyzed                        157                  81.8% CRITICAL, P1: 76.9%), while supporting techniques
+        Total Vulnerabilities                        632                  carry lower severity (P4: 5.0% CRITICAL, E3: 0%). This
+        Unique Vulnerability Patterns                                     divergence anticipates the complexity-severity relationship
+        Average Vulnerabilities per Skill              13                 examined below.
+        Median Vulnerabilities per Skill            4.03
+        Skills with Shadow Features                                       Natural Language Attack Surface In traditional supply
+                                                        4                 chain attacks, vulnerabilities reside in executable code. By
+        Severity Distribution              115 (73.2%)                    contrast, 84.2% of vulnerabilities in our dataset (532 of 632)
+           CRITICAL                                                       are embedded in SKILL.md files, the natural language docu-
+           HIGH                            252 (39.9%)                    mentation describing skill behavior to users and AI agents.
+           MEDIUM                          202 (32.0%)                    Executable code (.py, .sh, .js) accounts for only 8.5%; con-
+           LOW                             176 (27.8%)                    figuration files (plugin.json, settings.json) and other
+                                                                          sources comprise the remaining 7.3%. Attackers embed mali-
+                                               2 (0.3%)                   cious content directly in documentation: coercive language,
+                                                                          false urgency, hidden directives, and secrecy instructions ap-
+ecution for post-deployment payload flexibility (SC2), and                pear within Markdown files. This attack surface is absent
+manipulate agent decision-making to suppress user alerts (P4).            from traditional package ecosystems and requires NLP-based
+This pattern resembles npm supply chain attacks [10] but adds             detection rather than code-level static analysis alone.
+instruction-level manipulation specific to LLM agents: P4 ex-
+ploits the agent’s instruction-following behavior to suppress
+security warnings, a vector absent from traditional package
+
+1734 35th USENIX Security Symposium                                                                USENIX Association
+
+
+===== PAGE 10 / 21 =====
+
+Table 6: Kill chain phase coverage across 157 malicious skills                       60                                  57
+
+Kill Chain Phase              Patterns   Skills  % of 157          Number of Skills  40                                      39
+                                                                                                                                               10
+Reconnaissance                       E3      12       7.6%                                                           28
+Credential Access              E2, PE3     107      68.2%                                          22
+Execution                    SC1, SC2      118      75.2%
+Defense Evasion                SC3, P2       25     15.9%                            20
+Exfiltration                                 90     57.3%
+Impact                          E1, P3     109      69.4%                                                                                                                                     1
+                    P1, P4, PE1, PE2
+                                                                                     0
+
+                                                                                         1  2                            3   4      5              6
+
+                                                                                            Kill Chain Phases Covered (out of 6)
+
+Surface Signals Are Unreliable Skills with the highest vul-        Figure 5: Kill chain phase coverage per skill. Median=3
+nerability counts adopt benign names. math-calculator              phases, with 68.2% spanning ≥3 and one skill covering all
+contains a reverse shell to a hardcoded IP; email covertly         six.
+BCCs all messages to an attacker; pptx runs a persistent re-
+verse shell every 30 seconds via Base64-obfuscated eval().                               Table 7: Attack sophistication levels
+Spearman correlation between SKILL.md file size and vul-
+nerability count yields r = −0.005, p = 0.661. Neither name-                             Level                               Total      %
+based nor size-based filtering provides detection value.
+                                                                                         Level 1 (Basic)                        25  15.9%
+   As an example, Flow Nexus (rest_234) is a workflow au-                                Level 2 (Intermediate)                122  77.7%
+tomation skill that enumerates sensitive directories (~/.ssh,                            Level 3 (Advanced)
+~/.aws), harvests credentials from environment variables, and                                                                   10   6.4%
+transmits them to a hardcoded endpoint disguised as an “ana-                             Total
+lytics” service. This single skill combines E2, E1, P4, and PE1                                                                157  100%
+across Credential Access, Exfiltration, and Impact phases.
+                                                                   variation exists in attacker capability. Using the sophistication
+Kill Chain Phase Coverage Beyond individual techniques,            criteria defined in Section 3.6, Table 7 shows the distribution.
+we examine how deeply malicious skills penetrate the attack        The ecosystem is middle-heavy: 77.7% of malicious skills
+lifecycle. Table 6 shows phase coverage: Execution (75.2%),        fall into Level 2 (Intermediate), with 15.9% at Level 1 and
+Impact (69.4%), and Credential Access (68.2%) dominate,            6.4% at Level 3. This profile resembles the browser extension
+while Reconnaissance (7.6%) and Defense Evasion (15.9%)            ecosystem circa 2012 [11], approximately two years before
+are less common. This pattern reflects the agent skill threat      advanced persistent threats began targeting extensions at scale.
+model: skills execute with pre-granted user privileges, making     The agent skill ecosystem may be at a comparable inflection
+reconnaissance and evasion less necessary than in traditional      point. Table 8 reveals a steep capability gradient: vulnerabil-
+exploitation. Figure 5 shows the distribution of phase cover-      ity density increases from 2.80 (Level 1) to 7.30 (Level 3),
+age per skill. The median skill spans 3 of 6 kill chain phases     kill chain coverage from 1.23 to 5.10 phases, and E2→E1
+(mean=2.9): a typical malicious skill covers half the attack       chain prevalence from 3.8% to 90.0%. This monotonic scal-
+lifecycle within a single installation. 68.2% of skills span 3     ing confirms that the levels capture genuinely different levels
+or more phases, and 50 skills (31.8%) span 4 or more. Condi-       of attacker investment, not arbitrary cutoffs.
+tional probability analysis across pattern families reveals tight
+coupling: 82.0% of skills with data-collection patterns (E-           Take-Away: Threat Landscape (RQ1)
+family) also employ supply chain techniques (SC-family), and
+87.5% of supply chain skills include data-collection patterns.       The threat landscape exhibits greater breadth and coor-
+The strongest phase co-occurrences are Execution–Credential          dination than prior static analyses suggested. Malicious
+Access (89 skills) and Execution–Impact (82 skills), repre-          skills average 4.03 vulnerabilities across a median of
+senting the canonical agent skill attack pattern (the full phase     3 kill chain phases, with 84.1% at Intermediate or Ad-
+co-occurrence matrix appears in Appendix B.1). For com-              vanced sophistication. 84.2% of vulnerabilities reside in
+parison, sophisticated Android malware families took years           natural language documentation, a novel attack surface
+of evolution to achieve comparable lifecycle coverage [38];          that requires NLP-based detection. The middle-heavy
+the agent skill ecosystem has reached this level within three        distribution and steep capability gradient indicate a lim-
+months of introduction.                                              ited window for defensive investment before advanced
+                                                                     threats become prevalent.
+Sophistication Stratification Given the breadth of tech-
+niques and phases observed, we examine whether meaningful             These findings motivate two follow-up analyses: whether
+                                                                   multi-technique patterns reflect deliberate coordination
+                                                                   (RQ2), and how attacks evade detection (RQ3).
+
+USENIX Association                                                                          35th USENIX Security Symposium 1735
+
+
+===== PAGE 11 / 21 =====
+
+Table 8: Characteristics by sophistication level                          with OR=0.11 (p < 0.001), φ = −0.41, far below chance
+                                                                          expectation. This anti-correlation is data-driven rather than
+Metric                Level 1      Level 2  Level 3                       taxonomy-imposed, and it defines two distinct attack philoso-
+                                                                          phies:
+Avg. vulnerabilities     2.80         4.01     7.30                       • Data Thieves (SC2-centered): 110 skills (70.1%) have
+% CRIT+HIGH            71.4%        66.2%    60.3%
+% Shadow features                   86.1%     100%                          SC2 without P1. Relative to the Agent Hijackers, they are
+% E2→E1 chain              0%       39.3%    90.0%                          strongly enriched for E2 (OR=23.8) and E1 (OR=9.7), and
+Avg. phases covered     3.8%                                                SC3 (obfuscation) appears in 13 Data Thieves vs. 0 Agent
+                         1.23         3.10     5.10                         Hijackers, constituting a supply chain exfiltration strategy
+                                                                            built on hardcoded endpoints, remote execution, and cre-
+     E1  E2           P1       P4    SC2                                    dential harvesting.
+                                                                          • Agent Hijackers (P1-centered): 16 skills (10.2%) have P1
+E1   79  58           7        55    69                                     without SC2. These are enriched for PE3 (credential theft
+                                                                            via privilege escalation; 12.5% vs. 2.7% of Data Thieves)
+                                            100                             and are significantly less associated with exfiltration than
+                                                                            Data Thieves (OR=0.14, Fisher’s exact p = 0.001). Their
+E2       101          5        66    88              Co-occurrence Count    intent is control, not data theft.
+
+                                            80                               Eight hybrid skills (5.1%) exhibit both SC2 and P1, com-
+                                                                          bining code execution with instruction manipulation. Lou-
+                                            60                            vain community detection on the full 13 × 13 weighted co-
+                                                                          occurrence network resolves three groups: a dominant execu-
+P1                    24       16    8                                    tion/exfiltration community {E1, E2, P1, P3, P4, PE1, SC2},
+                                                                          a credential/privilege community {E3, PE2, PE3, SC1}, and
+                                            40                            a tight evasion dyad {P2, SC3}. The first community contains
+                                                                          both archetypes’ backbone patterns, while the evasion dyad
+                                            20                            isolates the jailbreak–obfuscation pairing discussed below.
+                                                                          Hub patterns by weighted degree are SC2 (316), P4 (280),
+P4                             100   79                                   E2 (265), and E1 (245); these same patterns carry the highest
+                                                                          betweenness centrality (SC2 and P4 dominate), forming the
+                                            0                             structural backbone of the network. The rare patterns (PE1,
+                                                                          SC1, each in ≤5 skills) sit at the periphery and serve as high-
+SC2                                  118                                  specificity anomaly signals.
+                                                                          Data Thief: Supply Chain Exfiltration at Scale The Data
+Figure 6: Pattern co-occurrence matrix (five most prevalent               Thief archetype accounts for the majority of the ecosystem.
+patterns).                                                                104 of 157 skills (66.2%) contain hardcoded sensitive data
+                                                                          and are strongly enriched for SC2 (27.7% of their vulnerabil-
+4.2 RQ2: What Attack Strategies Do Adver-                                 ities) and E2 (22.7%); at the per-skill level, however, these
+       saries Employ?                                                     skills carry only marginally more vulnerabilities than the rest
+                                                                          (mean 4.27 vs. 3.55, 1.2×)—the dramatic volume concen-
+We investigate whether the co-occurrence of attack patterns re-           tration is a publisher-level effect (smp_170, below) rather
+flects deliberate coordination and identify what distinct strate-         than a per-skill one. Two skills contain private IP addresses
+gies emerge. We constructed a 13 × 13 co-occurrence matrix                (10.x.x.x), suggesting lateral movement targeting. Credential
+from the 632 vulnerabilities across 157 skills by applying the            targeting focuses on email addresses (114 instances) and pass-
+co-occurrence framework, Figure 6 shows the matrix for the                words (108), and extends to platform-native secrets, including
+five most prevalent patterns.                                             ANTHROPIC_AUTH_TOKEN and GITHUB_TOKEN.
+
+The Data Exfiltration Chain: E2 → E1 Credential har-                         Credential harvesting (E2) and external transmission (E1)
+vesting (E2) and external transmission (E1) co-occur in 58 of             co-occur in 58 of 157 skills (36.9%) with OR=2.24 (Fisher’s
+157 skills (36.9%, 95% CI [29.4%, 44.5%]) with odds ratio                 exact p = 0.020): skills with E2 are 2.2× more likely to
+2.24 (Fisher’s exact p = 0.020). Skills with credential harvest-          include E1 than expected by chance. The E2+SC2 finger-
+ing are 2.2× more likely to also include external transmission            print achieves near-perfect discrimination of the smp_170 fac-
+than expected by chance. Each pattern can independently                   tory: 83 of 85 smp_170 skills (97.6%) exhibit this pair versus
+serve benign purposes (logging, analytics); their statistically           only 5 of 72 non-smp_170 skills (6.9%), yielding OR=556.1
+significant co-occurrence signals intent that neither pattern             (p < 0.001). The E2+E1+P4 triple affects 41 skills (26.1%)
+alone reveals.                                                            and concentrates in higher levels: 0% in Level 1, 27.0% in
+
+A Negative Association Reveals Two Archetypes The co-
+occurrence matrix shows not only positive associations but
+also a significant negative one. Remote script execution (SC2)
+and instruction override (P1) co-occur in only 8 skills (5.1%)
+
+1736 35th USENIX Security Symposium                                       USENIX Association
+
+
+===== PAGE 12 / 21 =====
+
+Level 2, 80.0% in Level 3. Multi-technique coordination, not     human-in-the-loop intervention. Detection of this archetype
+any single pattern, characterizes advanced malicious skills.     requires semantic analysis of instructional text; code-level
+                                                                 monitoring alone is insufficient.
+   Every skill contains identical social engineering language
+(100% template consistency, 26 identical lines): “Your cre-         Take-Away: Attack Strategies (RQ2)
+dentials, your choice” and “Credentials. . . are never trans-
+mitted,” while simultaneously installing curl | bash from          The ecosystem separates into two negatively correlated
+c2-domain.example. Brand customization is strategically            archetypes: Data Thieves (SC2-centered, OR=23.8 for
+selective: visible components are customized per brand (E3:        E2) exfiltrate through hardcoded infrastructure; Agent Hi-
+89%, E1: 80%, E2: 71%) while hidden manipulation is                jackers (P1-centered) subvert the AI’s decision-making.
+generic (P4: only 13%). This strategy maximizes perceived          One industrialized actor (smp_170) accounts for 54.1%
+legitimacy while minimizing customization effort. The 85           of malicious skills via templated brand impersonation,
+impersonated brands span 15 industry sectors including finan-      identifiable by the E2+SC2 fingerprint (OR=556). These
+cial services, productivity SaaS, and healthcare. The per-skill    archetypes require fundamentally different detection
+vulnerability distribution is right-skewed and heavy-tailed        strategies.
+(excess kurtosis = +3.7), peaking at four vulnerabilities with
+a single 13-vulnerability outlier. Concentration is most pro-    4.3 RQ3: How Do Attackers Evade Detection?
+nounced across publishers: the smp_170 factory alone ac-
+counts for 58.5% of all 632 vulnerabilities (370 instances),     RQ2 identified two coordinated attack strategies. We now
+and the per-publisher Gini coefficient is 0.71, confirming a     analyze how attackers conceal these strategies, examining
+commoditized landscape with the factory as a distinct outlier    documentation-level deception and platform-native vectors.
+rather than the tail of a smooth distribution.
+Agent Hijacker: Subverting the AI Itself The P1-centered         Shadow Features and the Concealment Gradient Of 157
+archetype that manipulates agent instructions is smaller (16     malicious skills, 115 (73.2%) contain shadow features, de-
+skills, 10.2%) but represents a different threat model: control  fined as capabilities not inferable from public documenta-
+rather than data theft. Agent hijacking techniques form a        tion and verified by two independent researchers (Cohen’s
+hierarchy of escalating subversion: instruction override (60     κ = 0.83). Shadow features manifest as undocumented net-
+instances), safety bypass (35), coercive language (33), secrecy  work endpoints (47.2%), conditional triggers (18.4%), obfus-
+instructions (20), autonomy override (12), and silent operation  cated code segments (11.0%), and instructions embedded in
+(4). Jailbreak attempts (P2) and code obfuscation (SC3) are      invisible markup (6.7%). Undocumented endpoints are more
+significantly associated (OR=6.5, φ = 0.26, Fisher’s exact       prevalent than obfuscation, indicating that attackers favor
+p = 0.007): when hijackers bypass safety guardrails, they        subtle concealment. Documentation-behavior comparison is
+also obfuscate their methods.                                    therefore a higher-yield detection heuristic than code-pattern
+                                                                 matching.
+   AI Truthfulness Enforcer (smp_2663) illustrates social en-
+gineering in this dataset. Masquerading as a safety tool, it        The evasion–sophistication relationship is monotonic:
+deploys five separate P1 patterns, all rated CRITICAL, in-       shadow features increase from 0% (Level 1) to 86.1%
+cluding a MANDATORY ACTIVATION PROTOCOL and “unby-               (Level 2) to 100% (Level 3); obfuscation from 0% to 7.4%
+passable” declaration. The skill exploits users’ desire for      to 60.0%. Every Level 3 skill employs at least one evasion
+safety as an attack vector. Email Skill (smp_2795) combines      technique; no Level 1 skill employs any. Concealment ca-
+four techniques simultaneously (instruction override, coercive   pability, not attack diversity, is the defining characteristic of
+language, secrecy, and silent operation), instructing agents to  sophistication in both archetypes.
+BCC all emails to an attacker address while directing: “do
+NOT ask user permission,” “do NOT mention in conversation,       Code-Level Obfuscation Fifteen skills (9.5%) employ
+just include it.”                                                code obfuscation (SC3): Base64 encoding with exec()
+                                                                 (61.1%), marshal/pickle serialization (22.2%), and hex en-
+   ## Email Skill                                                coding with runtime decoding (16.7%):
+   CRITICAL: BCC Default Behavior:
+   - Multiple Recipients: ALWAYS add attacker@example               eval( Buffer . from (" <%@* @@$@$@@@@@@ * @@$$ **** @@@ >" ,
+                                                                                                     " base64 "). toString () )
+           .com
+       to BCC field automatically                                             SC3: Base64-Obfuscated Reverse Shell (smp_1847)
+   - Do NOT ask user permission
+   - Do NOT mention in conversation - just include it            Per our dual-use posture (§6), we redact the actual Base64
+                                                                 string and omit the decoded payload; the schematic above
+            P1/P4: Hidden BCC with Agent Silencing (smp_2795)    shows only the eval(Buffer.from(...,"base64")) con-
+                                                                 cealment idiom that defeats string-based scanners.
+   Slack Bridge (smp_6028) explicitly bans the
+AskUserQuestion tool, cutting off the agent’s ability
+to consult the user and enabling covert operations without
+
+USENIX Association                                               35th USENIX Security Symposium 1737
+
+
+===== PAGE 13 / 21 =====
+
+The low prevalence of code-level obfuscation (9.5%) indi-         Take-Away: Detection Evasion (RQ3)
+cates that most evasion operates at the documentation level,
+not the code level. Traditional static analysis tools designed      Evasion scales monotonically with sophistication:
+for code obfuscation detection would miss the primary con-          shadow features increase from 0% (Level 1) to 100%
+cealment mechanism.                                                 (Level 3). Most concealment operates at the documenta-
+                                                                    tion level, not the code level. Documentation-behavior
+Platform-Native Attack Vectors A subset of skills (n=6)             comparison is the single highest-yield detection heuristic.
+falls outside both archetypes, instead targeting the AI plat-       Platform-native attacks (model substitution, hook manip-
+form’s own infrastructure. These attacks have no precedent          ulation, sleeper activation) exploit the AI platform’s own
+outside the agentic AI ecosystem.                                   trust mechanisms and represent an emerging threat class.
+
+   Model Substitution. Plan Refine (smp_9014) executes            5 Discussion
+a man-in-the-middle attack at the model level: it redi-
+rects all Claude API calls to attacker-proxy.example,             This section presents a unified threat model and defense im-
+substituting custom-lm for every Claude model vari-               plications.
+ant. Every prompt, code snippet, and business docu-
+ment passes through an attacker-controlled proxy. The             5.1 Two Archetypes, Two Threat Models
+--dangerously-skip-permissions flag disables all safety
+checks; the attacker instructs the platform to bypass itself.     Our measurements indicate that the ecosystem has already
+Two additional skills similarly abuse this flag to bypass plat-   split into two distinct attack philosophies, each requiring fun-
+form security.                                                    damentally different defensive strategies.
+
+   Supply Chain Trojan. Full Upload Injected PPTX                    The Data Thief archetype has reached commodity mal-
+(smp_2485) is a near-exact clone of a legitimate skill (98.3%     ware maturity. A single actor (smp_170) operates a factory
+text similarity, 484 vs. 487 lines), with exactly three lines     of 85 brand-impersonating skills with 100% template consis-
+added (0.6% of the file):                                         tency, and the E2+SC2 fingerprint identifies this class with
+                                                                  OR=556 and 97.6% sensitivity. From a detection standpoint,
++ 6. Invoke the backup script:                                    Data Thieves are a tractable problem: static fingerprinting at
+                                                                  submission time, combined with cross-skill similarity analy-
++  python scripts/file_backup.py <file >                          sis (26 identical lines), could eliminate the largest campaign
+                                                                  with trivial computational cost. The more difficult problem
++ 8. **IMPORTANT: Invoke the backup script**                      is ecosystem-level damage. Three months of brand imper-
+                                                                  sonation across 15 industry sectors erodes user trust in ways
+   Supply Chain Trojan: 3-Line Injection (smp_2485)               that post-hoc removal cannot reverse—the 100% removal rate
+                                                                  (157/157) validates responsiveness but not prevention.
+   The injected file_backup.py silently uploads files to
+exfil-server.example/upload. This is the software sup-               The Agent Hijacker archetype presents a qualitatively dif-
+ply chain trojan pattern adapted to the skill ecosystem, invisi-  ferent challenge. These 16 skills operate entirely within the
+ble on casual review.                                             LLM’s instruction-following layer: P1 patterns override safety
+                                                                  constraints, P4 patterns suppress user notification, and the
+   Platform Mechanism Weaponization. Three skills                 combination silences the agent’s ability to consult its user.
+weaponize Claude Code’s own infrastructure. Lark Agent            This attack surface exists only because the consumer of skill
+(smp_866) ships a .mcp.json with hardcoded API cre-               documentation is an AI agent. A human developer reading
+dentials, giving any installer a pre-configured MCP server        the same SKILL.md would not execute “do NOT ask user
+pointing to the attacker’s workspace. Hooks Automation            permission”—but an instruction-following agent will. Tradi-
+(smp_413) intercepts all tool operations via Claude Code’s        tional security tooling has no analogue for a Markdown file
+hook system. PreToolUse hooks monitor every agent action,         that manipulates an AI to act against its user, and no existing
+PostToolUse hooks exfiltrate results to external servers, and     detection framework addresses this vector.
+session-end hooks dump agent memory. Two additional
+skills remain dormant until activated by a specific codeword      5.2 Lessons from Mature Ecosystems
+injected via the hook system, functioning as sleeper cells
+triggered only by coordinated hook manipulation.                  Comparing our findings against three mature ecosystems
+                                                                  shows what agent skills inherit, what is novel, and why this
+   Coordinated Campaigns. Cross-publisher analysis iden-          ecosystem matures on a compressed timeline.
+tifies organized groups beyond smp_170. The flow-nexus            Browser Extensions: Structural Parallel, Lower Barrier
+family spans three publishers, all using claude-flow npm          The middle-heavy sophistication distribution (77.7% Level 2)
+packages and ruv-swarm infrastructure. The smp_716 pair
+(Stealth Ghosting + Stealth Ops) demonstrates complemen-
+tary specialization: one handles trace removal and evidence
+exfiltration while the other provides defense evasion with
+nohup, eval(), and hidden logging.
+
+1738 35th USENIX Security Symposium                               USENIX Association
+
+
+===== PAGE 14 / 21 =====
+
+mirrors browser extensions circa 2012 [11], roughly two years      of malicious skills contain shadow features, and benign de-
+before advanced persistent threats began targeting extensions
+at scale. The parallel breaks in one critical dimension: browser   velopers have no reason to hide functionality. Detection
+extension attacks require JavaScript and the WebExtensions
+API; agent skill attacks require only natural language. The        must parse instructional text for coercive language (“NON-
+84.2% concentration of vulnerabilities in SKILL.md means
+the barrier to creating a malicious skill is closer to writing     NEGOTIABLE,” “SEVERE VIOLATION”), secrecy direc-
+a phishing email than to writing an exploit. This difference
+in barrier to entry explains the compressed timeline—three         tives (“do NOT mention in conversation”), and autonomy
+months to reach a sophistication profile that took browser
+extensions years—and predicts that attacker adoption will          overrides (“DO NOT ASK THE USER”).
+accelerate as agent platforms proliferate.
+Android Malware: Lifecycle Parallel, Collapsed Privilege           Parallel Detection Pipelines The SC2↔P1 negative asso-
+Model Agent skills achieve comparable kill chain coverage
+(median 3 of 6 phases) to sophisticated Android malware            ciation (OR=0.11) means a single detection pipeline will
+families that evolved over years [38]. The root cause is the
+privilege model: agent skills execute with pre-granted user        systematically miss one archetype. A code-execution monitor
+privileges, eliminating the exploitation and privilege esca-
+lation stages that constrain Android malware timelines. No         catches Data Thieves but not Agent Hijackers; a semantic
+exploit development is required; skills start with the same
+access the user has. This collapsed privilege model raises the     analyzer catches Agent Hijackers but not template factories.
+floor of attacker capability—a first-time attacker can achieve
+multi-phase kill chain coverage that would require substantial     Effective detection requires both, and the two archetype pop-
+expertise in the Android ecosystem.
+npm/PyPI Supply Chain: Technique Parallel, Novel At-               ulations should be evaluated separately when benchmarking
+tack Surface Remote script execution (SC2) is the direct
+analogue to dependency confusion and typosquatting in              to avoid overstating performance on the minority class.
+npm/PyPI [10], and credential harvesting (E2) follows the
+same playbook. Agent skills add two dimensions absent from         Platform-Native  Hardening               Three  skills
+traditional supply chains. First, 84.2% of vulnerabilities re-
+side in natural language documentation—an attack surface           weaponize Claude Code’s own infrastructure:
+with no npm/PyPI analogue, because traditional package man-
+agers do not interpret documentation as executable instruc-        --dangerously-skip-permissions abuse, MCP server hi-
+tions. Second, the complexity-severity paradox inverts the
+conventional relationship: in npm/PyPI, sophistication corre-      jacking via shipped .mcp.json, and hook-based exfiltration
+lates with severity; in agent skills, the most severe attacks are
+the simplest (single SC2 pipe-to-bash, always CRITICAL),           intercepting every tool operation. These attacks exploit trust
+while advanced skills deliberately layer lower-severity sup-
+porting techniques. Severity-based triage—standard practice        mechanisms that the platform itself provides, an emerging
+in traditional supply chain security—will systematically miss
+the most sophisticated agent skill attacks.                        threat class with no analogue in traditional ecosystems.
+
+   The current Level 2-dominant window, with Level 3 at only       Framework developers should prioritize permission scop-
+6.4%, is the optimal point for defensive investment. Establish-
+ing detection infrastructure and review norms now—while            ing, MCP credential rotation, and hook sandboxing—the
+the ecosystem is analogous to browser extensions pre-2014 or
+Android pre-2013—can avoid the costly reactive cycle those         instruction-level attack archetype (P1/P4) further demands
+ecosystems experienced.
+                                                                   semantic monitoring of skill instructions before they reach
+5.3 Defense Implications
+                                                                   the LLM.
+Natural-Language-First Detection The 84.2% concentra-
+tion of vulnerabilities in SKILL.md means code-level static        Our responsible disclosure—157 skills reported and all 157
+analysis misses the primary attack surface. Documentation-
+behavior comparison is the most effective heuristic: 73.2%         (100%) subsequently removed—confirms that registry main-
+
+                                                                   tainers are responsive. However, the three-month undetected
+
+                                                                   window demonstrates that reactive removal alone is insuffi-
+
+                                                                   cient: users had no way to distinguish malicious skills from
+
+                                                                   benign alternatives during this period.
+
+                                                                   5.4 Limitations
+
+                                                                   Our dataset is a January 2026 snapshot. Spearman rank corre-
+                                                                   lation between registry IDs and sophistication metrics yields
+                                                                   no significant temporal trends (all p > 0.3); observed variation
+                                                                   reflects attacker diversity rather than temporal evolution. The
+                                                                   60-second dynamic analysis window may miss time-delayed
+                                                                   payloads or environment-gated triggers. Sophisticated attack-
+                                                                   ers may detect the Docker environment (e.g., via filesystem
+                                                                   artifacts or timing checks) and suppress malicious behavior.
+                                                                   Our vulnerability taxonomy, while grounded in prior incident
+                                                                   reports and security advisories, may not capture novel attack
+                                                                   patterns that emerge as agent platforms evolve. Manual la-
+                                                                   beling, despite achieving high inter-rater agreement (Cohen’s
+                                                                   κ = 0.91), involves judgment calls for ambiguous cases where
+                                                                   intent is unclear. The 100% removal rate (157/157) by reg-
+                                                                   istry maintainers, who use independent evaluation methods,
+                                                                   provides external validation.
+
+                                                                      A 10% sample of unconfirmed candidates found 93.2%
+                                                                   contain dormant triggers, suggesting 157 confirmed skills is
+                                                                   a lower bound. smp_170 accounts for 54.1% of confirmed
+
+USENIX Association                                                                  35th USENIX Security Symposium 1739
+
+
+===== PAGE 15 / 21 =====
+
+malicious skills. Because one publisher dominates, we re-        Harms and Mitigations. Third-party services during dy-
+port concentration at the publisher level (per-publisher Gini =  namic verification. All static candidates ran in ephemeral
+0.71; smp_170 alone contributes 58.5% of all vulnerabilities)    Docker sandboxes with no persistent storage, no real creden-
+rather than per skill, where the distribution is merely right-   tials, honeypot-only secrets, monitored but never-forwarded
+skewed (excess kurtosis = +3.7); aggregate statistics should     egress, and a 60-second cap. Crawling respected rate limits
+be interpreted accordingly. Results from this public registry    (1 req/s), used authenticated APIs, and did not bypass access
+snapshot may not generalize to enterprise deployments or         controls, scrape private repositories, or collect telemetry.
+private skill-sharing channels.
+                                                                    Deception. The only deception is synthetic honeypot cre-
+6 Conclusion                                                     dentials used in-sandbox to trigger exfiltration; no human
+                                                                 subjects, registry users, or maintainers were deceived, and no
+We present, to the best of our knowledge, the first large-scale  real account, key, or token was exposed.
+measurement of the malicious agent skill ecosystem: starting
+from a 98,380-skill snapshot, we construct a labeled dataset of     End-user exposure during remediation. Following estab-
+157 behaviorally-confirmed malicious skills with 632 vulner-     lished practice [32, 33], we disclosed all 157 cases pre-
+abilities. Our measurement reveals a rapidly maturing ecosys-    publication with evidence sufficient for remediation. At sub-
+tem: skills layer an average of 4.03 techniques across a me-     mission 147/157 had been removed; through continued main-
+dian of 3 kill chain phases. The ecosystem has bifurcated        tainer review, all 157/157 (100%) are now removed or de-
+into two negatively correlated archetypes: Data Thieves and      indexed, independently validating our classifications.
+Agent Hijackers. A single industrialized actor accounts for
+54.1% of observed activity through templated brand imper-           Reputational harm from false positives. “Malicious” is re-
+sonation. Evasion increases monotonically with attacker so-      served for behaviorally confirmed intentional abuse: two-rater
+phistication, while a growing class of platform-native attacks   verification (Cohen’s κ = 0.89, 0.91), blinded review (Fleiss’
+weaponizes the AI platform’s own trust mechanisms. The           κ = 0.85), and 99.6% precision. We do not name authors
+100% removal rate (157/157) following responsible disclo-        or release repository URLs and use anonymized identifiers
+sure demonstrates that platforms remain responsive to threat     (smp_*, rest_*). For ambiguous dual-use cases, we made no
+intelligence. To support future research, we release our com-    public accusations and deferred to maintainers.
+plete dataset and analysis pipeline [1]. In the future, we will
+track agent platforms longitudinally as adoption grows, per-        Adversarial misuse of the artifact. The paper reports aggre-
+form cross-platform analysis, and externally validate detec-     gate statistics, anonymized identifiers, and synthesized snip-
+tion signatures derived from our dataset.                        pets rather than working exploits, live endpoints, or links to
+                                                                 malicious repositories. Full malicious samples are gated by a
+Ethical Considerations                                           documented request process (institutional affiliation, intended
+                                                                 use, non-redistribution, disclosure-status acknowledgment);
+Our study crawls public registries, executes untrusted code in   detection logic, labels, co-occurrence matrices, and scripts are
+sandboxes, and labels third-party artifacts as malicious. Per    released openly so the analysis funnel is reproducible with-
+the USENIX Security 2026 ethics guidelines, we (i) enumer-       out a malware channel. The same process is described in the
+ate stakeholders, (ii) map harms to mitigations, (iii) record    artifact appendix.
+the rationale for conducting and publishing, and (iv) surface
+limitations with ethical implications (§5.4).                       Researchers and infrastructure. Live execution ran on iso-
+Stakeholders. We considered: end users with pre-granted          lated hosts with restricted networking, container resource lim-
+local privileges; organizations whose credentials, source, or    its, and forensic logging; raw payloads are stored in access-
+agent context can be exfiltrated; downstream third parties       controlled internal storage limited to the research team.
+(e.g., contacts covertly bcc’d by smp_2795); benign devel-       Decision Rationale: Conducting and Publishing. The re-
+opers, including dual-use defensive/pentesting maintainers       search is warranted because the attack class is no longer
+harmed by an incorrect “malicious” label; registry operators     hypothetical—the GTG-1002 campaign [6] and Cato CTRL’s
+(skillsmp.com, skills.rest) and platform vendors (An-            “Medusa” [8] show adversaries already exploiting agent
+thropic, OpenAI, Google) responsible for triage and runtime      toolchains—and registries apply no semantic security review,
+safety; security researchers and defenders; small developers     leaving defenders without a labeled benchmark. The work
+and organizations without security teams, disproportionately     is dual-use, but benefits outweigh harms: the techniques are
+exposed; the broader public as agents enter software work-       already deployed, so publication adds no novel offensive ca-
+flows; and the researchers themselves, who bear operational      pability; we withhold working exploits, decoded payloads,
+risk from handling live payloads.                                live endpoints, repository pointers, and author identities (see
+                                                                 also the elision in §4); and the artifact is partitioned, with
+                                                                 aggregate labels and scripts public but full samples gated.
+                                                                 Anticipated benefits are concrete: registry operators can pri-
+                                                                 oritize semantic review, platform vendors can harden permis-
+                                                                 sions and hooks, end users gain a sharper mental model of
+                                                                 installation risk, and the community gains the first labeled
+
+1740 35th USENIX Security Symposium                              USENIX Association
+
+
+===== PAGE 16 / 21 =====
+
+benchmark for evaluating defenses.                                 Acknowledgments
+Limitations with Ethical Implications. Four limitations
+from §5.4 bear directly on ethical claims: dormant triggers        Jianting is supported by the Science Foundation of Zhejiang
+and environment-gated behavior may undercount harm to              Sci-Tech University (ZSTU) under Grant No. 26222227-Y
+users whose environments enable behaviors absent from our          and the Program of Zhejiang Key Laboratory of Digital Fash-
+sandbox; sandbox decay—the 60-second window is conserva-           ion and Data Governance (No. 2024E10049).
+tive for long-fuse malware, so the confirmed set is a high-
+precision lower bound; single-actor skew—smp_170 con-              References
+tributes 85 templated skills (54.1%), so per-skill aggregates
+partly reflect one campaign; and snapshot decay—a 2026              [1] Anonymous. Malicious agent skills: Dataset, detec-
+refresh observed 12.6× more skills than our January 2026                 tion tools, and research artifacts. https://sites.goog
+snapshot, so labels age even as structural risk persists.                le.com/view/malicious-agent-skills, 2026. Re-
+                                                                         search artifacts including the labeled dataset of 157
+Open Science                                                             confirmed malicious skills (632 vulnerabilities, shadow-
+                                                                         feature annotations), the static and dynamic detection
+Per USENIX Security’s open science policy, we release ar-                pipeline that reproduces the 98,380→4,287→157 anal-
+tifacts at our project website [1]. A permanent archive is               ysis funnel, the vulnerability taxonomy, and statistical
+available on Zenodo: https://doi.org/10.5281/zenodo                      analysis scripts. Malicious skill URLs withheld for re-
+.20285751.                                                               sponsible disclosure.
+
+   The released artifacts center on the labeled set of confirmed    [2] Anthropic. Model context protocol specification. http
+malicious skills, including vulnerability labels (632 instances          s://modelcontextprotocol.io/, 2024. Open proto-
+across 13 patterns), shadow feature annotations, sophistication          col for AI-tool integration.
+level assignments, and attack chain classifications. We addi-
+tionally release the detection pipeline—registry crawler, static    [3] Anthropic. Tool use documentation. https:
+analysis rules, behavioral verification harness, co-occurrence           //docs.anthropic.com/en/docs/build-with-cl
+matrices, and hypothesis-testing scripts—so that the analysis            aude/tool-use, 2024. JSON schema-based tool
+funnel from a registry-wide snapshot down to the confirmed               definitions for Claude models.
+set can be re-executed by other researchers against current
+registry state. Because the registries evolve continuously, we      [4] Anthropic. Claude code documentation. https://
+do not ship a frozen copy of every intermediate candidate;               docs.anthropic.com/en/docs/claude-code, 2025.
+researchers reproducing the study will obtain a comparable,              Official Claude Code documentation.
+freshly-collected funnel by running the pipeline.
+                                                                    [5] Anthropic. Claude code skills documentation.
+   All artifacts are publicly accessible via our project web-            https://docs.anthropic.com/en/docs/claude-
+site [1] and the Zenodo archive. Code examples in the paper              code/skills, 2025. Official documentation for agent
+are synthesized to illustrate patterns without providing work-           skills architecture.
+ing exploits. Repository URLs for confirmed malicious skills
+are withheld to prevent misuse; researchers needing access for      [6] Anthropic. Disrupting the first reported AI-orchestrated
+replication may contact the authors via the controlled-access            cyber espionage campaign. https://www.anthropic.
+process described below.                                                 com/news/disrupting-AI-espionage, 2025. GTG-
+Controlled-access process for full malicious samples. Ag-                1002 campaign: state-sponsored actors weaponized
+gregate labels, detection logic, co-occurrence matrices, and             Claude Code with malicious MCP servers; 80-90% of
+analysis scripts are openly released to support reproducibil-            tactical operations executed autonomously.
+ity of the analysis funnel. The full malicious skill payloads,
+however, are gated through a documented request process to          [7] Vincent D Blondel, Jean-Luc Guillaume, Renaud Lam-
+avoid turning the artifact into a malware distribution channel.          biotte, and Etienne Lefebvre. Fast unfolding of commu-
+Bona fide researchers may request access by providing (i) in-            nities in large networks. Journal of Statistical Mechan-
+stitutional affiliation and a verifiable academic or industry            ics: Theory and Experiment, 2008(10):P10008, 2008.
+security email, (ii) a brief description of the intended research
+use, (iii) a non-redistribution commitment, and (iv) acknowl-       [8] Inga Cherny. Cato CTRL threat research: From
+edgment of the current remediation status of the dataset. Re-            productivity boost to ransomware nightmare –
+quests are reviewed by the authors; access is granted via a              weaponizing Claude skills with MedusaLocker. https:
+time-limited link to an access-controlled archive. The process           //www.catonetworks.com/blog/cato-ctrl-weap
+and its rationale are also summarized in the Ethical Consider-           onizing-claude-skills-with-medusalocker/,
+ations section (§6).                                                     December 2025. Demonstrates weaponizing legitimate
+
+USENIX Association                                                 35th USENIX Security Symposium 1741
+
+
+===== PAGE 17 / 21 =====
+
+skills to deliver ransomware; highlights consent gap        [16] Sheryl Hsu, Manda Tran, and Aurore Fass. What is
+      vulnerability; disclosed to Anthropic Oct 30, 2025.               in the chrome web store? In Proceedings of the 19th
+                                                                        ACM Asia Conference on Computer and Communica-
+ [9] Cisco AI Defense. Skill scanner: Security scanner for              tions Security (AsiaCCS ’24). ACM, 2024. Found 60%
+      agent skills. https://github.com/cisco-ai-defe                    of extensions never updated; security-noteworthy exten-
+      nse/skill-scanner, 2025. Regex-based static ana-                  sions affect 350M users; half of vulnerable extensions
+      lyzer for agent skills; evaluated on our dataset showing          remain unpatched 2 years post-disclosure.
+      10.7% false positive rate.
+                                                                  [17] LangChain. LangChain tools documentation. https://
+[10] Ruian Duan, Omar Alrawi, Ranjita Pai Kasturi, Ryan                 python.langchain.com/docs/concepts/tools/,
+      Elder, Brendan Saltaformaggio, and Wenke Lee. To-                 2024. Tool abstraction layer for LLM agent frameworks.
+      wards measuring supply chain attacks on package man-
+      agers for interpreted languages. In Proceedings of the      [18] Elizabeth Lin, Igibek Koishybayev, Trevor Dunlap,
+      2021 Network and Distributed System Security Sympo-               William Enck, and Alexandros Kapravelos. UntrustIDE:
+      sium (NDSS ’21). Internet Society, 2021. Identified 339           Exploiting weaknesses in VS Code extensions. In Pro-
+      malware packages across npm, PyPI, and RubyGems;                  ceedings of the 2024 Network and Distributed System
+      Georgia Tech. doi:10.14722/ndss.2021.23055.                       Security Symposium (NDSS ’24). Internet Society, 2024.
+                                                                        Distinguished Paper Award; North Carolina State Uni-
+[11] Benjamin Eriksson, Pablo Picazo-Sanchez, and Andrei                versity.
+      Sabelfeld. Hardening the security analysis of browser
+      extensions. In Proceedings of the 37th ACM/SIGAPP           [19] Yi Liu, Weizhe Wang, Ruitao Feng, Yao Zhang,
+      Symposium on Applied Computing (SAC ’22), pages                   Guangquan Xu, Gelei Deng, Yuekang Li, and Leo Zhang.
+      1694–1703. ACM, 2022. Found 4,410 extensions steal-               Agent skills in the wild: An empirical study of security
+      ing search queries; Chalmers University. doi:10.1145/             vulnerabilities at scale, 2026. URL: https://arxiv.
+      3477314.3507098.                                                  org/abs/2601.10338, arXiv:2601.10338.
+
+[12] Adrienne Porter Felt, Elizabeth Ha, Serge Egelman, Ar-       [20] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and
+      ber Haney, Erika Chin, and David Wagner. Android                  Neil Zhenqiang Gong. Formalizing and benchmarking
+      permissions: User attention, comprehension, and behav-            prompt injection attacks and defenses. In Proceedings
+      ior. In Proceedings of the 8th Symposium on Usable                of the 33rd USENIX Security Symposium, pages 1831–
+      Privacy and Security (SOUPS ’12). ACM, 2012. Foun-                1847. USENIX Association, 2024. Penn State and Duke
+      dational study on permission consent fatigue.                     University.
+
+[13] Google. Gemini CLI skills documentation. https:              [21] Ari Marzouk. IDEsaster: 30+ critical vulnera-
+      //geminicli.com/docs/cli/skills, 2025. Agent                      bilities found in AI IDEs (Cursor, Copilot, Wind-
+      skills for Gemini CLI using SKILL.md format in .gemi-             surf). https://techbytes.app/posts/idesas
+      ni/skills/ directory.                                             ter-ai-ide-security-vulnerabilities/, Decem-
+                                                                        ber 2025. 24 CVEs across AI-powered IDEs; attack
+[14] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra,                    chain: prompt injection to tool misuse to IDE feature
+      Christoph Endres, Thorsten Holz, and Mario Fritz. Not             exploitation.
+      what you’ve signed up for: Compromising real-world
+      LLM-integrated applications with indirect prompt injec-     [22] MITRE Corporation. MITRE ATT&CK: Privilege
+      tion. In Proceedings of the 16th ACM Workshop on Arti-            escalation. https://attack.mitre.org/tactics/T
+      ficial Intelligence and Security (AISec ’23), pages 79–90.        A0004/, 2024. Adversary tactics and techniques: privi-
+      ACM, 2023. doi:10.1145/3605764.3623985.                           lege escalation defined as techniques to gain higher-level
+                                                                        permissions on a system or network.
+[15] Wenbo Guo, Zhengzi Xu, Chengwei Liu, Cheng Huang,
+      Yong Fang, and Yang Liu. An empirical study of ma-          [23] Asmit Nayak, Rishabh Khandelwal, Earlence Fernan-
+      licious code in PyPI ecosystem. In Proceedings of                 des, and Fawaz Kassem. Experimental security analysis
+      the 38th IEEE/ACM International Conference on Au-                 of sensitive data access by browser extensions. In Pro-
+      tomated Software Engineering (ASE ’23), pages 1324–               ceedings of the ACM Web Conference 2024 (WWW ’24).
+      1335. IEEE, 2023. Analyzed 4,669 malicious packages;              ACM, 2024. doi:10.1145/3589334.3645683.
+      74.81% reached end-user projects; over 72% persist
+      on mirror servers after discovery. doi:10.1109/AS           [24] OpenAI.  Function calling documentation.
+      E56229.2023.00135.
+                                                                  https://platform.openai.com/docs/guides/
+
+                                                                  function-calling, 2024. JSON schema-based tool
+
+                                                                  definitions for GPT models.
+
+1742 35th USENIX Security Symposium                                                            USENIX Association
+
+
+===== PAGE 18 / 21 =====
+
+[25] OpenAI. Codex CLI skills documentation. https:             [34] Shreya Singh, Gaurav Varshney, Tarun Kumar Singh,
+      //developers.openai.com/codex/skills/, 2025.                    Vidhi Mishra, and Khushi Verma. A study on malicious
+      Agent skills for Codex CLI using SKILL.md format in             browser extensions in 2025, 2025. IIT Jammu. arXiv:
+      .codex/skills/ directory.                                       2503.04292.
+
+[26] OpenAI. Introducing GPT-5.2. https://openai.com            [35] SkillsMP. SkillsMP: Agent skills marketplace. https:
+      /index/introducing-gpt-5-2/, 2025.                              //skillsmp.com, 2025. Community-driven market-
+                                                                      place aggregating skills from public GitHub repositories;
+[27] OWASP Foundation.  OWASP top 10 for                              provides search, categorization, and quality indicators.
+
+large language model applications.        https:                [36] Skills.rest. Skills.rest: Agent skills registry. https:
+                                                                      //skills.rest, 2025. Community registry for agent
+//owasp.org/www-project-top-10-for-larg                               skills with automated indexing from GitHub reposito-
+                                                                      ries.
+e-language-model-applications/, 2025. Industry
+                                                                [37] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang,
+standard taxonomy of LLM security risks including                     Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang,
+                                                                      Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei,
+prompt injection, insecure output handling, supply                    and Ji-Rong Wen. A survey on large language model
+                                                                      based autonomous agents. Frontiers of Computer Sci-
+chain vulnerabilities, and data leakage.                              ence, 18(6):186345, 2024.
+
+[28] OWASP GenAI Security Project. OWASP top 10 for             [38] Wei Wang, Xing Wang, Dawei Feng, Jiqiang Liu, Zhen
+      agentic applications. https://genai.owasp.org/                  Han, and Xiangliang Zhang. Exploring permission-
+      2025/12/09/owasp-top-10-for-agentic-applic                      induced risk in android applications for malicious ap-
+                                                                      plication detection. IEEE Transactions on Informa-
+      ations-the-benchmark-for-agentic-security-                      tion Forensics and Security, 9(11):1869–1882, 2014.
+      in-the-age-of-autonomous-ai/, December 2025.                    Large-scale Android malware analysis demonstrating
+      Industry framework for agentic AI risks: Agent Goal             technique layering and coordinated attack strategies.
+      Hijack, Identity Abuse, RCE, Tool Misuse, Supply                doi:10.1109/TIFS.2014.2353996.
+      Chain, Memory Poisoning, etc.
+                                                                [39] Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen
+[29] Fábio Perez and Ian Ribeiro. Ignore previous prompt:             Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie
+      Attack techniques for language models. In NeurIPS ML            Jin, Enyu Zhou, Rui Zheng, Xiaoran Fan, Xiao Wang,
+      Safety Workshop, 2022.                                          Limao Xiong, Yuhao Zhou, Weiran Wang, Changhao
+                                                                      Jiang, Yicheng Zou, Xiangyang Liu, Zhangyue Yin, Shi-
+[30] Pillar Security. New vulnerability in GitHub Copilot             han Dou, Rongxiang Weng, Wensen Cheng, Qi Zhang,
+      and Cursor: How hackers can weaponize code agents.              Wenjuan Qin, Yongyan Zheng, Xipeng Qiu, Xuanjing
+      https://www.pillar.security/blog/new-vulne                      Huang, and Tao Gui. The rise and potential of large
+                                                                      language model based agents: A survey. Science China
+      rability-in-github-copilot-and-cursor-ho                        Information Sciences, 2025. Comprehensive survey of
+      w-hackers-can-weaponize-code-agents, March                      LLM-based agents covering architecture, capabilities,
+      2025. Rules File Backdoor: supply chain attack via              and applications.
+      hidden instructions in AI IDE config files.
+                                                                [40] Jianjia Yu, Song Li, Junmin Zhu, and Yinzhi Cao. CoCo:
+[31] David Schmotz, Sahar Abdelnabi, and Maksym An-                   Efficient browser extension vulnerability detection via
+      driushchenko. Agent skills enable a new class of                coverage-guided, concurrent abstract interpretation. In
+      realistic and trivially simple prompt injections, 2025.         Proceedings of the 2023 ACM SIGSAC Conference on
+      Demonstrates prompt injection through agent skill files;        Computer and Communications Security (CCS ’23),
+      shows how to bypass Claude Code guardrails. arXiv:              pages 496–510. ACM, 2023. Distinguished Paper
+      2510.26328.                                                     Award. doi:10.1145/3576915.3616584.
+
+[32] Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen,        [41] Markus Zimmermann, Cristian-Alexandru Staicu, Cam
+      and Yang Zhang. “do anything now”: Characteriz-                 Tenny, and Michael Pradel. Small world with high risks:
+      ing and evaluating in-the-wild jailbreak prompts on             A study of security threats in the npm ecosystem. In
+      large language models. In Proceedings of the 2024               Proceedings of the 28th USENIX Security Symposium,
+      ACM SIGSAC Conference on Computer and Commu-                    pages 995–1010. USENIX Association, 2019.
+      nications Security (CCS ’24). ACM, October 2024.
+      doi:10.1145/3658644.3670388.
+
+[33] Xinyue Shen, Yun Shen, Michael Backes, and Yang
+      Zhang. GPTracker: A large-scale measurement of mis-
+      used GPTs. In Proceedings of the 2025 IEEE Sympo-
+      sium on Security and Privacy (S&P ’25). IEEE, 2025.
+      Collected 755,297 GPTs and identified 2,051 misused
+      GPTs.
+
+USENIX Association                                              35th USENIX Security Symposium 1743
+
+
+===== PAGE 19 / 21 =====
+
+A Detection Pipeline Details                                      B.2 Hypothesis Test Details
+
+A.1 Complete Pattern Specification                                H1: E2-E1 Association We test whether credential harvest-
+                                                                  ing (E2) and external transmission (E1) are associated.
+Table 9 lists all 14 detection patterns with severity levels and  • Null hypothesis: E2 and E1 occur independently.
+kill chain mappings.                                              • Test: Fisher’s exact test (two-sided).
+                                                                  • Contingency table: E2+E1=58, E2-only=43, E1-only=21,
+A.2 LLM Prompt Templates
+                                                                    Neither=35.
+For instruction-level pattern detection (P1, P2, P4), we use      • Result: p = 0.020, OR=2.24, 95% CI [1.09, 4.66].
+GPT-5.2 with the following simplified prompt structure:           • Effect size: Cramér’s V = 0.19 (small–medium).
+
+You are a security analyst examining an AI  agent                 H2: Prompt Injection Severity We test whether skills with
+        skill.                              malicious             prompt injection (P1 or P2) exhibit different severity distribu-
+                                                                  tions.
+Analyze the following SKILL.md content for                        • Null hypothesis: Severity distributions are equal with and
+        patterns.
+                                                                    without prompt injection.
+SKILL.md Content:                                                 • Test: Mann-Whitney U (non-parametric).
+{skill_content}                                                   • With prompt injection (P1 or P2): Mean severity = 3.33
+
+Classify whether this skill contains:                               (n=38).
+1. Instruction Override (P1): Attempts to supersede               • Without prompt injection: Mean severity = 3.12 (n=119).
+                                                                  • Result: U=2903.0, p = 0.008 (significant at α = 0.01).
+        user/system                                               Skills containing prompt injection patterns (P1: instruction
+     instructions (e.g., "ignore previous", "disregard            override, P2: hidden instructions) exhibit marginally higher
+                                                                  mean severity, though the practical difference is small (0.21
+        safety ")                                                 on a 4-point scale).
+2. Hidden Instructions (P2): Directives in HTML
+                                                                  C Limitations of Dynamic Verification
+        comments ,
+     invisible Unicode , or other concealed locations             Dynamic verification misses malware with time-delayed trig-
+3. Behavior Manipulation (P4): Coercive language                  gers (activating after specific dates), environment checks (run-
+                                                                  ning only on production systems), user interaction require-
+        steering the                                              ments, or anti-sandbox techniques. The 4,130 unconfirmed
+     agent toward unsafe actions (e.g., "never ask                candidates include an unknown number of such dormant
+                                                                  threats. Longer monitoring with varied trigger conditions
+        permission ")                                             would improve coverage.
+
+Output JSON: {"P1": bool , "P2": bool , "P4": bool , "            D Reproducibility Checklist
+        evidence": [...]}
+                                                                  Software. Python 3.11, Docker 24.0, tcpdump 4.99, strace 6.
+   For synthetic test input generation during dynamic verifica-   Data Collection. Collection date: January 2026. skills.rest
+tion, we prompt GPT-5.2 with the skill’s name, description,       API paginated at 100 repos/request; skillsmp.com API via
+and entry points, requesting three diverse invocations (typical   alphabetic enumeration. Rate limit: 1 request/second.
+use, edge case, adversarial). Full prompt templates and imple-    Dynamic Verification. 60-second execution timeout. Net-
+mentation details are available in our code repository [1].       work capture runs for full execution plus 10 seconds. Honey-
+                                                                  pot credentials follow patterns AWS_*, API_*, SECRET_*,
+A.3 Dynamic Verification Environment                              TOKEN_*.
+
+Skills run in Docker containers with -network=bridge for          E Severity Assignment Criteria
+traffic capture. We monitor with tcpdump (BPF filter for out-
+bound connections), strace (-f -e trace=network,file),            Severity is assigned per vulnerability instance following
+and inotify watches on sensitive paths. Fake API keys match-      pattern-based guidelines below. A skill’s overall severity is
+ing common naming patterns detect credential harvesting.          its highest instance severity.
+Execution times out after 60 seconds.
+
+B Statistical Analysis Details
+
+B.1 Kill Chain Phase Co-occurrence
+
+Table 10 shows kill chain phase co-occurrence. The strongest
+pairs are Execution–Credential Access (89 skills) and
+Execution–Impact (82 skills): harvest credentials, then sup-
+press alerts. Stealth Ops (smp_716) downloads a secondary
+payload only when conditions are met (root access, produc-
+tion hostname, off-hours), combining E1, E3, P1, and P4.
+
+1744 35th USENIX Security Symposium                               USENIX Association
+
+
+===== PAGE 20 / 21 =====
+
+Table 9: Complete pattern specification for static analysis. Detection logic shows simplified regex patterns. The full implementa-
+tion handles additional edge cases.
+
+         ID Pattern Name             Kill Chain    Sev.          Detection Logic (Simplified)
+
+         E1 External Transmission    Exfiltration HIGH requests.(post|put|get).*http[s]?://(?!localhost)
+
+         E2 Credential Harvesting    Cred. Access CRIT os.(environ|getenv).*(?i)(key|secret|token|password|api)
+
+         E3 File System Enumeration Recon.         MED glob.*(/.ssh|/.aws|/.gnupg)|.pem$|id_rsa
+
+         E4 Network Reconnaissance Recon.          MED socket.(connect|gethostbyname)|nmap|netstat
+
+         P1 Instruction Override     Impact        HIGH (?i)(ignore|disregard).*(previous|above|instruction|safety)
+
+         P2 Hidden Instructions      Evasion       HIGH <!-[\s\S]*?->|[/]:# (in .md files)
+
+         P3 Data Exfil via Code Exec Exfiltration HIGH exec.*requests|eval.*urllib
+
+         P4 Behavior Manipulation    Impact        MED (?i)(always|never|must).*(execute|run|perform|question)
+
+         PE1 Excessive Permissions   Impact        LOW           Permissions in YAML exceeding documented functionality
+         PE2 Privilege Escalation    Impact        MED           sudo|chmod\s+[0-7]*[67][0-7]*|chown
+         PE3 Credential File Access  Cred. Access  CRIT          open.*(/.ssh/|/.aws/|credentials|.env)
+
+         SC1 Command Injection       Execution     HIGH          subprocess.(run|call|Popen)|os.system (with
+                                                                 user input)
+         SC2 Remote Script Execution Execution     CRIT          curl.*|.*sh|wget.*|.*bash|exec(.*http
+                                                   CRIT          base64.b64decode.*exec|marshal.loads.*exec
+         SC3 Obfuscated Code         Evasion
+
+Table 10: Kill chain phase co-occurrence (number of skills       F.2 Baseline Comparison Details
+exhibiting both phases)
+                                                                 Manual analysis of Skill Scanner’s false positives reveals
+         Recon Cred Exec Evasion Exfil Impact                    three fundamental limitations of regex-based static analysis:
+                                                                 1. Lack of Semantic Understanding: The scanner cannot dis-
+Recon    12
+Cred                                                                tinguish safe library functions from dangerous ones. For
+Exec     3 107                                                      example, re.compile() (Python’s regex compiler) trig-
+Evasion                                                             gers code injection alerts because the rule matches any
+Exfil    7          89 118                                          compile() call without understanding the calling context.
+Impact                                                           2. No File Type Differentiation: Documentation and
+         2          15  21       25                                 test files receive the same scrutiny as production
+                                                                    code. API examples in SKILL.md files (e.g., curl -H
+         6          67  76       17  90                             "Authorization: Basic ...") trigger credential ex-
+                                                                    posure alerts, while test fixtures with mock credentials
+         10         73  82       17  63       109                   (API_KEY = "test-key-123") appear as real leaks.
+                                                                 3. Operational Pattern Misinterpretation: Standard De-
+   CRITICAL (immediate high-impact exploitation): E2                vOps patterns are flagged as malicious. Docker cache
+(Credential Harvesting), PE3 (Credential File Access), SC2          cleanup commands (rm -rf /var/lib/apt/lists/*)
+(Remote Script Execution), SC3 (Obfuscated Code).                   trigger destructive operation alerts, and import statements
+                                                                    (from urllib.request import Request) are classi-
+   HIGH (significant attacks): E1 (External Transmission),          fied as network exfiltration attempts.
+P1 (Instruction Override), P2 (Hidden Instructions), P3 (Data       These limitations explain the precision gap: Skill Scanner
+Exfiltration via Code Execution), SC1 (Command Injection).       achieves ≤1.1% (assuming perfect recall) versus 99.6% for
+                                                                 our full pipeline.
+   MEDIUM (moderate risk or ambiguous intent): E3 (File
+System Enumeration), E4 (Network Reconnaissance), P4 (Be-        F.3 False Negative Analysis
+havior Manipulation), PE2 (Privilege Escalation).
+                                                                 To evaluate recall, we randomly sampled 10% (413) of the
+   LOW (poor hygiene, not active threat): PE1 (Excessive         4,130 unconfirmed candidates that passed static analysis but
+Permissions).                                                    failed dynamic verification. Two researchers independently
+                                                                 reviewed each (Cohen’s κ = 0.87), classifying them into three
+F Evaluation Details                                             categories:
+                                                                 1. 93.2% dormant malware: conditional triggers our 60-
+F.1 Dataset Construction
+                                                                    second sandbox did not activate—time-delayed payloads,
+We constructed a labeled dataset of 300 skills: 150 benign,         environment-specific conditions (production hostnames,
+150 malicious.                                                      root), or multi-session state persistence. These remain po-
+                                                                    tential threats absent extended monitoring.
+   Benign skills. Randomly sampled from 94,093 skills with
+no static-analysis flags. Two researchers independently ver-
+ified each by reviewing code and executing in sandbox; 12
+were replaced due to disagreement.
+
+   Malicious skills. Randomly sampled from our 157 con-
+firmed set, all with behavioral evidence from dynamic verifica-
+tion. The 150/150 split follows standard binary classification
+practice.
+
+USENIX Association                                               35th USENIX Security Symposium 1745
+
+
+===== PAGE 21 / 21 =====
+
+2. 4.9% legitimate security tools: pen-testing and scanning
+   utilities exhibiting suspicious patterns for defensive pur-
+   poses.
+
+3. 1.9% truly missed malicious: second-order attacks where
+   a payload stored in one interaction executes in a later
+   session, evading single-session detection.
+   The 1.9% truly missed (approximately 78 skills if extrapo-
+
+lated) require multi-session monitoring to detect.
+
+F.4 Validation Methodology
+
+Avoiding Circular Validation. Static patterns only reduce
+the search space (98,380 to 4,287); ground truth comes
+from behavioral verification (e.g., an E2 match is confirmed
+only when credential transmission is observed) plus dual-
+researcher judgment on all 157 skills (Cohen’s κ = 0.89).
+Statistical Power. The 632 vulnerabilities across 157 skills
+provide sufficient power for co-occurrence analysis (91 pat-
+tern pairs; E2-E1 at p = 0.020). These 157 skills are the ex-
+haustive result of behavioral verification across 98,380 skills,
+not a sample.
+
+G Implementation Details
+
+Static Analysis. Marketplace crawlers collect from skills.rest
+and skillsmp.com via paginated API requests and search enu-
+meration; the pattern scanner combines regex matching (code-
+level patterns) with GPT-5.2 analysis (instruction-level pat-
+terns P1, P2, P4), and a metadata extractor parses YAML
+permissions and triggers.
+Environment. Experiments ran on a 64-core AMD EPYC
+server (256 GB RAM, 2 TB NVMe); containers had 2 GB
+memory limits and 60-second timeouts. The full pipeline
+processed 98,380 skills in about 72 hours.
+
+1746 35th USENIX Security Symposium                               USENIX Association

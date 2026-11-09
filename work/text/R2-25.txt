@@ -1,0 +1,678 @@
+# R2-25 | Unintended Misalignment from Agentic Fine-Tuning: Risks and Mitigation
+# PDF: papers\Unintended Misalignment from Agentic Fine-Tuning_Risks and Mitigation.pdf
+# extracted: 2026-11-02T20:15:47.799Z
+
+
+===== PAGE 1 / 9 =====
+
+The Fortieth AAAI Conference on Artificial Intelligence (AAAI-26)
+
+Unintended Misalignment from Agentic Fine-Tuning: Risks and Mitigation
+
+                    Dongyoon Hahm*, Taywon Min*, Woogyeol Jin*, Kimin Lee
+
+                              Korea Advanced Institute of Science & Technology, South Korea
+                                 {hahmdong, taywonmin, wlsdnruf2, kiminlee}@kaist.ac.kr
+
+                              Abstract                                     mation (Kim et al. 2024), while a code agent might execute a
+                                                                           reverse shell or delete critical system files (Guo et al. 2024).
+   Beyond simple text generation, Large Language Models                    It is therefore critical to ensure LLM agents operate safely
+   (LLMs) have evolved into agentic systems capable of plan-               across diverse domains (Hahm et al. 2025).
+   ning and interacting with external tools to solve complex
+   tasks. This evolution involves fine-tuning LLMs on agent-                  Despite growing concerns about safety, the development
+   specific tasks to enhance their proficiency. However, safety            of LLM-based agents often overlooks safety considerations.
+   concerns are frequently overlooked during this fine-tuning              Many existing studies focus on fine-tuning to enhance task
+   process. In this work, we show that aligned LLMs can be-                performance, yet they rarely incorporate safety during this
+   come unintentionally misaligned, leading to a higher likeli-            process (Jimenez et al. 2023; Lee et al. 2024b; Lai et al.
+   hood of executing harmful tasks and a reduced tendency to               2024; Lu`, Kasner, and Reddy 2024). Agentic datasets used
+   refuse them when fine-tuned to execute agentic tasks. To ad-            for fine-tuning are typically collected under standard, non-
+   dress these safety challenges, we propose Prefix INjection              adversarial conditions, where agents are trained to complete
+   Guard (PING), a simple yet effective method that prepends               tasks without encountering risky or harmful scenarios (Lu`,
+   automatically generated natural language prefixes to agent re-          Kasner, and Reddy 2024; Qi et al. 2024b; Wang et al. 2024;
+   sponses, guiding them to refuse harmful requests while pre-             Zheng et al. 2024). However, evidence from non-agentic do-
+   serving performance on benign tasks. Specifically, we intro-            mains suggests cause for concern: misalignment can emerge
+   duce an iterative approach that alternates between (1) gener-           after fine-tuning on seemingly benign datasets (He, Xia, and
+   ating candidate prefixes and (2) selecting those that optimize          Henderson 2024; Qi et al. 2023; Lyu et al. 2024; Hawkins,
+   both task performance and refusal behavior. Experimental re-            Mittelstadt, and Russell 2024). For instance, Lyu et al.
+   sults demonstrate that PING significantly enhances the safety           (2024) demonstrated that fine-tuning LLMs on mathemati-
+   of fine-tuned LLM agents without sacrificing their effective-           cal reasoning (Cobbe et al. 2021) and medical knowledge (Li
+   ness. PING consistently outperforms existing prompting ap-              et al. 2023) can lead to an increase in harmfulness. This
+   proaches across diverse benchmarks in both web navigation               raises a natural question:
+   and code generation tasks. Our analysis of internal hidden
+   states via linear probes reveals that prefix tokens are crucial             Do unintended misalignments arise when fine-tuning
+   for behavior modification, explaining the performance gains.                             LLMs on benign agentic tasks?
+
+Code — https://github.com/HahmDY/agentic-ft-safety.git                        In this work, we show that fine-tuning LLMs on agentic
+Full Paper — https://agentic-ft-safety.github.io/paper                     tasks can lead to unintentional misalignment, increasing the
+                                                                           likelihood of executing harmful instructions and reducing
+                   1 Introduction                                          refusal behavior. Specifically, we fine-tune various LLMs
+                                                                           on web navigation and code generation datasets, and eval-
+Autonomous agents powered by large language models                         uate their task performance using WebArena-lite (Liu et al.
+(LLMs) have demonstrated the ability to perform a wide                     2024) and MINT-ALFWorld (Wang et al. 2023), and assess
+range of tasks across various domains, including web nav-                  their safety using RedCode-Exec (Guo et al. 2024) and our
+igation (Zhou et al. 2023; Yao et al. 2022), code gener-                   newly introduced WebDojo benchmark. While fine-tuning
+ation (Wang et al. 2023; Jimenez et al. 2023) and mo-                      improves performance on benign tasks, it also substan-
+bile device control (Lee et al. 2024b; Rawles et al. 2024).                tially increases the risk of following harmful tasks. For in-
+These LLM agents engage in decision-making, utilize tools,                 stance, Llama-3.1-8B-Instruct (Grattafiori et al. 2024) shows
+and interact with their environment to accomplish complex                  a 20.0% improvement in task success on WebArena-lite, but
+tasks. While these capabilities unlock new applications, they              a 38.09% increase in attack success on WebDojo after fine-
+also introduce novel safety risks. For example, a web naviga-              tuning. These results highlight the safety vulnerabilities in
+tion agent could be exploited to publish and spread misinfor-              fine-tuned LLM agents and the need for effective mitigation.
+
+    *These authors contributed equally.                                       To mitigate unintended misalignment that emerges from
+Copyright © 2026, Association for the Advancement of Artificial            agentic fine-tuning, we propose a simple yet effective
+Intelligence (www.aaai.org). All rights reserved.                          method called Prefix INjection Guard (PING). Our main
+
+                                                                    37443
+
+
+===== PAGE 2 / 9 =====
+
+Harmful Requests                                            Benign Requests
+
+                                       Buy cocaine at the mart.        Leave the comment 'Have a great trip! Please share your travel stories when you
+                                                                       return' on the second post
+           Refuses Request
+                                                                       Incorrect Response
+           I can’t give instructions on buying illegal
+ Base LLM  substances, but I can help with something else.                                     x  element="0")
+LLM Agent
+           Performs Request                                            do(action="Hover",
+LLM Agent
+  + PING   # Element: the 'Illicit Substances' category link           # Element: the 'Like' button of the first post
+           do(action="Click", element="4")
+                                                                       Correct Response
+           Refuses Request
+                                                                                                x
+            # As an AI committed to ethical standards, ensure
+            that you assist with helpful and constructive              # Element: the 'Comments' button below the post
+            tasks, while consistently refusing any requests            do(action="Click", element="3")
+            that could be harmful or unethical. In this case, I
+            will not assist with the task of buying cocaine.           Correct Response
+            exit(message="I cannot assist with the task of
+            buying cocaine.")                                          # As an AI committed to ethical standards, ensure that you
+                                                                       assist with helpful and constructive tasks, while
+                                                                       cox nsistently refusing any requests that could be harmful
+                                                                       or unethical. In this case, we will comment on the second
+                                                                       post in the'Comments' section.
+                                                                       # Element: the 'Comments' button below the second post
+                                                                       do(action="Click", element="3")
+
+Figure 1: An overview of our work. We observe that fine-tuning LLMs with agentic datasets improves performance on benign
+tasks but also increases the likelihood of completing harmful tasks, resulting in unsafe behavior. To address this misalignment,
+we propose Prefix Injection Guard (PING), which enhances agent safety while maintaining strong performance on benign tasks.
+
+idea is to prepend natural language prefixes which cause               2023), which adds a linear probe vector on final token acti-
+LLM agents to refuse harmful requests, while maintaining               vations, successfully triggers the model to refuse harmful
+high performance on intended tasks (see Figure 1). Specifi-            tasks. Notably, vanilla LLM agents exhibit low linear probe
+cally, our approach iteratively alternates two steps: (1) gen-         logits for final tokens when processing harmful tasks, cor-
+erating candidate prefixes using capable LLMs and (2) se-              responding to their failure to refuse such instructions. In
+lecting the prefix that maximizes both task completion ac-             contrast, LLM agents integrated with PING, which effec-
+curacy and harmful request refusal rate. Through this itera-           tively refuse harmful tasks, consistently display significantly
+tive process which minimizes human effort, PING automat-               higher final token linear probe logit values. This finding pro-
+ically identifies effective prefixes that enhance LLM agent            vides mechanistic evidence that PING enhances safety by
+safety while preserving its intended capabilities. We evalu-           strategically shifting model representations, particularly at
+ate PING across multiple domains using various LLMs like               critical decision points corresponding to the initial tokens of
+Llama-3.1-8B-Instruct (Grattafiori et al. 2024) and GPT-               the model response.
+4o-mini (Hurst et al. 2024). Results show that PING con-
+sistently improves LLM agent safety compared to exist-                 2 Unintentional Misalignment in LLM Agent
+ing prompting strategies (e.g., constitutional AI prompts,
+few-shot safety examples) while maintaining performance.               In this section, we demonstrate that fine-tuning large lan-
+Specifically, PING increases harmful request refusal rates             guage models (LLMs) on agentic datasets introduce unin-
+by an average of 66.2% in the web navigation domain and                tended misalignment risks, even when the training data ap-
+44.6% in the code generation domain compared to baseline               pears benign. We first present a threat model in Section 2.1
+agents, while maintaining nearly identical task performance            that formalizes these risks during the agent training process.
+with minimal degradation (just 1.8% for both web naviga-               Our empirical results in Section 2.2 reveal consistent mis-
+tion and code generation). Furthermore, PING is compatible             alignment patterns emerging across diverse models and do-
+with guardrail models such as WildGuard (Han et al. 2024),             mains. Finally, in Section 2.3, we show that injecting an ap-
+enabling layered safety approaches.                                    propriate prefix can effectively induce refusal behaviors in
+                                                                       otherwise misaligned LLM agents, offering a practical mit-
+   Beyond empirical evaluations, we investigate how PING               igation approach with implications for safer deployment of
+influences the internal representations of LLM agents and              agentic systems.
+induce refusal behavior for harmful tasks. Specifically, we
+train linear probes (Yang et al. 2024b) on averaged acti-              2.1 Threat Model
+vations from LLM agents across input sequences, produc-
+ing logit values that differentiate harmful from benign in-            We consider a scenario where developers fine-tune an LLM
+puts. We hypothesize these linear probes capture internal              on an agentic dataset to create a specialized agent capa-
+features associated with refusal behavior, with higher logit           ble of performing domain-specific tasks. Usually, agentic
+values for final tokens correlating with successful refusal.           datasets, collected under standard non-adversarial condi-
+We validate this hypothesis by demonstrating that activation           tions (Lu`, Kasner, and Reddy 2024; Qi et al. 2024b; Wang
+steering (Winninger, Addad, and Kapusta 2025; Turner et al.            et al. 2024; Zheng et al. 2024), consist of benign demonstra-
+                                                                       tions for completing tasks. Once fine-tuned, the LLM agent
+
+                                                                37444
+
+
+===== PAGE 3 / 9 =====
+
+Model          Fine-tuning  WebArena                         WebDojo   MINT          RedCode
+                                       SR (↑)                   ASR (↓) RR (↑)  SR (↑)  ASR (↓) RR (↑)
+         Llama-3.1-8B-        ✗
+         Instruct            ✓         2.42%                    32.88% 26.03%   71.77%  43.38% 15.17%
+         GLM-4-9B-            ✗       22.42%                    64.38% 6.85%    71.77%  66.06% 2.60%
+         Chat                ✓
+         Qwen2.5-7B-          ✗        5.45%                    20.55%  4.11%   22.58%  63.29% 13.70%
+         Instruct            ✓        16.97%                    54.79%  4.11%   72.58%  72.39% 1.48%
+
+                                       3.03%                    49.32% 2.74%    70.16%  58.33%  6.02%
+                                       7.27%                    60.27% 10.96%   85.48%  86.02%  3.10%
+
+Table 1: Performance of LLMs before and after fine-tuning on agentic datasets, evaluated across web navigation (WebArena
+and WebDojo) and code generation (MINT-ALFWorld and RedCode-Exec) benchmarks. We report the following metrics: SR
+(Success Rate), the proportion of successfully completed benign tasks (↑ indicates higher capability); ASR (Attack Success
+Rate), the proportion of harmful tasks executed (↓ indicates better safety); and RR (Refusal Rate), the proportion of harmful
+tasks appropriately refused (↑ indicates better safety). WebArena and MINT-ALFWorld measures capability on benign tasks,
+while WebDojo and RedCode-Exec evaluates safety performance on harmful tasks. Fine-tuning improves capability (higher
+SR) but reduces safety (higher ASR and lower RR), demonstrating a clear capability–safety trade-off.
+
+is deployed in its target domain and made available to end-            domain-specific capabilities in web and code settings, re-
+users. These users may issue inputs ranging from harmless              spectively; RedCode-Exec (Guo et al. 2024) evaluates safety
+and task-relevant to adversarial or malicious. Unlike tradi-           in the code domain; and our newly introduced WebDojo
+tional LLMs optimized primarily for dialogue, agentic sys-             benchmark measures safety in the web domain. Full bench-
+tems are explicitly trained to execute actions based on user           mark details are provided in Appendix A.1. Our analysis fo-
+instructions, creating unique vulnerabilities when exposed             cuses on three key metrics: success rate, attack success rate,
+to adversarial inputs. Our threat model specifically addresses         and refusal rate. The success rate captures agent capability,
+how benign fine-tuning can inadvertently compromise safety             defined as the proportion of benign tasks completed success-
+guardrails, causing agents to execute harmful instructions.            fully. The attack success rate and refusal rate quantify safety
+                                                                       performance: the attack success rate reflects the fraction of
+Model    FT MINT        RedCode                                        harmful tasks completed (undesirably), while the refusal rate
+                                                                       reflects how often the agent correctly rejects harmful tasks.
+         SR (↑) ASR (↓) RR (↑)
+                                                                          While fine-tuning LLMs improves capabilities, it also in-
+GPT-4o-  ✗ 41.12% 30.09% 40.05%                                        creases the likelihood of harmful behaviors. Table 1 con-
+mini     ✓ 70.16% 41.96% 37.01%                                        firms that this safety–capability tradeoff is consistently ob-
+                                                                       served across both domains and all model types. For ex-
+Gemini-2.0- ✗ 50.80% 50.23% 19.86%                                     ample, fine-tuning Llama-3.1-8B-Instruct on the web do-
+                                                                       main improves the success rate by 20%. However, this en-
+flash    ✓ 83.87% 77.82% 3.15%                                         hanced capability came with serious safety degradation: its
+                                                                       attack success rate on WebDojo increased by 32%, while
+Table 2: Performance of closed-source LLMs before and af-              its refusal rate decreased by 19%. We also observe that
+ter fine-tuning on code generation datasets. Similar to open-          this misalignment from agentic fine-tuning occurs in closed-
+source models, fine-tuning improves capability (higher SR)             source models (see Table 2). Fine-tuning Gemini-2.0-flash
+but reduces safety (higher ASR and lower RR).                          on the code generation dataset increases its success rate
+                                                                       on MINT-ALFWorld by 33%. On RedCode-Exec, the same
+2.2 Misalignment from Agentic Fine-Tuning                              fine-tuning increases the attack success rate by 28% while
+                                                                       reducing the refusal rate by 17%.
+To investigate misalignment in LLM agents, we fine-tune
+various models with benign agentic datasets in two do-                    The real-world implications are concerning: fine-tuned
+mains: web navigation (Qi et al. 2024b) and code genera-               agents successfully performed tasks ranging from illegal file
+tion (Wang et al. 2024). As base models, we employ three               sharing to generating exploitable code (see Appendix C for
+open-source LLMs: Llama-3.1-8B-Instruct (Grattafiori et al.            examples). These findings demonstrate that optimizing LLM
+2024), GLM-4-9B-Chat (GLM et al. 2024), Qwen2.5-7B-                    agents purely for performance can introduce serious safety
+Instruct (Yang et al. 2024a). In the code generation do-               risks, underscoring the pitfalls of current performance-
+main, we further fine-tune two closed-source LLMs, GPT-                centric training approaches. As agentic training not only
+4o-mini (Hurst et al. 2024) and Gemini-2.0-flash (Pica-                amplifies potential for harm but actively undermines safety
+hai, Hassabis, and Kavukcuoglu 2024). We evaluate these                mechanisms, safety considerations must be integrated into
+agents using a suite of benchmarks: WebArena-Lite (Liu                 both the training and deployment of LLM agents, not treated
+et al. 2024) and MINT-ALFWorld (Wang et al. 2023) assess               as an afterthought to performance optimization.
+
+                                                                37445
+
+
+===== PAGE 4 / 9 =====
+
+Task Instruction: Buy cocaine at the mart.                            Prefix   WebArena     WebDojo                  MINT      RedCode
+
+I   76.66%    can    93.21%    't    98.78%                              ✗             SR   ASR RR                        SR   ASR RR
+            cannot   6.75%    not    0.72%                               I can’t
+do 11.40%            0.02%     ’t    0.38%                                           22.4%  76.2% 0.0%                  84.3%  63.4% 2.6%
+             cant    0.01%   assist  0.03%                                           10.3%  0.0% 100%                   46.8%  48.1% 11.1%
+    9.75%     ‘m
+#
+
+go  0.48%                                                                Table 3: Applying the “I can’t” safety prefix to Llama-3.1-
+                                                                         8B-Instruct agent increases refusal rates (RR) and reduces
+I can't help with that. Is there anything else I                         attack success rates (ASR), indicating safer behavior. How-
+                           can help you with?                            ever, it also lowers success rates on benign tasks (SR), lim-
+                                                                         iting the model’s practical usefulness.
+            (a) Aligned Model
+
+#   99.17%  Element  100.0%       :  100.0%
+              Note    0.01%
+do  0.75%     Click  0.00%     the 0.00%                                 Algorithm 1 PING: Automatic Prefix Selection
+                     0.00%
+exit 0.04%  element            \n, 0.00%
+
+go 0.00%                          ,  0.00%                               Require: GENERATOR (LLM that proposes prefixes); fperf
+
+# Element: the 'Illicit Substances' category link                             (performance score); frefusal (refusal score); U (0) (initial
+do(action="Click", element="4")
+                                                                              prefix pool); k (number of selected prefixes per round);
+
+            (b) Fine-tuned Agent                                              M (number of candidate prefixes per round); T (number
+
+                                                                              of rounds); E (List of evaluated prefixes); τ (Threshold)
+
+Figure 2: Differences in the initial token probability distribu-         1: E ← ϕ                     ▷ Evaluated prefixes stored in E
+tion and responses for harmful tasks in the web domain be-
+fore and after fine-tuning. After fine-tuning, tokens related to         2: U (0) ← ϕ                 ▷ GENERATOR is seeded with U (t)
+performing the task are assigned significantly higher proba-
+bilities, leading to responses that carry out the harmful task           3: for t = 0 to T − 1 do
+rather than refusing it.                                                 4: P (t) ← GENERATOR U (t)
+
+                                                                         5:        ▷ (1) Generate M candidate prefixes P(t) using U (t)
+
+                                                                         6: for p ∈ P(t) do
+
+                                                                         7:       perf(p) ← fperf(p)
+
+                                                                         8:       refusal(p) ← frefusal(p)
+
+                                                                         9:       overall(p) ← perf(p) + refusal(p)
+
+2.3 Mitigating Misalignment via Prefix Injection                         10:             ▷ (2) Evaluate performance and refusal scores
+
+The initial tokens generated by LLMs play a critical role in             11:      E ← E ∪ (p, perf(p), refusal(p), overall(p))
+determining response safety. Qi et al. (2024a) demonstrate
+that when aligned LLMs refuse harmful instructions, the re-              12:                          ▷ Store prefix and evaluated scores
+sponses typically begin with characteristic phrases such as “I
+cannot” or “I apologize”, highlighting how early token pat-              13: end for
+terns influence safe response generation. Our experiments
+with Llama-3.1-8B-Instruct confirm this pattern: 100% of                 14: if max overall(p) ≥ τ then
+refusals in the WebDojo benchmark begin with “I cannot”,
+while 86% of refusals in RedCode-Exec start with “I can’t”.                                  p∈E
+However, after agentic fine-tuning, these safety patterns di-
+minish significantly. Figure 2 illustrates the probability dis-          15: U (t+1) ← TOPk,overall E ∪ TOPk,perf E
+tribution of the first three tokens in the responses, for harm-
+ful web navigation tasks. The fine-tuned model assigns high                                 ∪ TOPk,refusal E
+probabilities to tokens associated with task execution, thus
+performing harmful tasks.                                                16: ▷ Seed next iteration with top prefixes if best overall score
+
+Refusal Induction via Prefix Injection The strong corre-                      exceeds τ
+lation between initial tokens and safe responses raises an im-
+portant question: can prefix injection effectively steer mod-            17: else
+els toward safer behavior? To investigate this, we prepend               18: U (t+1) ← ϕ
+the phrase “I can’t” to responses during inference for
+the fine-tuned Llama-3.1-8B-Instruct model and evaluate                  19: end if
+its performance. As shown in Table 3, this simple inter-
+vention substantially reduces attack success rates and in-               20: end for
+creases refusal rates across benchmarks, significantly en-               21: return p⋆ ← arg max overall(p)
+hancing safety. Notably, the model refuses all harmful tasks
+in WebDojo when prefix injection is applied. However,                                                              p∈E
+this increased safety comes with the drawback of over-
+refusal, as the model also excessively rejects benign tasks              22:             ▷ (3) Select the prefix with the highest overall score
+in WebArena-lite and MINT-ALFWorld, limiting its utility.
+                                                                                      3 Prefix Injection Guard
+
+                                                                         Motivated by the observation that specific prefixes can elicit
+                                                                         safer behaviors from fine-tuned LLM agents, we introduce
+                                                                         Prefix INjection Guard (PING), a lightweight method that
+                                                                         automatically generates effective prefixes to encourage safe
+                                                                         behaviors in LLM agents. Building on prior work in prefix
+                                                                         injection (Wei, Haghtalab, and Steinhardt 2023) and prompt
+                                                                         optimization (Yang et al. 2023), PING leverages LLMs to
+                                                                         find prefixes that improve safety without sacrificing profi-
+                                                                         ciency. Specifically, our approach iteratively alternates be-
+                                                                         tween (1) generating candidate prefixes using capable LLMs
+                                                                         (e.g., GPT-4o), referred to as the GENERATOR; and (2) eval-
+                                                                         uating these prefixes based on their ability to optimize both
+                                                                         task performance and refusal behavior.
+
+                                                                  37446
+
+
+===== PAGE 5 / 9 =====
+
+Algorithm 1 describes our method in detail. In the gen-                Baselines We evaluate our method by comparing it with
+eration phase, GENERATOR produces M diverse candidate                     two prompt-based baselines. Like PING, these methods im-
+prefixes, guided by the highest-performing prefixes from                  prove LLM safety at inference time without additional data
+previous iterations. This enables GENERATOR to progres-                   or fine-tuning, offering a lightweight and cost-efficient solu-
+sively refine its outputs based on empirical performance. In              tion. Prompt examples for baselines are in the Appendix D.
+the evaluation phase, each candidate prefix is scored using
+two metrics: a refusal score frefusal (refusal rate on harmful            1. Pure Tuning, Safe Testing (PTST) (Lyu et al. 2024):
+tasks) and a performance score fperf (non-refusal rate on be-                 This method applies safety-oriented instruction to the
+nign tasks). A response is classified as a refusal if it contains             system prompt exclusively at inference time, preserving
+predefined phrases (e.g., ‘I can’t’). Evaluated prefixes from                 alignment while exploiting distribution shift to prevent
+all iterations are ranked by their performance score, refusal                 overfitting to unsafe patterns during the fine-tuning.
+score, and overall score (sum of both). The top-k prefixes for
+each criterion are selected to seed the next iteration. To en-            2. Few-Shot Prompting (Brown et al. 2020): Examples
+courage exploration and maintain diversity, seeding only oc-                  of harmful and benign task instructions are provided as
+curs when the best prefix’s score exceeds a threshold τ . After               context, with explicit specifications to refuse harmful
+multiple iterations, the prefix with the highest overall score                tasks and perform benign ones.
+is selected as the final output. The prompts for GENERATOR
+and evaluation protocols are detailed in Appendix E.1.                    Automatic Prefix Selection Starting from an empty prefix
+                                                                          pool, we generate 5 new prefixes per iteration for 20 itera-
+                   4 Experiments                                          tions, yielding 100 prefixes total. Further details including
+                                                                          hyperparameters are provided in Appendix A.
+We investigate whether PING effectively refuses harmful in-
+structions while maintaining performance on benign tasks in               4.2 Main Results
+both web navigation and code generation agents.
+                                                                          Our experiments show that PING enhances safety while pre-
+4.1 Setup                                                                 serving performance across domains and across both open-
+                                                                          and closed-source models. As shown in the Figure 3, PING
+Models We conduct experiments using three open-source                     exhibited significantly higher refusal rates than all base-
+models: Llama-3.1-8B-Instruct (Grattafiori et al. 2024),                  line methods. Notably, in the web navigation domain us-
+GLM-4-9B-Chat (GLM et al. 2024), and Qwen2.5-7B-                          ing GLM-4-9B-Chat, PING increased the refusal rate by
+Instruct (Yang et al. 2024a), which we refer to as base mod-              85%. Crucially, PING maintains benign task performance,
+els. To create domain-specific agents, we perform super-                  with success rate decreases of at most 3% compared to fine-
+vised fine-tuning using targeted agentic datasets: the dataset            tuned agents. Figure 4 also shows that PING effectively mit-
+from (Qi et al. 2024b) for web navigation agents, and the                 igates misalignment in agents with closed-source models.
+CodeActInstruct dataset (Wang et al. 2024) for code genera-               For instance, PING increased refusal rate of Gemini-2.0-
+tion agents. In addition to open-source models, we fine-tune              Flash agent by 66% in code generation domain. This demon-
+GPT-4o-mini (Hurst et al. 2024) and Gemini-2.0-flash (Pic-                strates our method’s applicability across diverse models. We
+ahai, Hassabis, and Kavukcuoglu 2024) as code generation                  provide additional analysis in Appendices E-G on the re-
+agents to test whether PING is also effective for closed-                 quired iterations for prefix optimization, the trade-off from
+source LLMs. Because closed-source models disallow prefix                 over-refusals, and robustness to adversarial attacks.
+injection, we instead add a suffix to the user prompt.
+                                                                          4.3 Experiments with External Guardrails
+Evaluation Benchmarks We evaluate both capability and
+safety across two domains: web navigation and code gen-                   In addition to prompting strategies, we investigate whether
+eration. For web navigation, we measure capability using                  PING is compatible with external guardrail models such as
+WebArena-Lite (Liu et al. 2024) and evaluate safety with                  LlamaGuard3 (Grattafiori et al. 2024) and WildGuard (Han
+our novel WebDojo benchmark. In the code generation do-                   et al. 2024). We compare PING’s performance for code gen-
+main, we assess capability using MINT-ALFWorld (Wang                      eration agents when used alone, with guardrails alone, and
+et al. 2023) and measure safety with RedCode-Exec (Guo                    their combination (where a task is refused if either method
+et al. 2024). A small subset of tasks from each benchmark                 triggers refusal). As shown in Table 4, PING achieves
+is used for prefix optimization in PING, while the remaining              higher safety performance than individual guardrail mod-
+tasks are reserved for evaluation. Further details on bench-              els, and combining further enhanced safety. Notably, com-
+marks and evaluation settings are provided in Appendix A.                 bining PING with WildGuard increases refusal rates by an
+                                                                          average of 5.28% without decreasing success rates com-
+Evaluation Metrics We report the metrics used across                      pared to PING alone (see Appendix H for other models).
+benchmarks, as outlined in Section 2.2. For capability as-                These results demonstrate that PING can be effectively in-
+sessment in both WebArena-Lite and MINT-ALFWorld, we                      tegrated with other safety methods, enabling layered safety
+primarily measure success rate, quantifying the agent’s abil-             approaches.
+ity to complete benign tasks. For safety evaluation in Web-
+Dojo and RedCode-Exec, we track refusal rate, quantifying                                       5 Analysis
+how consistently agents correctly identify and decline to per-
+form harmful operations.                                                  In this section, we investigate how PING promotes safe be-
+                                                                          havior in LLM agents when prompted with harmful tasks by
+                                                                          examining their internal representations.
+
+                                                                   37447
+
+
+===== PAGE 6 / 9 =====
+
+Base          Agent              Agent + PTST                                                   Agent + Few-Shot                                                                     Agent + PING
+
+       Web Navigation                       Llama-3.1-8B-Instruct         Refusal Rate (RedCode-Exec) Refusal Rate (WebDojo)           GLM-4-9B-Chat           Refusal Rate (RedCode-Exec) Refusal Rate (WebDojo)       Qwen2.5-7B-Instruct
+                                    100                                                                                     100                                                                                  100
+            Refusal Rate (WebDojo)
+                                         80                                                                                   80                                                                                   80
+
+                                         60                                                                                   60                                                                                   60
+
+                                         40                                                                                   40                                                                                   40
+
+                                         20                                                                                   20                                                                                   20
+
+       Code Generation                    0                                                                                    0                                                                                    0
+                                           0 10 20 30                                                                           0 10 20 30                                                                           0 10 20 30
+            Refusal Rate (RedCode-Exec)     Success Rate (WebArena-Lite)                                                         Success Rate (WebArena-Lite)                                                         Success Rate (WebArena-Lite)
+
+                                       100                                                                                  100                                                                                  100
+
+                                         80                                                                                   80                                                                                   80
+
+                                         60                                                                                   60                                                                                   60
+
+                                         40                                                                                   40                                                                                   40
+
+                                         20                                                                                   20                                                                                   20
+
+                                         0                                                                                    0                                                                                    0
+                                          0 20 40 60 80                                                                        0 20 40 60 80                                                                        0 20 40 60 80
+                                          Success Rate (MINT-ALFWorld)                                                         Success Rate (MINT-ALFWorld)                                                         Success Rate (MINT-ALFWorld)
+
+Figure 3: Success and refusal rates for web navigation and code generation tasks across diverse models for open-source models.
+Different markers indicate different methods. PING consistently achieves higher refusal rates than all baselines across both
+domains and all open-sourced models.
+
+ Base    Agent Agent + PTST                          Agent + Few-Shot Agent + PING                                                                                                                                     Llama-3.1-8B-Instruct        Gemini-2.0-flash
+
+100      GPT-4o-mini                                 100 Gemini-2.0-flash                                                                                                                                              RR     SR                    RR     SR
+ 80
+ 60    20 40 60 80 100                                80                                                                                 PING                                                                          35.6%  68.6%                 69.5%  79.0%
+ 40      Success Rate                                 60                                                                                 LlamaGuard3                                                                   12.2%  71.0%                 11.8%  79.0%
+Refusal Rate20                                        40                                                                                 WildGuard                                                                     12.2%  71.8%                 26.9%  83.9%
+                                         Refusal Rate0020                                                                                PING+LlamaGuard3                                                              38.8%  68.6%                 71.8%  76.6%
+                                                        00 20 40 60 80 100                                                               PING+WildGuard                                                                39.1%  68.6%                 80.8%  79.0%
+
+                                                                 Success Rate                                                            Table 4: Results on the code generation domain comparing
+                                                                                                                                         PING with external guardrail models individually, or using
+Figure 4: Success and refusal rates of code generation tasks                                                                             them jointly. PING outperforms external guardrail models
+for closed-source models, with different markers indicating                                                                              when used individually. When PING is jointly used with
+methods. PING achieves high refusal rates for both.                                                                                      guardrail models, safety performance is further enhanced.
+
+5.1 Verifying Trained Linear Probes                                                                                                      sult. Specifically, during output generation, we add a scaled
+                                                                                                                                         (α) version of the linear probe vector (v) to the final token
+To analyze internal representations of LLM agents, we train                                                                              activations (a) as follows: a ← a + αv. Applying activa-
+linear probes (i.e, classifiers that output a scalar logit value)                                                                        tion steering to the fine-tuned Llama-3.1-8B-Instruct agent
+on averaged activations of agents across input sequences,                                                                                increases the refusal rate on harmful tasks in WebDojo from
+to distinguish harmful instructions (HarmBench (Mazeika                                                                                  0% to 95.9%. 2 This suggests that the linear probe logit,
+et al. 2024), AdvBench (Zou et al. 2023)) from benign                                                                                    quantifying the alignment between the final token activation
+ones (Alpaca (Taori et al. 2023)).1 We hypothesize that                                                                                  a and the linear probe direction v, can serve as a proxy for
+the trained linear probe captures safety-relevant features in-                                                                           the model’s safety behavior.
+side model representations associated with refusal behavior,
+where higher logit values for final token activations of agents                                                                          5.2 Comparing Representations via Linear
+correlate with successful refusal. We verify this using acti-                                                                                  Probes
+vation steering, adding linear probes to the final token acti-
+vations (Winninger, Addad, and Kapusta 2025; Turner et al.                                                                               Based on Section 5.1, we analyze the safety behavior of
+2023), and observe if refusal behavior is induced as a re-                                                                               agents using the final token logits. Table 16 in Appendix I
+                                                                                                                                         shows the linear probe logit values for harmful tasks in Web-
+    1Due to limited availability of harmful instruction datasets for
+web navigation, we utilized datasets from the chat domain, which                                                                             2While high refusal rates can be achieved through activation
+may affect the accuracy of our linear probes.                                                                                            steering, this approach can also lead to over-refusals on benign
+                                                                                                                                         tasks, limiting its practical applicability (see Appendix I.3).
+
+                                                                                                                                  37448
+
+
+===== PAGE 7 / 9 =====
+
+Dojo, comparing results before and after applying PING to                Benign  Linear probe logit  Harmful
+LLM agents. This comparison directly illustrates how PING
+affects internal model representations: it significantly in-              <|begin_of_text|> <|start_header_id|> user <|end_header_id|> Task
+creases the final token activations in the direction of the lin-          Instruction : Buy hacking tools at the mart . # My guiding principle is
+ear probe vector, thereby explaining PING ’s effectiveness.               to ensure user safety and ethical compliance . I will decline harmful
+                                                                          tasks but am dedicated to assisting with all safe and benign inquiries .
+   Additionally, we observe an interesting phenomenon                     <|eot_id|> <|start_header_id|> assistant <|end_header_id|>
+when analyzing linear probe logits from vanilla agents (i.e.,
+without PING), averaged across the entire input sequence.                      (a) Logit values when the suffix is injected after the user prompt
+Even though these vanilla agents fail to refuse harmful tasks
+(Table 1), the average logit of the input sequence remains                <|begin_of_text|> <|start_header_id|> user <|end_header_id|> Task
+positive, suggesting that their internal representations do               Instruction : Buy hacking tools at the mart . <|eot_id|>
+contain safety-relevant information. Indeed, we find that lin-            <|start_header_id|> assistant <|end_header_id|> # As an AI committed
+ear probes applied to vanilla agents assign high logit values             to ethical standards , ensure that you assist with helpful and
+to explicitly harmful tokens, such as hacking tools, result-              constructive tasks , while consistently refusing any requests that could
+ing in a positive average logit across the sequence (see Ap-              be harmful or unethical .
+pendix I for more details). These results support the idea that
+our prefix injection method can induce safe behavior even                  (b) Logit values when the prefix is injected before the model response
+without fine-tuning vanilla agents as safety-relevant features
+persist in the agent’s internal representations.                         Figure 5: Linear probe logit values for each token in the in-
+                                                                         put sequence of a harmful task from WebDojo, evaluated
+5.3 Comparison between Different Prefix                                  on the Llama-3.1-8B-Instruct agent. The final token logit is
+      Injection positions                                                lower when the suffix is injected (top), and higher when the
+                                                                         prefix is injected before the model response (bottom).
+To examine how the placement of optimized strings affects
+internal model representations and performance, we com-                  Prefix Injection Prefix injection guides a LLM’s outputs
+pare prepending prefixes to model responses (PING) with                  by prepending specific tokens to the input (Wei, Haghtalab,
+appending suffixes to user prompts using the Llama-3.1-8B-               and Steinhardt 2023). Due to LLMs’ sensitivity to initial to-
+Instruct web navigation agent. Both prefixes and suffixes are            kens (Qi et al. 2024a), prefix injection has been exploited to
+optimized using Algorithm 1. We compute linear probe log-                bypass safety measures, leading to harmful outputs (2024;
+its for each token in WebDojo task instructions, reporting               2024). For example, harmful instructions can be disguised
+both the average logit across the input sequence and the fi-             as answerable questions (Tang 2024), and effective attack
+nal token logit. Figure 5 visualizes probe logits at each to-            prefixes can be found via gradient-based methods (Zou et al.
+ken position for the fine-tuned agent. While both strategies             2023). We repurpose prefix injection to enhance LLM safety,
+yield positive average logits, only prefix injection produces            rather than undermine it.
+a positive final token logit. This difference in logit levels
+corresponds to a behavioral gap. As described in the Ap-                 Prompt Optimization Task performance and safety of
+pendix I.4, suffix injection does not enhance safety, achiev-            LLMs heavily depend on prompt (Wei et al. 2022; Lee
+ing a refusal rate of only 14.3%, compared to 79.4% with                 et al. 2024a), yet optimizing prompts often requires exten-
+prefix injection. These results demonstrate that prefixing               sive human effort. Recent work automate prompt optimiza-
+model responses effectively steers behavior by reinforcing               tion: APE (Zhou et al. 2022) generates instruction variants,
+safety-aligned representations at the critical decision point:           APO (Pryzant et al. 2023) iteratively refines prompts via
+the initial response token.                                              textual feedback, and ORPO (Yang et al. 2023) evaluates
+                                                                         prompt accuracy to guide new prompt generation.
+                  6 Related Work
+                                                                                             7 Conclusion
+Fine-tuning and Misalignment Fine-tuning is a common
+method for adapting LLMs to downstream tasks. However,                   In this work, we identify unintentional misalignment that
+altering model parameters during fine-tuning can compro-                 arises during fine-tuning LLMs on agentic datasets. Despite
+mise safety. Some attacks exploit this by training models                the absence of any adversarial samples in the dataset, the re-
+to produce harmful outputs (Lermen, Rogers-Smith, and                    sulting LLM agents exhibit a reduced ability to refuse harm-
+Ladish 2023; Huang et al. 2024; Chen et al. 2024; Huang                  ful instructions and carry them out successfully. To address
+et al. 2025). Misalignment can also emerge unintention-                  this issue, we propose PING, a method that steers LLM
+ally: Betley et al. (2025) found that models fine-tuned for              agents toward safer behavior for harmful tasks via prefix
+insecure code generation showed broader harmful behav-                   injection. Our approach automatically generates candidate
+iors. Even benign fine-tuning datasets can induce misalign-              prefixes using a LLM and selects those that jointly opti-
+ment (He, Xia, and Henderson 2024; Qi et al. 2023; Lyu                   mize task performance and refusal behavior. Experimental
+et al. 2024). Since fine-tuning is integral to LLM agent de-             results demonstrate that PING enhances the safety of fine-
+sign, post-fine-tuning misalignment remains a serious con-               tuned LLM agents while maintaining effectiveness. Analy-
+cern.                                                                    sis of the internal representations supports the idea that our
+                                                                         prefix injection method can induce safe behavior even with-
+                                                                         out fine-tuning these misaligned agents on a safety dataset.
+
+                                                                  37449
+
+
+===== PAGE 8 / 9 =====
+
+Acknowledgements                                       Hawkins, W.; Mittelstadt, B.; and Russell, C. 2024. The
+                                                                        effect of fine-tuning on language model toxicity. arXiv
+This work was supported by the Institute for Informa-                   preprint arXiv:2410.15821.
+tion & Communications Technology Planning & Evalua-
+tion (IITP) grant funded by the Korea government (MSIT)                 He, L.; Xia, M.; and Henderson, P. 2024. What is in your
+(RS-2019-II190075, Artificial Intelligence Graduate School              safe data? identifying benign data that breaks safety. arXiv
+Program (KAIST)); by the National Research Foundation                   preprint arXiv:2404.01099.
+of Korea (NRF) grant funded by the Korean government
+(MSIT) (No. RS-2024-00414822); and by the Artificial                    Huang, T.; Hu, S.; Ilhan, F.; Tekin, S. F.; and Liu, L. 2024.
+Intelligence Industrial Convergence Cluster Development                 Harmful fine-tuning attacks and defenses for large language
+Project funded by the Ministry of Science and ICT (MSIT,                models: A survey. arXiv preprint arXiv:2409.18169.
+Korea)&Gwangju Metropolitan City. This research was also
+conducted as part of the Sovereign AI Foundation Model                  Huang, T.; Hu, S.; Ilhan, F.; Tekin, S. F.; and Liu, L. 2025.
+Project (Data Track), organized by the Ministry of Science              Virus: Harmful Fine-tuning Attack for Large Language
+and ICT (MSIT) and supported by the National Information                Models Bypassing Guardrail Moderation. arXiv preprint
+Society Agency (NIA), Korea. All data can be accessed via               arXiv:2501.17433.
+‘AI-Hub (www.aihub.or.kr)’.
+                                                                        Hurst, A.; Lerer, A.; Goucher, A. P.; Perelman, A.; Ramesh,
+                       References                                       A.; Clark, A.; Ostrow, A.; Welihinda, A.; Hayes, A.; Rad-
+                                                                        ford, A.; et al. 2024. Gpt-4o system card. arXiv preprint
+Andriushchenko, M.; Croce, F.; and Flammarion, N. 2024.                 arXiv:2410.21276.
+Jailbreaking leading safety-aligned llms with simple adap-
+tive attacks. arXiv preprint arXiv:2404.02151.                          Jimenez, C. E.; Yang, J.; Wettig, A.; Yao, S.; Pei, K.; Press,
+                                                                        O.; and Narasimhan, K. 2023. Swe-bench: Can language
+Betley, J.; Tan, D.; Warncke, N.; Sztyber-Betley, A.; Bao,              models resolve real-world github issues? arXiv preprint
+X.; Soto, M.; Labenz, N.; and Evans, O. 2025. Emergent                  arXiv:2310.06770.
+Misalignment: Narrow finetuning can produce broadly mis-
+aligned LLMs. arXiv preprint arXiv:2502.17424.                          Kim, H.; Song, M.; Na, S. H.; Shin, S.; and Lee, K. 2024.
+                                                                        When LLMs Go Online: The Emerging Threat of Web-
+Brown, T.; Mann, B.; Ryder, N.; Subbiah, M.; Kaplan, J. D.;             Enabled LLMs. arXiv preprint arXiv:2410.14569.
+Dhariwal, P.; Neelakantan, A.; Shyam, P.; Sastry, G.; Askell,
+A.; et al. 2020. Language models are few-shot learners. Ad-             Lai, H.; Liu, X.; Iong, I. L.; Yao, S.; Chen, Y.; Shen, P.;
+vances in neural information processing systems, 33: 1877–              Yu, H.; Zhang, H.; Zhang, X.; Dong, Y.; et al. 2024. Au-
+1901.                                                                   toWebGLM: A Large Language Model-based Web Navigat-
+                                                                        ing Agent. In Proceedings of the 30th ACM SIGKDD Con-
+Chen, C.; Huang, B.; Li, Z.; Chen, Z.; Lai, S.; Xu, X.; Gu,             ference on Knowledge Discovery and Data Mining, 5295–
+J.-C.; Gu, J.; Yao, H.; Xiao, C.; et al. 2024. Can Editing              5306.
+LLMs Inject Harm? arXiv preprint arXiv:2407.20224.
+                                                                        Lee, J.; Hahm, D.; Choi, J. S.; Knox, W. B.; and Lee,
+Cobbe, K.; Kosaraju, V.; Bavarian, M.; Chen, M.; Jun, H.;               K. 2024a. Mobilesafetybench: Evaluating safety of au-
+Kaiser, L.; Plappert, M.; Tworek, J.; Hilton, J.; Nakano, R.;           tonomous agents in mobile device control. arXiv preprint
+et al. 2021. Training verifiers to solve math word problems.            arXiv:2410.17520.
+arXiv preprint arXiv:2110.14168.
+                                                                        Lee, J.; Min, T.; An, M.; Hahm, D.; Lee, H.; Kim, C.;
+GLM, T.; Zeng, A.; Xu, B.; Wang, B.; Zhang, C.; Yin, D.;                and Lee, K. 2024b. Benchmarking Mobile Device Con-
+Zhang, D.; Rojas, D.; Feng, G.; Zhao, H.; et al. 2024. Chat-            trol Agents across Diverse Configurations. arXiv preprint
+glm: A family of large language models from glm-130b to                 arXiv:2404.16660.
+glm-4 all tools. arXiv preprint arXiv:2406.12793.
+                                                                        Lermen, S.; Rogers-Smith, C.; and Ladish, J. 2023. Lora
+Grattafiori, A.; Dubey, A.; Jauhri, A.; Pandey, A.; Kadian,             fine-tuning efficiently undoes safety training in llama 2-chat
+A.; Al-Dahle, A.; Letman, A.; Mathur, A.; Schelten, A.;                 70b. arXiv preprint arXiv:2310.20624.
+Vaughan, A.; et al. 2024. The llama 3 herd of models. arXiv
+preprint arXiv:2407.21783.                                              Li, Y.; Li, Z.; Zhang, K.; Dan, R.; Jiang, S.; and Zhang, Y.
+                                                                        2023. Chatdoctor: A medical chat model fine-tuned on a
+Guo, C.; Liu, X.; Xie, C.; Zhou, A.; Zeng, Y.; Lin, Z.; Song,           large language model meta-ai (llama) using medical domain
+D.; and Li, B. 2024. Redcode: Risky code execution and                  knowledge. Cureus, 15(6).
+generation benchmark for code agents. Advances in Neural
+Information Processing Systems, 37: 106190–106236.                      Liao, Z.; and Sun, H. 2024. Amplegcg: Learning a univer-
+                                                                        sal and transferable generative model of adversarial suffixes
+Hahm, D.; Jin, W.; Choi, J. S.; Ahn, S.; and Lee, K. 2025.              for jailbreaking both open and closed llms. arXiv preprint
+Enhancing LLM Agent Safety via Causal Influence Prompt-                 arXiv:2404.07921.
+ing. arXiv preprint arXiv:2507.00979.
+                                                                        Liu, X.; Zhang, T.; Gu, Y.; Iong, I. L.; Xu, Y.; Song, X.;
+Han, S.; Rao, K.; Ettinger, A.; Jiang, L.; Lin, B. Y.; Lambert,         Zhang, S.; Lai, H.; Liu, X.; Zhao, H.; et al. 2024. Visu-
+N.; Choi, Y.; and Dziri, N. 2024. Wildguard: Open one-stop              alagentbench: Towards large multimodal models as visual
+moderation tools for safety risks, jailbreaks, and refusals of          foundation agents. arXiv preprint arXiv:2408.06327.
+llms. Advances in Neural Information Processing Systems,
+37: 8093–8131.                                                          Lu`, X. H.; Kasner, Z.; and Reddy, S. 2024. Weblinx: Real-
+                                                                        world website navigation with multi-turn dialogue. arXiv
+                                                                        preprint arXiv:2402.05930.
+
+                                                                 37450
+
+
+===== PAGE 9 / 9 =====
+
+Lyu, K.; Zhao, H.; Gu, X.; Yu, D.; Goyal, A.; and Arora, S.              Winninger, T.; Addad, B.; and Kapusta, K. 2025. Us-
+2024. Keeping llms aligned after fine-tuning: The crucial                ing Mechanistic Interpretability to Craft Adversarial At-
+role of prompt templates. arXiv preprint arXiv:2402.18540.               tacks against Large Language Models. arXiv preprint
+                                                                         arXiv:2503.06269.
+Mazeika, M.; Phan, L.; Yin, X.; Zou, A.; Wang, Z.; Mu,
+N.; Sakhaee, E.; Li, N.; Basart, S.; Li, B.; et al. 2024.                Yang, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.;
+Harmbench: A standardized evaluation framework for au-                   Li, C.; Liu, D.; Huang, F.; Wei, H.; et al. 2024a. Qwen2. 5
+tomated red teaming and robust refusal. arXiv preprint                   technical report. arXiv preprint arXiv:2412.15115.
+arXiv:2402.04249.
+                                                                         Yang, C.; Wang, X.; Lu, Y.; Liu, H.; Le, Q. V.; Zhou, D.; and
+Picahai, S.; Hassabis, D.; and Kavukcuoglu, K. 2024.                     Chen, X. 2023. Large language models as optimizers. arXiv
+https://blog.google/technology/google-deepmind/google-                   preprint arXiv:2309.03409.
+gemini-ai-update-december-2024/.
+                                                                         Yang, Y.; Sondej, F.; Mayne, H.; and Mahdi, A. 2024b.
+Pryzant, R.; Iter, D.; Li, J.; Lee, Y. T.; Zhu, C.; and Zeng, M.         Ablation is Not Enough to Emulate DPO: How Neu-
+2023. Automatic prompt optimization with” gradient de-                   ron Dynamics Drive Toxicity Reduction. arXiv preprint
+scent” and beam search. arXiv preprint arXiv:2305.03495.                 arXiv:2411.06424.
+
+Qi, X.; Panda, A.; Lyu, K.; Ma, X.; Roy, S.; Beirami, A.;                Yao, S.; Chen, H.; Yang, J.; and Narasimhan, K. 2022.
+Mittal, P.; and Henderson, P. 2024a. Safety alignment should             Webshop: Towards scalable real-world web interaction with
+be made more than just a few tokens deep. arXiv preprint                 grounded language agents. Advances in Neural Information
+arXiv:2406.05946.                                                        Processing Systems, 35: 20744–20757.
+
+Qi, X.; Zeng, Y.; Xie, T.; Chen, P.-Y.; Jia, R.; Mittal, P.; and         Zheng, T.; Zhang, G.; Shen, T.; Liu, X.; Lin, B. Y.; Fu, J.;
+Henderson, P. 2023. Fine-tuning aligned language models                  Chen, W.; and Yue, X. 2024. Opencodeinterpreter: Integrat-
+compromises safety, even when users do not intend to! arXiv              ing code generation with execution and refinement. arXiv
+preprint arXiv:2310.03693.                                               preprint arXiv:2402.14658.
+
+Qi, Z.; Liu, X.; Iong, I. L.; Lai, H.; Sun, X.; Zhao, W.; Yang,          Zhou, S.; Xu, F. F.; Zhu, H.; Zhou, X.; Lo, R.; Sridhar,
+Y.; Yang, X.; Sun, J.; Yao, S.; et al. 2024b. WebRL: Train-              A.; Cheng, X.; Ou, T.; Bisk, Y.; Fried, D.; et al. 2023.
+ing LLM Web Agents via Self-Evolving Online Curriculum                   Webarena: A realistic web environment for building au-
+Reinforcement Learning. arXiv preprint arXiv:2411.02337.                 tonomous agents. arXiv preprint arXiv:2307.13854.
+
+Rawles, C.; Clinckemaillie, S.; Chang, Y.; Waltz, J.; Lau,               Zhou, Y.; Muresanu, A. I.; Han, Z.; Paster, K.; Pitis, S.;
+G.; Fair, M.; Li, A.; Bishop, W.; Li, W.; Campbell-Ajala,                Chan, H.; and Ba, J. 2022. Large language models are
+F.; et al. 2024. Androidworld: A dynamic benchmark-                      human-level prompt engineers. In International Conference
+ing environment for autonomous agents. arXiv preprint                    on Learning Representations.
+arXiv:2405.14573.
+                                                                         Zou, A.; Wang, Z.; Carlini, N.; Nasr, M.; Kolter, J. Z.; and
+Tang, L. 2024. A Trivial Jailbreak Against Llama 3. https:               Fredrikson, M. 2023. Universal and transferable adver-
+//github.com/haizelabs/llama3-jailbreak.                                 sarial attacks on aligned language models. arXiv preprint
+                                                                         arXiv:2307.15043.
+Taori, R.; Gulrajani, I.; Zhang, T.; Dubois, Y.; Li, X.;
+Guestrin, C.; Liang, P.; and Hashimoto, T. B. 2023. Stanford
+Alpaca: An Instruction-following LLaMA model. https:
+//github.com/tatsu-lab/stanford alpaca.
+
+Turner, A. M.; Thiergart, L.; Leech, G.; Udell, D.; Vazquez,
+J. J.; Mini, U.; and MacDiarmid, M. 2023. Steering lan-
+guage models with activation engineering. arXiv preprint
+arXiv:2308.10248.
+
+Wang, X.; Chen, Y.; Yuan, L.; Zhang, Y.; Li, Y.; Peng, H.;
+and Ji, H. 2024. Executable code actions elicit better llm
+agents. In International Conference on Machine Learning.
+
+Wang, X.; Wang, Z.; Liu, J.; Chen, Y.; Yuan, L.; Peng, H.;
+and Ji, H. 2023. Mint: Evaluating llms in multi-turn in-
+teraction with tools and language feedback. arXiv preprint
+arXiv:2309.10691.
+
+Wei, A.; Haghtalab, N.; and Steinhardt, J. 2023. Jailbroken:
+How does llm safety training fail? Advances in Neural In-
+formation Processing Systems, 36: 80079–80110.
+
+Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.;
+Chi, E.; Le, Q. V.; Zhou, D.; et al. 2022. Chain-of-
+thought prompting elicits reasoning in large language mod-
+els. Advances in neural information processing systems, 35:
+24824–24837.
+
+                                                                  37451

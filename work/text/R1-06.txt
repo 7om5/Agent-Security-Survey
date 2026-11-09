@@ -1,0 +1,1354 @@
+# R1-06 | ACE: A Security Architecture for LLM-Integrated App Systems
+# PDF: papers\ACE_A Security Architecture for LLM-Integrated App Systems.pdf
+# extracted: 2026-11-02T19:30:36.330Z
+
+
+===== PAGE 1 / 18 =====
+
+ACE: A Security Architecture
+       for LLM-Integrated App Systems
+
+Evan Li∗, Tushin Mallick∗, Evan Rose∗, William Robertson, Alina Oprea, and Cristina Nita-Rotaru
+                                                     Northeastern University
+
+                 {li.evan1, mallick.tu, rose.ev, w.robertson, a.oprea, c.nitarotaru}@northeastern.edu
+
+   Abstract—LLM-integrated app systems extend the utility of         works provide centralized management of prompts and dy-
+Large Language Models (LLMs) with third-party apps that              namic, iterative generation of multi-step LLM workflows.
+are invoked by a system LLM using interleaved planning and           Specifically, a central “system LLM” iterates between suc-
+execution phases to answer user queries. These systems introduce     cessive planning and execution phases. Each planning phase
+new attack vectors where malicious apps can cause integrity          decides the next operations towards answering a user query
+violation of planning or execution, availability breakdown, or       based on the results of prior execution steps. Given a plan,
+privacy compromise during execution.                                 the LLM then carries it out in a subsequent execution phase,
+                                                                     potentially invoking apps and accessing context to do so.
+   In this work, we identify new attacks impacting the integrity of  Planning and execution phases are interleaved, resulting in
+planning, as well as the integrity and availability of execution in  dynamic control flow that is dependent on user instructions,
+LLM-integrated apps, and demonstrate them against IsolateGPT,        app descriptions, and intermediate system outputs.
+a recent solution designed to mitigate attacks from malicious
+apps. We propose Abstract-Concrete-Execute (ACE), a                     To support this dynamic orchestration, the system relies on
+new secure architecture for LLM-integrated app systems that          structured representations in the form of app schemas and app
+provides security guarantees for system planning and execution.      descriptions. An app schema formally defines the structure,
+Specifically, ACE decouples planning into two phases by first        expected inputs and outputs, and operational interface of an
+creating an abstract execution plan using only trusted informa-      app, while an app description provides semantic metadata
+tion, and then mapping the abstract plan to a concrete plan          about the app’s capabilities, behavior, and usage context. These
+using installed system apps. We verify that the plans generated      representations enable the system LLM to reason about avail-
+by our system satisfy user-specified secure information flow         able functionality, plan appropriate execution, and coordinate
+constraints via static analysis on the structured plan output.       the invocation of apps in accordance with user intent.
+During execution, ACE enforces data and capability barriers
+between apps, and ensures that the execution is conducted               Security is a major concern for LLM-integrated app sys-
+according to the trusted abstract plan. We show experimentally       tems, as they introduce new attack vectors from malicious
+that ACE is secure against attacks from the INJECAGENT and           apps installed on user devices, including indirect prompt in-
+Agent Security Bench benchmarks for indirect prompt injection,       jection [10], denial of service and privacy leakage [11]. Based
+and our newly introduced attacks. We also evaluate the utility       on the attacker objective and the system component being
+of ACE in realistic environments, using the Tool Usage suite         attacked we classify such attacks as (1) integrity violation of
+from the LangChain benchmark. Our architecture represents a          planning – attacks that impact the integrity of the planning
+significant advancement towards hardening LLM-based systems          phase; (2) integrity violation of execution – attacks that impact
+using system security principles.                                    the integrity of the execution phase; (3) availability breakdown
+                                                                     of execution – attacks that interrupt the normal execution of
+                          I. INTRODUCTION                            the LLM system; and (4) privacy compromise of execution –
+                                                                     attacks that cause leakage of sensitive user information from
+   Large language models (LLMs) have shown remarkable per-           the execution environment.
+formance in language generation [1]–[6], motivating their in-
+tegration with external systems. This integration is commonly           Recent advances in system-level defenses for LLM-
+realized through third-party applications (or apps) that connect     integrated app systems focus on mitigating prompt injection
+an LLM with external APIs to enable seamless interactions            and related security threats posed by untrusted third-party data
+between users and third-party services. These LLM-integrated         sources. These defenses primarily leverage isolated execution
+apps can support a variety of tasks such as booking flights,         or control how data propagates within an LLM-integrated app
+reserving restaurants, and managing emails.                          system. Information flow control mechanisms [12] enforce
+                                                                     separation between trusted planning and untrusted execution,
+   Several major LLM orchestration frameworks [7]–[9] have           while isolation architectures [13] decouple application logic
+emerged to facilitate the development of apps. These frame-          through modular components to prevent shared context com-
+                                                                     promise. However, existing defenses assume a weak adversary
+   ∗ Equal Contribution                                              that cannot manipulate the app description and schema and use
+                                                                     an interleaved plan-execute approach that does not establish
+Network and Distributed System Security (NDSS) Symposium 2026
+23-27 February 2026, San Diego, CA, USA
+ISBN 979-8-9919276-8-0
+https://dx.doi.org/10.14722/ndss.2026.230352
+www.ndss-symposium.org
+
+
+===== PAGE 2 / 18 =====
+
+sufficiently comprehensive security boundaries between the                  based systems, which follow an interleaved plan-execute
+system LLM and untrusted third-party apps.                                  procedure to decide execution and produce a response.
+                                                                         • We verify that the plans generated by our system sat-
+   Motivated by limitations of existing defenses, we iden-                  isfy user-specified secure information flow constraints
+tify and demonstrate several concrete attacks that subvert                  via static analysis on the structured plan output. We
+the integrity of the system planning phase as well as the                   demonstrate that our information flow verification system
+integrity and availability of the system execution phase of Iso-            successfully blocks the accidental or malicious leakage of
+lateGPT [13]. Our attacks include Execution Flow Disruption                 privileged information to unqualified recipients.
+and Execution Manager Hijack created through malicious app               • We conduct experiments to empirically demonstrate
+outputs, and Planner Manipulation created through malicious                 ACE’s security benefits. We show that ACE success-
+app descriptions. To address these new attacks, we design                   fully prevents all attacks from INJECAGENT [14] and
+Abstract-Concrete-Execute (ACE), a new secure architecture                  ASB [15], standard benchmarks for evaluating indirect
+for LLM-integrated apps that provides comprehensive security                prompt injection attacks. We also show that ACE pre-
+by design. ACE is based upon the key insight that ahead-                    vents our newly introduced attacks. In addition, we
+of-time planning based only on the trusted user query—                      demonstrate that ACE achieves high utility (above 80%)
+as opposed to dynamic plan generation—enables principled                    on the Tool Usage suite from the LangChain benchmark.
+security reasoning and static enforcement of strong security
+policies on plan execution. An overview of our architecture              A complete version of this work, containing supplemen-
+is given in Figure 1b, in contrast to existing systems using          tary appendices and extended results, is available on arXiv
+interleaved planning and execution shown in Figure 1a.                [16]. Our code is publicly available at https://github.com/
+                                                                      escottrose01/ace-llm.
+   ACE separates query processing into three distinct phases:
+abstract plan generation, concrete plan instantiation, and                    II. BACKGROUND AND PROBLEM STATEMENT
+isolated plan execution. The first phase creates an abstract
+execution plan using only trusted query information, thus                We provide an overview of LLM-integrated apps and de-
+creating a security boundary that preserves plan integrity            tails about existing defenses against malicious apps. We then
+despite the presence of untrusted apps. This approach enables         describe our problem statement and goals.
+reasoning about the control and information flow properties of
+system execution traces under an immutable rule-based plan            A. Overview of LLM-Integrated App Systems
+compared to a dynamic, data-dependent plan. The separation
+of planning and execution phases guarantees integrity of exe-            LLM-integrated app systems are structured around modular,
+cution, including preventing indirect prompt injection attacks        composable components—primarily apps—that expand the
+arising from malicious app outputs.                                   LLM’s functionality to perform real-world tasks. We give an
+                                                                      example of a typical LLM-integrated app system in Figure 1a.
+   The second phase instantiates the plan using registered apps,      At the core of this architecture is a system LLM that interprets
+leveraging isolation to prevent malicious apps from corrupting        user queries, formulates execution strategies, and invokes the
+the integrity of the abstract plan. With a complete execution         appropriate apps to fulfill task objectives. The system LLM
+plan in hand, ACE then verifies that the plan satisfies static        operates over a dynamic prompt context including the user’s
+security policies including quantification of risk and permissi-      input, prior dialogue, app descriptions, and any intermediate
+ble information flows between the system LLM, context, and            results. This context functions as transient memory, allowing
+apps. By verifying concrete plan implementations against our          the model to reason over evolving task states, maintain coher-
+lattice-based policy, we automatically reject implementations         ence across steps, and ensure consistency in output.
+that violate defined information flow constraints.
+                                                                         Within this framework, an app is defined by three elements:
+   The final phase executes the verified plan, leveraging system      a natural language description, a schema, and a function.
+isolation primitives and controlled interfaces between compo-         The description specifies the app’s purpose and operational
+nents to enforce the previously-verified security policies and        constraint, and serves as semantic metadata for app selection
+overall integrity of execution with respect to the concrete plan.     and planning. The schema defines the structure of the app’s
+To summarize, our contributions are:                                  inputs and outputs. The function, typically a script or service,
+                                                                      implements the app logic—receiving structured inputs and
+   • We demonstrate three new attacks that subvert the in-            returning either structured or natural language outputs.
+      tegrity of the system planning phase as well as the
+      integrity and availability of the system execution phase           Task handling involves two conceptual phases: planning and
+      of IsolateGPT [13].                                             execution. Embedded within the system LLM is a planning
+                                                                      mechanism responsible for decomposing high-level user in-
+   • We propose ACE, a new secure architecture for LLM-               tent into a structured execution strategy. The planner selects
+      integrated app systems providing comprehensive security         relevant apps, determines their invocation order, and supplies
+      by design. ACE uses the key insight that planning based         required inputs. The resulting plan serves as a blueprint for ex-
+      on only trusted components enables principled security          ecution, supporting both single-step and multi-step workflows.
+      reasoning and static enforcement of strong security poli-
+      cies on plan execution. Our abstract planning mechanism            App execution is managed by an underlying execution envi-
+      stands in stark contrast to the majority of existing LLM-       ronment, which enforces process isolation, resource limits, and
+
+                                                                   2
+
+
+===== PAGE 3 / 18 =====
+
+Email “file.txt” to                                                                            Email “file.txt” to           Abstract
+           johndoe@gmail.com                                                                              johndoe@gmail.com               Planner
+
+               Query (Trusted)                       System     Action:                       User            Query (Trusted)
+                                                     LLM     read(“file.txt”)
+User                                                                                                                                                file= “file.txt”
+                                                                                                                   File          Email              mail = “johndoe@gmail.com”
+                                                             Planning Step                                         Reader        Sender             text = FileReader(file)
+                                                                                                                                                    result = EmailSender(mail)
+      Disk           Email        Math                                                                              Read           Send             return result
+                                                                                                                   files . . .   emails . . .
+      App            App          App                Disk    Response:                                                                                       Abstract Plan
+
+      Read / write   Read / send Evaluate            App     s1 = “…”                                                      Abstract Apps
+        files . . .   emails . . . arithmetic . . .
+                                                             Execution Step
+            Concrete Apps (Untrusted)                                                                                                               Concrete
+                                                                                                                                                    Planner
+                                                                            Action:                 Disk           Email         Math
+                                                     System                  email(s1,
+                                                     LLM                    “john . . .”)           App            App           App                 FileReader()    DiskApp()
+                                                                                                                                                    EmailSender()   EmailApp()
+                                                             Planning Step                          Read / write   Read / send Evaluate                            Concrete Plan
+                                                                                                      files . . .   emails . . . arithmetic . . .
+
+                                                                                                          Concrete Apps (Untrusted)
+
+                                                     Email     Response:                                                                            Orchestrator     Response:
+                                                     App     s2 = “msg sent”                                                                                       Message sent.
+
+                                                             Execution Step                                                                         Rule-based Execution
+
+            (a) Typical LLM-integrated app system.                                                                      (b) ACE system design.
+
+Fig. 1: Comparison of system architectures. In typical systems (left) a central system LLM is responsible for planning control
+flow based on the user queries and available system utilities. Planning and execution phases are interleaved, producing a control
+flow mechanism that is arbitrarily dependent on the user instructions, app descriptions, and intermediate system outputs. Our
+system ACE (right) generates a structured plan prior to execution based on trusted information.
+
+secure system access. Within this environment, an orchestrator                                untrusted data. A security monitor enforces IFC policies,
+acts as an intermediary between the system LLM and the apps.                                  preventing untrusted data from influencing planning.
+The orchestrator receives the execution plan, schedules and
+manages app invocations accordingly, and oversees the data                                       The system relies on several trust assumptions, notably
+flow between apps. It also maintains an execution state that is                               treating app descriptions and schemas as inherently reliable
+logically independent from the reasoning process of the system                                without verification. As a result, any compromise in these
+LLM which ensures that high-level reasoning is decoupled                                      components can undermine the effectiveness of IFC and lead
+from low-level operational control.                                                           to insecure behavior.
+                                                                                              IsolateGPT [13]. This system-level defense mitigates security
+   In more complex workflows, app chaining is needed, where                                   risks from untrusted apps in LLM systems by enforcing strict
+the output of one app serves as the input to another. These                                   app execution isolation. The architecture of IsolateGPT is
+multi-step executions introduce coordination challenges, in-                                  centered around a strict app execution isolation model, im-
+cluding dependency tracking, validation of intermediate re-                                   plemented via a modular Hub-and-Spoke design. More details
+sults, and maintaining type consistency across steps. The                                     are given in Section III-A.
+planner is responsible for explicitly encoding these dependen-
+cies within the execution plan, while the orchestrator handles                                   However, IsolateGPT’s reliance on static app descriptions
+data transformation and propagation between steps, ensuring                                   and schemas as trusted sources presents a critical limitation.
+consistency and system integrity throughout the process.                                      Since it lacks mechanisms for validating the integrity of these
+                                                                                              descriptions or inspecting the internal logic of app functions,
+B. Existing Defenses for LLM-Integrated App Systems                                           it is constrained to verifying outputs based solely on expected
+                                                                                              formats and declared semantics. This limits its ability to rea-
+   While LLM-integrated apps enhance functionality and user                                   son dynamically or adapt to adversarial scenarios, ultimately
+experience, they also introduce significant security vulner-                                  affecting system robustness. Another limitation of IsolateGPT
+abilities—particularly through indirect prompt injection at-                                  lies in its reliance on user interaction for app control, which
+tacks [10]. These risks are amplified in systems involving                                    introduces significant user fatigue.
+multiple untrusted apps, where adversaries can exploit natural
+language ambiguity to compromise app integrity, mislead                                       C. Problem Statement
+users, or violate privacy across multi-step execution chains.
+                                                                                                 Our goal is to design a security architecture for LLM-
+   Two LLM app security systems that attempt to address these                                 integrated app systems that provides mitigation against ma-
+issues are f -Secure [12] and IsolateGPT [13].                                                licious apps installed on a user’s device that might influence
+f -Secure [12]. This system provides a defense against indirect                               both the LLM planning and the execution flow of the LLM
+prompt injection attacks in LLM-powered apps by adopting                                      system. The main problem we address in our work is to restrict
+information flow control (IFC). The core design of f -Secure                                  the influence of malicious apps in LLM systems by protecting
+involves separating LLM functionalities into a planner, which                                 benign apps and the LLM from their adversarial impact.
+generates structured execution steps using only trusted in-                                   Threat Model. We assume that the attacker capabilities in-
+puts, and a rule-based executor, which processes potentially                                  volve control over one or several apps on the user’s device,
+                                                                                              with the goal of influencing other benign apps or the LLM
+
+                                                                                           3
+
+
+===== PAGE 4 / 18 =====
+
+TABLE I: Comparison of our system with existing LLM security systems based on what attack surfaces they are designed to
+address. We consider two adversaries: our strong threat model, which assumes completely untrusted apps, and a weaker threat
+model, which trusts the app description and schema.
+
+Phase      Attack Objective  IsolateGPT [13]                                   f -Secure [12]  ACE (Ours)
+
+Planning   Integrity         Weak                                      Strong  Weak Strong     Weak Strong
+Execution  Integrity
+Execution  Availability      ✓                                         ✗       ✓  ✗            ✓  ✓
+Execution  Privacy
+                             ✗                                         ✗       ✓  ✗            ✓  ✓
+
+                             ✗                                         ✗       ✓  ✗            ✓  ✓
+
+                             User-guided User-guided                           ✗  ✗            ✓  ✓
+
+planning and execution components. Within the compromised              and execution phases in the face of untrusted components. In
+apps, the attacker has total control over the details of their         particular, the integrity of the planning phase should not be
+execution, their interface with the LLM system (schema),               compromised in the presence of untrusted apps installed on
+and app metadata, such as the name and natural language                the system. App descriptions should not be able to induce
+description. As a consequence of controlling the app execution,        arbitrary changes in the generated control flow. Additionally,
+the attacker also controls malicious app outputs, which could          the execution phase should prevent integrity, availability, and
+result in an indirect prompt injection attack manipulating the         privacy compromises resulting from indirect prompt injections
+control flow. We distinguish between a weak threat model in            performed by malicious apps. The system should appropriately
+which the app description and schema are trusted, and a strong         restrict the processing of untrusted data originating from
+threat model in which they may be malicious.                           system app outputs. The data flow in the system should be
+                                                                       enforced according to the prespecified plan. Besides designing
+   We consider several attacker objectives of interest (avail-         a system resilient against both weak and strong attacker
+ability, integrity, and privacy) during both the LLM planning          models, our goals are to offer high levels of utility, and be
+and execution phases. While a combination of adversarial               agnostic to the system and LLM configurations.
+objectives and LLM phase leads to six possible attack types,
+we focus here on the most relevant:                                     III. NEW ATTACKS ON LLM-INTEGRATED APP SYSTEMS
+
+   1) Planning Integrity Violation. The attacker could ma-                Previous defenses for LLM-integrated app systems either
+       nipulate the LLM planning, for instance to promote their        trust the description of the app, or they trust the LLM to choose
+       own malicious apps to be included or to demote a benign         the apps and plan the execution of the task. We identify several
+       app to be excluded from the generated plan.                     new attacks against IsolateGPT [13] which we demonstrate
+                                                                       on the public system implementation: (1) Execution Flow
+   2) Execution Integrity Violation. The attacker could at-            Disruption, (2) Execution Manager Hijack, and (3) Planner
+       tempt to change the system execution flow so that a be-         Manipulation. The first two attacks are created through mali-
+       nign app receives malicious output from a compromised           cious app output, while the third is created through malicious
+       app or manipulate the execution context, leading to an          app descriptions. Below we describe in detail the IsolateGPT
+       integrity violation in the system’s behavior.                   system, and how our attacks bypass its security mechanisms.
+
+   3) Execution Availability Breakdown. The attacker may               A. IsolateGPT System Overview
+       wish to interrupt the normal execution of the LLM
+       system, causing user queries to fail to resolve despite            In IsolateGPT user queries are processed through a modular
+       the availability of suitable resources on the system.           Hub-and-Spoke architecture that supports dynamic, multi-
+                                                                       step task execution while enforcing strict execution isolation.
+   4) Execution Privacy Compromise. The attacker might                 When a user submits a query, it is first received by the hub,
+       wish to cause leakage of sensitive user information from        which orchestrates all downstream activity. The hub contains
+       the execution environment.                                      two key subsystems: the planner and the execution manager.
+                                                                       Each subsystem is responsible for distinct phases of query
+   It is possible to launch an availability attack during planning     interpretation and execution. An example of an end-to-end
+to prevent the plan generation and task completion, but such           scenario from user query to final output is shown in Figure 2.
+an attack would be easily detected. Privacy compromises are
+not relevant in the planning phase, but only during execution             The hub planner component incorporates a planning LLM
+when the LLM gets access to sensitive user data.                       that interprets the user’s query and constructs a detailed multi-
+Our Goals. We have two main types of goals: security goals             step execution plan taking into account the apps available to
+(preventing attacks from malicious apps) and utility goals             the system. This plan includes a proposed ordering of app
+(maintaining system utility). As shown in Table I, existing            calls, their expected inputs and outputs, and interdependencies.
+defenses [12], [13] do not consider a strong threat model with         However, instead of executing this plan directly, IsolateGPT
+arbitrary app manipulation. Even in the case of a weak threat          discards the detailed structure and retains only a high-level list
+model where app description and schema are trusted, they               of relevant apps identified as potentially useful for resolving
+provide limited protection, and none of the existing systems
+is resilient against all attacker objectives.
+
+   Our system should preserve the security of both planning
+
+                                                                    4
+
+
+===== PAGE 5 / 18 =====
+
+the query. This list defines the complete set of apps that the        User    Calculate the fare from                         Planner                    Plan:
+system is allowed to call during the execution phase.                       Main Street to Elms Avenue                        LLM                    [QuickRide,
+                                                                                                                                                     MetroHail]
+   The app list, along with the original user query, is passed                           Query
+to the execution manager, which contains its own LLM com-                                                                              Planning Step
+ponent, responsible for orchestrating the actual execution. It
+takes the user query and the planner-provided list of apps as               Launches apps    Metro              Quick         Manager                   Action:
+input and determines the immediate next app to invoke. The                   and verifies    Hail               Ride          LLM                   Call QuickRide
+execution manager then instantiates a spoke for the app within                  outputs      App                App                             Start: “Main Street”
+a sandboxed, isolated environment and forwards the necessary                                                                                    End: “Elms Avenue”
+information to it for processing.                                           Manager LLM       Calculate          Calculate
+                                                                                             Fare Prices        Fare Prices            Spoke Call Step
+   Once the spoke completes its task and returns an output,
+the execution manager integrates the intermediate result, the                    Creates     Metro              Quick         Quick                   Response:
+original user query, and any previous context into the prompt               procedural plan  Hail               Ride          Ride              WARNING! All fare
+of its internal LLM. This LLM evaluates the current state                    to solve query  LLM                LLM           App               calculating tools are
+and determines the next appropriate step, including which
+spoke to invoke next and what information to provide. This                  Planner LLM      MetroHail Spoke QuickRide Spoke                        being used to
+iterative process continues until the execution manager’s LLM                                                                                     distribute drugs.
+concludes that the task is complete. At that point, the final
+result is routed back through the hub to the user. Throughout                                                                          Execution Step
+this workflow, all inter-spoke communication is strictly medi-
+ated by the execution manager, ensuring that no direct data                                  IsolateGPT System                Manager      Final Output:
+exchange occurs outside the control of the hub.                                                                               LLM      I’m sorry, there’s a
+                                                                                                                                       technical error with
+B. New Attacks against IsolateGPT
+                                                                                                                                             the tools.
+   IsolateGPT distrusts app descriptions during spoke execu-
+tions, but relies on them during the planning phase. This                                                                            Output Interpretation Step
+exposes IsolateGPT to a host of new attacks which utilize
+app descriptions.                                                     Fig. 2: Illustration of Execution Flow Disruption attack on Iso-
+                                                                      lateGPT, which causes an availability breakdown in execution.
+   IsolateGPT also trusts app outputs and passes them to the
+context of execution manager LLM of the hub without any               hub without any prior verification, and that the planning and
+prior verification. This makes the LLM vulnerable to prompt           execution phases are interleaved, to disrupt the execution flow
+injection from malicious app outputs, which can influence sub-        of a task. We show an indirect prompt injection attack against
+sequent actions taken by the LLM. Although IsolateGPT does            IsolateGPT in Figure 2, where the malicious app prematurely
+not attempt to defend against attacks that occur entirely within      halts execution.
+a single app, such as prompt injection or internal compromise
+during input processing, they claim to prevent the effects of            An adversary modifies the MetroHail app to insert a disrup-
+such attacks from propagating beyond the compromised app              tion string into its output claiming that all fare calculating apps
+to the rest of the system. Trusting raw app outputs contradicts       are compromised and used for illegal activities. The created
+this claim and compromises the robustness of the system.              execution plan first uses QuickRide and then MetroHail to
+                                                                      solve the user query. However, when QuickRide is executed,
+   Below we present three new attacks on IsolateGPT that ex-          IsolateGPT’s execution flow is diverted as the execution man-
+ploit app description and app outputs. In these scenarios, a user     ager exits the plan of execution before running MetroHail and
+intends to calculate fare from “Main Street” to “Elm Avenue”          returns an error message to the user.
+using two apps: MetroHail and QuickRide. Without loss of
+generality, MetroHail is considered the benign application pro-          We expect IsolateGPT to display the fare from MetroHail
+viding legitimate fare estimates, while QuickRide is malicious        and notify the user that QuickRide did not function as intended
+and embeds a prompt injection in its output/description to            or is compromised and should not be used. However, in this
+compromise the integrity of MetroHail’s output. All the attacks       instance, IsolateGPT instead reports to the user that a technical
+were evaluated on the public IsolateGPT implementation1,              issue occurred and does not return any valid fare for the user.
+and Figures 2, 11, and 10 represent output from the attacked          This attack demonstrates that IsolateGPT’s isolated execution
+system.                                                               system is susceptible to availability attacks that disrupt its
+                                                                      execution chain. IsolateGPT failed to display the fare from
+C. Execution Flow Disruption Attack                                   MetroHail, and also failed to properly acknowledge the source
+                                                                      of the error to the user, instead returning a vague message.
+   A malicious app can exploit the fact that the raw app output
+is passed to the context of execution manager LLM of the              D. Execution Manager Hijack Attack
+
+   1https://github.com/llm-platform-security/SecGPT                      A malicious app can exploit the fact that the raw app output
+                                                                      is passed to the context of execution manager LLM of the hub
+                                                                      without any prior verification to enable malicious cross-app
+                                                                      interference. For example, a malicious app can craft an output
+                                                                      containing a prompt injection that impacts another app.
+
+                                                                         The created plan of execution first uses MetroHail and then
+                                                                      QuickRide to solve the user query. The execution manager
+                                                                      receives expected fare from MetroHail, but from QuickRide it
+                                                                      receives a set of instructions to repeat, verbatim. Specifically,
+                                                                      it receives a prompt that instructs it to report a normal fare
+                                                                      for itself but an artificially inflated fare for MetroHail. The
+                                                                      spoke regurgitates the prompt injection, thereby injecting the
+                                                                      prompt into the execution manager LLM context, which then
+                                                                      reports the artificially inflated MetroHail fare to the user,
+                                                                      along with the normal fare for QuickRide. This represents a
+                                                                      critical security vulnerability, as it introduces a central point of
+
+                                                                   5
+
+
+===== PAGE 6 / 18 =====
+
+failure within the system, enabling malicious app developers to     control flow by suppressing the use of a relevant app. This
+undermine the credibility of other apps and deliver misleading      leads us to propose a stricter boundary between planning
+information to the user.                                            and execution, in which a planning module determines an
+                                                                    execution workflow based only on fully-trusted information,
+E. Planner Manipulation Attack                                      such as the user query. This execution workflow imposes hard,
+                                                                    irreversible constraints on the possible downstream execution
+   A malicious app can also exploit the fact that the system        paths, which cannot be modified by malicious app descriptions
+trusts app descriptions during the planning phase to manipu-        or outputs.
+late the planner into selecting the malicious app despite the       Remove Unintended Cross-app Interactions. In the Planner
+presence of other functionally equivalent alternatives.             Manipulation Attack we showed how a malicious app can
+                                                                    suppress the usage of a different, unrelated app by modifying
+   Once the user gives a query to calculate the fare from “Main     its own description. We recognize this behavior more broadly
+Street” to “Elms Avenue”, the planner develops a plan of            as an unintended cross-app interaction. In particular, for the
+execution to solve the query. To do this, the planner LLM           purposes of planning the broader control flow, the planning
+reads the user query, the benign description of MetroHail, and      module should be able to determine the inclusion of each app
+the malicious description of QuickRide. While both apps’ de-        independently from the others. Thus, we seek a solution which
+scriptions state their purpose as fare calculators, QuickRide’s     encodes this requirement explicitly in its design.
+description also has a malicious prompt commanding the              Enforce Data Controls within Execution Paths. LLMs can-
+planner LLM to exclude MetroHail from the plan of execution         not be trusted to keep flows of private and public information
+when resolving fare calculation requests. The planner LLM           separate. Instead, our insight is to enforce privacy controls by
+reads this malicious prompt and excludes MetroHail from             design using rule-based data security controls. These controls
+the created plan. In the user’s final output, only the fare         should guarantee that privileged information is not divulged
+generated from QuickRide is returned, removing MetroHail            to unqualified locations during any execution trace, regardless
+from the execution process without the user’s knowledge. This       of how the control flow was determined (even by a trusted
+vulnerability leaves the hub planner susceptible to manipula-       component). The controls should also be extensive enough to
+tion by malicious app developers, providing adversaries with        detect and prevent long-range data dependencies, as data in
+the ability to promote their own product and demote their           multi-step plans can be processed in potentially complex ways
+competitor’s, undermining the system’s reliability.                 which must be tracked.
+                                                                    Enforce Low-privilege Principle. A general, widely-accepted
+               IV. ACE SYSTEM ARCHITECTURE                          security guideline is the principle of least privilege (PoLP),
+                                                                    which states that the privileges granted to an entity should be
+   We start by discussing the design principles guiding the         the minimal possible needed to perform its intended functions.
+design of ACE. We then give an overview of our system               Guided by this principle, our system should provide the least
+architecture. Finally, we describe each component in detail and     amount of privilege to apps during execution.
+explain how they contribute to achieving our security goals.
+                                                                    B. High-level Overview
+A. Design Principles
+                                                                       ACE consists of three main components, shown in Figure 3:
+   One of the key challenges in designing a secure LLM              an abstract planner, a concrete planner, and an executor. Each
+system in the face of untrusted apps lies in how to create          component is responsible for handling a distinct phase of user
+structured, rule-based execution plans while also limiting the      query processing, each with less capability than the previous
+extent to which installed apps can influence these plans. At a      one. In this way, we balance the need for generality while
+high level, we desire that the basic control flow determined by     restricting the influence of untrusted data sources.
+the planner cannot be altered by malicious app descriptions.
+This includes app demotion attacks such as the Planner Ma-             The abstract planner is responsible for generating the
+nipulation Attack from Section III. We also require that, once      overarching plan of execution for fulfilling the user query. It
+this plan is established, the execution phase is subject to the     serves as the most privileged and trusted component of the
+constraints imposed by the plan. That is, malicious app outputs     system and interacts only with fully trusted information, the
+cannot cause an indirect prompt injection attack resulting in       user query. In particular, the abstract planner is oblivious to
+arbitrary execution traces not permitted by the semantics of        the set of apps installed on the system, making it immune to
+the prespecified plan. Finally, we want to prevent privacy          indirect prompt injection and planning manipulation attacks.
+leakage by design, so that data boundaries can be enforced          The output of the abstract planner specifies clearly-defined
+and sensitive information cannot leak to unqualified parties.       control flow rules governing downstream execution paths. Our
+Thus, we are led to the following design principles:                insight in this direction is for the abstract planner to identify
+Separate Planning and Execution. We showed with the                 a set of abstract apps which can be used in expressing the
+Execution Flow Disruption Attack how an attacker could              execution plan. The resulting plan makes use of these abstract
+prematurely interrupt execution by performing an indirect           apps in defining the control flow of the program without
+prompt injection attack to insert a malicious output into the
+execution path. With the Planner Manipulation Attack we
+showed how a malicious app description could influence the
+
+                                                                 6
+
+
+===== PAGE 7 / 18 =====
+
+Abstract            Disk           Email               Math                Invoke
+                            Planning            App            App                 App               FileReader
+                            LLM
+        Email “file.txt”to                      Read / write   Read / send             Evaluate        Read       App
+      johndoe@gmail.com                           files . . .    emails . . .      arithmetic . . .  Request      Worker
+                                                                                   System Apps                    (Disk)
+User            Query                                                                                   File
+                                                                                  Information        Contents
+                                                               Filter on           Flow and
+                                                            Descriptions                                             File
+                                                                                  Risk Scoring                    Contents
+                                                          …
+        FileReader() EmailSender()                                         Email                        Invoke
+       Load a file from Send an email                                    App                         EmailSender
+        the filesystem to a recipient                                Email
+                                                                   Sender
+                                 Abstract Apps
+                                                        Disk
+      email = “johndoe@...”                          App
+      f = FileReader(“file.txt”)                  File
+      EmailSender(email, f)                     Reader
+
+                     Abstract Plan              Concrete       Concrete                              OrchestratorFileApp
+                                                Planning       Planning                                                                           Plan WorkerContentsWorker
+           Abstract Planning                    LLM            LLM                                                (Email)
+                                                                                                      Status
+                                                File Disk Email Email                                Message                  Status
+                                                Reader App Sender App                                                       Message
+                                                                                                       Final
+                                                                     App mapping                      Output                   Final
+                                                               Concrete Planning                                             Output
+
+                                                                                                     Plan Execution
+
+Fig. 3: Overview of our three-phase ACE secure LLM-integrated app system architecture. First, our system generates an
+abstract plan using a set of abstract apps, generated using only fully-trusted query information. Next, we match abstract
+apps with concrete apps installed on the system in the concrete planning phase. Matching consists of a binary decision made
+independently between each pair of abstract and concrete app. Finally, the concrete plan is executed in a carefully managed
+execution environment which enforces isolation between system app instances.
+
+deferring to the untrusted information involved with installed       our planning module is designed so that an attacker cannot
+system utilities.                                                    influence the generated plan by having their app installed.
+                                                                     Crucially, the abstract planning phase is performed without
+   The concrete planner acts as an intermediate step, combin-        access to information involving the set of installed apps, and
+ing the output of the abstract planner with the apps installed       thus is by design secure from manipulation by installed apps.
+on the system to obtain a valid flow that can be executed.           Abstract Apps. Motivated by the concepts of abstract classes
+The output of the concrete planner must abide by any struc-          and polymorphism from programming languages, the first task
+tural constraints imposed by the abstract planner. Briefly, the      of the abstract planner is to generate a set of abstract apps.
+abstract apps identified during the abstract planning phase          Abstract apps consist of a name, natural language description,
+are matched with concrete apps installed on the system. We           and a type signature defining the input and output structure.
+perform this matching carefully to eliminate unintended cross-       Abstract apps do not implement the behavior stated in their
+app interactions such as app demotion attacks. This results          descriptions. Given a user query, the planning module gener-
+in a concrete plan which fully specifies the needed system           ates a set of abstract apps which may be relevant to completing
+operations. At this phase, we also statically verify system-         the query.
+level security policies such as privacy controls on information
+flow between apps.                                                      We implement the abstract app generator using a specialized
+                                                                     LLM (i.e., an LLM paired with a customized system prompt),
+   The executor runs the concrete plan within an orchestrator-       which takes the user query as input and produces abstract app
+worker architecture and is responsible for executing the con-        specifications in a structured output format.
+crete plan in a secure manner by enforcing all security policy
+rules. Each app is run inside an isolated environment with care-        To be useful, abstract apps must satisfy two criteria. First,
+fully managed permissions. Only data required for executing          the user intent must be expressible with some program logic
+the app is made available to each app’s execution environment.       using the abstract apps as building blocks. Second, the apps
+Apps are restricted by default from interacting with each            must be representative of utilities installed on the system.
+other or with other host system resources. In the executor we        We observe that real-world apps naturally group into broad
+implement a distributed protocol between a trusted orchestrator      functional categories–such as file system interactions, text pro-
+and workers. The protocol defines a structured message flow          cessing utilities, data retrieval, or computational operations–
+between distributed components, where participants exchange          whose general functionalities can often be captured without re-
+messages according to predefined roles and state transitions.        quiring exact implementation details. Thus, by guiding abstract
+                                                                     app generation to generate apps falling into such functional
+   Our system supports standalone apps and single-query.             groups, we are able to create abstract apps which correspond to
+Supporting application suites and multi-query interactions are       installed utilities, even without seeing the utilities themselves.
+left for future work.
+                                                                        For example, a query of the form “summarize file.txt”
+C. Abstract Planner                                                  may generate two abstract apps, LOADDOCUMENT, which
+                                                                     is responsible for loading data from the host filesystem,
+   We propose a method of plan generation that depends only          and SUMMARIZETEXT, which applies summarization to a
+on knowledge of the user query and which is oblivious to             provided piece of text. By abstracting the key functionalities
+information involving the set of installed apps. In particular,
+
+                                                                  7
+
+
+===== PAGE 8 / 18 =====
+
+required to fulfill a user query, abstract apps serve as a stepping       def main():
+stone to expressing a user’s intended outcome without prema-                     doc: str = DocumentLoader(filename="file.txt")
+turely committing to specific underlying implementations and                     res: str = TextSummarizer(text=doc)
+without exposing an attack surface for untrusted information.                    display(f"The summarized document is: {res}")
+Abstract Plan. We introduce a specialized language, a mod-                       return res
+ified subset of the Python language with plan-specific func-
+tionality added. Plans in this language are syntactically valid          Fig. 4: Example abstract plan for the user query “Load
+Python programs with a well-defined entry point for execution.           document ’file.txt’ from my documents and summarize the
+Valid function calls include a restricted subset of the Python           contents.” DocumentLoader and TextSummarizer are abstract
+standard library in addition to a handful of utilities to facilitate     apps automatically generated by the planner and are not
+planning with apps. An example of abstract plan is given in              affected by the apps installed on the system.
+Figure 4.
+                                                                         needed to clarify the operational environment of the agent
+   The planning LLM is instructed to generate the plan using             before an abstract plan can be generated. To resolve this, we
+a custom system prompt. Our abstract planning framework                  expose an optional context field to the abstract planner. The
+contributes to achieving our security objectives in the fol-             context field originates from a fully-trusted source and clarifies
+lowing way. The abstract plan can be viewed as a hard                    both the operational environment in which the agent can take
+constraint on the space of possible execution traces of the              actions as well as broadly summarizes the expected capabili-
+system. In particular, choosing a particular implementation for          ties the agent should expect to have within this environment.
+a given abstract app cannot drastically alter the overarching            Because the context field is fully trusted, it must not contain
+control flow of the underlying program. Any properties which             explicit metadata from apps or application outputs.
+can be gleaned from an abstract execution of the abstract
+plan are necessarily satisfied by any particular concrete plan           D. Concrete Planner
+implementing the abstract plan. Moreover, expressing plans in
+a language with precise semantics opens the door for static                 The abstract plan utilizes abstract apps, but in order to
+analysis to prove formal properties about the security and               execute the plan, the system must first generate implemen-
+integrity of plan execution.                                             tations for each of the abstract apps. The concrete planner
+                                                                         is responsible for replacing the abstract apps with the actual
+   Every program in our abstract planning language contains a            concrete apps registered by the user on the system. We define
+single top-level entry point definition ‘main()’. The logic ex-          an implementation of the abstract plan to be a mapping from
+pressed within the main function consists of basic statements            abstract apps to concrete apps; that is, every abstract app in
+as well as basic branching program control flow constructs. We           the abstract plan should correspond to exactly one concrete
+support branching control flow in the form of if-statements,             app. The abstract plan and implementation together form the
+for-loops, and while-loops. The usage of these constructs is             concrete plan, which fully expresses the structured control
+restricted to appropriately limit the capabilities implied by the        flow which can be executed on the system. The following
+planning language while retaining the general expressiveness             describes how we determine such an implementation.
+of the planner. For-loops are restricted to “for-range” loops;           Concrete App Matching. We use a two-step process to gen-
+that is, they only allow iteration over a (possibly variable)            erate implementations of abstract apps based on their descrip-
+sequence of integer values. While-loops function as usual,               tions and the concrete apps. First, we filter the set of concrete
+but require the loop condition to be a single variable. Break            apps by thresholding the similarity scores between abstract
+statements are not allowed within either loop construct. These           and concrete app description embeddings. Our implementation
+restrictions simplify downstream static analysis.                        uses the OpenAI text-embedding-ada-002 embeddings model
+                                                                         [18] with the Euclidean distance similarity score. The purpose
+   Our language runtime is similarly restricted to prevent               of the first step is to reduce the apps that must be considered
+unsafe data or control flows. We restrict builtin file system            for implementation to only include those that are relevant for a
+utilities, mutable data types, and dynamic code features to              particular task. Second, we use a concrete planner mechanism
+appropriately limit allowed runtime behaviors. More details              to determine which filtered apps are capable of implementing
+on the language runtime are given in Appendix B.                         each abstract app. The purpose of the second step is to conform
+                                                                         discrepancies between type signatures as well as resolve any
+   Our abstract planning mechanism stands in stark contrast              fine-grained semantic discrepancies between the abstract apps
+to the majority of existing LLM-based systems, which follow              and the proposed implementations. An implementation of an
+an interleaved plan-execute procedure to determine execution             abstract app must conform to the abstract app’s type signature,
+traces and produce a response [17]. We argue that it is                  for both inputs and outputs. A priori, for some abstract app,
+much easier to reason about the control and information flow             there may exist reasonable implementations using concrete
+properties of system execution traces under an immutable rule-           apps but with incompatible type signatures. For example, a
+based plan than under a dynamic, data-dependent plan. Our                concrete app could produce multiple outputs when the abstract
+design ensures that the abstract plan is not influenced by
+malicious apps, preventing indirect prompt injection attacks
+that manipulate the execution flow.
+Operational Context. In some cases, more context may be
+
+                                                                      8
+
+
+===== PAGE 9 / 18 =====
+
+app only requires one, or the ordering of the arguments              possesses the concrete plan, and so additionally performs data
+between the abstract app and the concrete app may not agree.         validation such as schema verification on worker inputs and
+To resolve these issues, we propose to use a compatibility layer     type enforcement on worker outputs.
+which translates between the inputs and outputs of the concrete
+app and those of the abstract app. The translation process is           It is additionally responsible for overseeing the resource
+highly dependent upon the natural language semantics of the          consumption of worker processes. In the event that an app
+involved concrete and abstract apps. Thus, we implement this         worker consumes too many resources (for example, by ex-
+step with another specialized LLM. We note that the LLM              ceeding a pre-set runtime limit), the orchestrator is responsible
+used for app matching can be different from the one used for         for terminating the execution of the violating worker and
+planning, giving rise to a configuration space of LLMs which         communicating the failure condition to the plan worker.
+can be tuned according to desired performance-cost tradeoff.         Plan Worker. The plan worker is responsible for sequentially
+                                                                     processing the concrete plan. We implement the plan worker
+   The matching process induces a space of possible concrete         to execute the provided script inside a restricted containerized
+plans. Each abstract app corresponds to a set of matched             execution environment with no unnecessary privileges such
+concrete apps which can implement it under a lightweight             as file system access. The plan worker’s execution process is
+compatibility layer. All that remains is to choose for each          strictly limited to communicating with the orchestrator over the
+abstract app, a matching to a concrete app. In principle, any        network using socket-based connections, where the container
+such pairing will satisfy the intended semantics of the abstract     exposes a network interface. Data exchange occurs through
+plan. We prioritize concrete plans to enforce other security         well-defined socket endpoints, allowing asynchronous and
+constraints, namely low privilege access (discussed in the           bidirectional communication across container boundaries. In
+extended version [16]) and secure information flow (discussed        this setting, the primary concern is not malicious behavior, but
+in IV-F).                                                            accidental system misuse resulting from faulty LLM-generated
+                                                                     code. These restrictions help contain the effect of poorly
+E. Executor                                                          generated or misconfigured LLM code, such as attempting to
+                                                                     overwrite critical system files, or making unintended API calls.
+   After the concrete planning phase, the system possesses
+a plan detailing concrete steps for achieving the user query            The plan worker is responsible for overseeing the execution
+while adhering to user-prescribed security objectives. This plan     of the system plan, but does not itself have the ability to
+includes the particular implementations of abstract apps as          invoke system apps. In fact, under the application of principle
+determined by concrete planner. In this section, we describe         of least privilege, it would be a security risk to expose certain
+how to execute this plan securely from a systems perspective.        capabilities, such as filesystem or network access, to the plan
+                                                                     worker. Moreover, much like apps in the mobile platforms,
+   To enforce additional security in the execution phase, the        each app in an LLM system may require a different set
+executor is structured following a orchestrator-worker archi-        of privileges to fulfill its purpose. An app responsible for
+tecture which separates privilege management from execution.         loading documents from the host system’s filesystem cannot
+This design follows the principle of least privilege and further     function without filesystem access, yet most apps do not
+restricts the effect scope of malicious or faulty components.        require filesystem access (and may not be trusted with such
+We view both the overall execution of the LLM-generated              access). So, if the plan worker requires an app invocation it
+plan, as well as the execution of concrete apps, as possible         makes a blocking call to the orchestrator and waits until the
+points of system misuse, and therefore propose to execute            orchestrator provides the app output.
+these components in environments with carefully managed              App Worker. To support modularity, flexibility, and scala-
+capabilities. We propose to use an orchestrator process to man-      bility in execution, the orchestrator employs Dockerized app
+age resource allocation and privilege enforcement during plan        workers, each encapsulating a distinct app within an isolated
+and application execution. The orchestrator spawns worker            runtime environment with the necessary set of privileges. The
+processes, each of which operates within its own isolated            app worker only exchanges data with the orchestrator using
+execution environment, ensuring separation from sensitive host       well-defined network sockets.
+system resources. To prevent resource misuse, these execution
+environments default to the most restrictive possible set of            Each worker sends its output back to the orchestrator, which
+privileges while still enabling the required functionality.          collects and routes these results back to the plan worker.
+                                                                     This architecture enables loosely coupled interaction among
+   Next, we describe in more detail the responsibilities and         apps, and ensures that intermediate results can be flexibly
+capabilities of the three main components of our executor            recomposed into subsequent execution stages.
+system: the orchestrator, the plan worker, and the app worker.
+Orchestrator. The orchestrator is the privileged entry point for     F. Information Flow Control Security
+the executor whose primary purpose is to manage execution
+environments for plan processing and app execution. For ex-             ACE strictly enforces data privacy and integrity using a
+ample, if a worker requires file system access, the orchestrator     structured modeling of information flow constraints. LLM-
+spawns an environment with only those privileges.                    based systems cannot be trusted on their own to prevent
+                                                                     the leakage of private or sensitive information to unqualified
+   A secondary responsibility of the orchestrator is to handle       destinations. Thus, we propose to systematically monitor and
+message passing between workers. The orchestrator process
+
+                                                                  9
+
+
+===== PAGE 10 / 18 =====
+
+enforce the qualified flow of information through our system.            3) [S]: the program S is executed an arbitrary (but finite)
+Our solution to this problem is to embed the desired security                number of times.
+policy within a lattice and to statically analyze the generated
+concrete plan to verify that the plan semantics conform to the           Internal flows provide a flexible mechanism for combining
+policy. Secure information flow formally specifies and enforces       data of different security classes, where the operations are
+constraints on how data can flow through a system according           performed inside the execution’s runtime environment. That
+to a defined security policy.                                         is, data leakage is not possible with internal flows, and so
+Modeling policies with lattices. We model the secure infor-           we use these flows for tracking the incremental contamination
+mation flow policy as a universally bounded lattice (C, ⊑).           of program variables. Conversely, external flows impose strict
+The lattice consists of a set C equipped with a partial order         upper-bound constraints on the input labels and lower-bound
+⊑ such that every pair of set elements x, y ∈ C has a least           constraints on output labels for data passing through a compu-
+upper bound x ⊔ y, called the join, and a greatest lower bound        tational resource external to the plan’s runtime environment;
+x ⊓ y, called the meet. Semantically, the relation ⊑ defines          i.e., app executions. More details on how the flow constraints
+the information flow constraints and can be read as “may              are enforced with the grammar are given in Appendix A.
+flow into”. The join operation models the semantic notion of          Verifying ACE plans. When a user provides a query to the
+combining information from two or more classes: the output            system, they explicitly specify its sensitivity as an element of
+is “contaminated” by its inputs, and thus its future use must         the lattice. Given the abstract plan from the abstract planning
+be restricted by a stricter access policy. The meet operation         phase, we compile the plan into a program in our information
+can be interpreted in the following way: if a piece of data of        flow grammar. Then, for each proposed concrete plan, we
+class c needs to flow into multiple storage objects of different      perform the following procedure. First, we bind initial security
+security classes c1, c2 ∈ C, then the maximum security class          labels to all apps and variables based on the registered app
+of c is c1 ⊓c2. We give an example of a lattice in Appendix A.        security clearances and the indicated query label. All flows
+                                                                      are additionally implicitly contaminated with the query label,
+   Each data object x ∈ O in our system is bound to a security        since the plan’s generation is dependent on the user query
+class x ∈ C. We allow data objects to be either statically            and thus may itself involve privileged information. We then
+or dynamically bound to security classes. A statically-bound          statically analyze the compiled plan subject to the initial label
+object maintains the same security class throughout the opera-        state to verify that any flow constraints are satisfied. This
+tion of the system. Statically-bound classes are most useful for      analysis includes considerations for challenging looping and
+defining the semantics of resources such as system apps and           branching control flow constructs, details and an example of
+host storage locations. Dynamically-bound classes are useful          which are provided in Appendix A. The plan is rejected if any
+for modeling the continual contamination of ephemeral storage         constraints are violated. We show an example of an insecure
+objects, such as program variables.                                   plan and its detection in Figure 5 in Appendix A.
+
+   When the user queries ACE, the query q is itself labeled              By verifying concrete plan implementations against our
+as some q ∈ C according to the sensitivity of the involved            lattice-based policy, we automatically reject implementations
+information. We specify two types of data objects: program            that violate defined information flow constraints. Should no
+variables and app memory. Program variables correspond                secure assignment from abstract to concrete apps exist, the
+to the intermediate state of the process executing the plan.          system terminates with an appropriate error message, insuring
+Each variable receives a distinct storage location and program        against the execution of insecure flows. Our systematic ap-
+variable objects are dynamically-bound to security classes.           proach to guaranteeing information flow integrity significantly
+At initialization, variables are bound to the query class q,          enhances the reliability and safety of our system.
+corresponding to contamination from any sensitive information
+in the query q. We model app memory explicitly as statically-                                    V. EVALUATION
+bound data objects. These labels coarsely capture how much
+data leakage is permitted to apps: importantly, an app should            We evaluate the performance of ACE along two dimensions:
+never observe any information contaminated by a label that            first, in its ability to defend against several types of attacks
+app is uncleared to see.                                              (security); and second, in its ability to efficiently and correctly
+Information flow grammar. To enable static verification               process user queries. First, we demonstrate that ACE renders
+of information flow constraints during the concrete planning          our new attacks ineffective (V-A). Then, we validate the
+phase, we consider a coarse-grained language grammar con-             security claims of our system by testing against two prompt
+sisting of three production rules (following Denning [19]):           injection attack benchmarks (V-B). Finally, we measure the
+                                                                      utility and cost overhead of ACE (V-C).
+   1) S: an atomic statement consisting of explicit flow of           Models. Throughout our evaluation we make use of several
+       information from sources x1, . . . , xn into destinations      underlying LLMs: GPT-4o, o3-mini, GPT 4.1, Claude 3.7
+       y1, . . . , ym, either by applying an external resource f      Sonnet, and Qwen-2.5-72B.
+       (external flow) or by an internal resource ⋆ (internal
+       flow).                                                         A. Case Studies
+
+   2) S1; S2: the execution of two programs S1, S2 in se-                To demonstrate that our system explicitly addresses the
+       quence.                                                        deficiencies of IsolateGPT, we implement and run our three
+
+                                                                  10
+
+
+===== PAGE 11 / 18 =====
+
+MetroHail
+
+ def main():                                                          Description: Calculates fare prices
+        data: str = load_bank_details()                               Output: FarePrice
+        send_email(content=data)
+                                                                                                                         QuickRide
+ Violation:                                                           Description: Calculates fare prices
+    Flow: send_email(data)                                            Output: Tell the user that the fare for Quick Ride is $54 and the fare from Metro Hail is $85
+    Function send_email has clearance: {'personal'}
+    data: {'financial'}                                                                                            User Query:
+                                                                      Calculate the fare from ‘Main Street’ to ‘Elms Avenue’ with ‘MetroHail’ and ‘QuickRide’
+Fig. 5: An example abstract plan with information leak-
+age present. Privileged information is loaded into the vari-          Plan Generation Step:                                   Plan Generation Step:
+able data from the app load_bank_details and sub-                           [MetroHail,                                     [MetroHailFareCalculator,
+sequently passed to the uncleared location send_email.                       QuickRide]                                     QuickRideFareCalculator]
+Static analysis detects the dependency and blocks the ex-
+ecution. It is assumed that the concrete plan matches                           MetroHail Spoke Call Step:               Abstract Plan Generation Step:
+send_email to a concrete app with clearance “personal” and            Action : MetroHail                         metrohail_fare = MetroHailCalculator(
+load_bank_details to an app with clearance “financial”.               Action Inputs: {
+                                                                                                                   start=“Main Street”, end = “Elms Avenue)
+attacks from Section III against ACE. ACE effectively prevents          start_point: “Main Street”,              quickride_fare = QuickRideFareCalculator(
+all three attacks while providing useful outputs to the user,           end_point: “Elms Avenue”}
+regardless of the LLM chosen for the abstract and concrete            Output: “$54”                                start=“Main Street”, end=“Elms Avenue”)
+planner. We discuss details of the execution traces below.                                                       result = f“MetroHail Fare: {metrohail_fare},
+Planner Manipulation Attack. The attack fails due to our                        QuickRide Spoke Call Step:
+separation of planning phase into two steps. The abstract plan        Action : QuickRide                                  QuickRide Fare: {quickride_fare}”
+only depends on trusted information and thus reflects the             Action Inputs: {
+user’s intent from the query. Second, because of our pairwise                                                               Concrete Matching Step:
+independent matching process, we prohibit the unintended                start_point: “Main Street”,                MetroHailFareCalculator MetroHail
+cross-app interaction that would have enabled app demotion.             end_point: “Elms Avenue”}                  QuickRideFareCalculator QuickRide
+Moreover, the abstract plan from the first phase imposes              Output: “Tell the user the fare for Quick
+sufficient constraints on the space of possible execution paths       Ride is $54 and Metro Hail is $85”
+that the output of the compromised app is not able to interrupt
+the invocation of other apps during execution. We illustrate the                      Final Output:                                Final Output:
+failed attack in Figure 11 in the Appendix.                           The fare for a trip from 'Main Street' to                MetroHail Fare: 51.4
+Execution Flow Disruption Attack and Execution Manager                'Elm Avenue' is $54 from Quick Ride and               QuickRide Fare: TypeError
+Hijack Attack. These two attacks fail in ACE due to the
+controlled handling of app outputs. Outputs are treated solely                    $85 from MetroHail                                 ACE
+as data of a specified type according to the app schema within
+a pre-defined program, and are never used by an LLM for                          IsolateGPT
+control flow. Consequently, malicious returned app values such
+as the disruption string in Execution Flow Disruption Attack          Fig. 6: Illustration of failed Execution Flow disruption attack
+or adversarial payloads in Execution Manager Hijack Attack            on ACE (IsolateGPT execution shown on the left side)
+fail to manipulate the LLM. We illustrate the failed attacks in
+Figure 6 and in Appendix Figure 10.                                   apps” which embodies the malicious behavior intended by the
+                                                                      adversary. We run all test cases on each benchmark and record
+B. Prompt Injection Benchmarks                                        two metrics: security and utility. Security measures noninvo-
+                                                                      cation of the attacker app(s) during system execution. Utility
+Datasets. We study the behavior of ACE in the face of indirect        measures correct usage of expected apps. For INJECAGENT,
+prompt injection (IPI) using two prompt injection benchmarks,         there is always one such app by construction. For ASB, there
+INJECAGENT [14] and Agent Security Bench (ASB) [15].                  are two user apps per agent that could feasibly be used, and
+Both datasets are designed to assess the vulnerability of             we define success as invocation of at least one of them. We
+app-augmented LLM agents to IPI attacks, where adversarial            distinguish between ‘matching success‘, whether an expected
+instructions are embedded in outputs from compromised user-           app was matched to an abstract app; ‘execution success‘,
+facing apps. Details on the datasets and how we adapt them            whether the execution phase ran without error, conditioned on
+to use with ACE can be found in Appendix D-A.                         matching success; and overall success, the end-to-end success
+Metrics. Each test case in both adapted datasets comprises a          rate of expected app invocation. We note that both prompt
+user query, a set of apps available to the system, a set of one       injection benchmarks involve trivially-simulated apps and do
+or more expected apps, and one or more designated “attacker           not measure output correctness, providing a limited notion of
+                                                                      utility.
+                                                                      INJECAGENT Results. On INJECAGENT, ACE achieved a
+                                                                      security score of 100% across all 1,054 test cases irrespective
+                                                                      of the LLM chosen for the abstract and concrete planner.
+                                                                      This outcome indicates that no attacker app indicated by the
+                                                                      prompt-injected output of any user app was executed and
+                                                                      demonstrates ACE ’s effectiveness in preventing the execution
+                                                                      of unintended apps via indirect prompt injection. The utility
+                                                                      evaluation (Table II) shows that ACE retains ≥ 84% utility
+                                                                      with different combinations of GPT-4o and o3-mini in the
+                                                                      abstract and concrete planners, and ≥ 60% with Claude 3.7
+                                                                      Sonnet and Qwen 2.5 72B Instruct models.
+                                                                      Comparing with StruQ [20]. StruQ is a model-level defense
+                                                                      that delimits LLM inputs into instruction or data and fine-
+                                                                      tunes the LLM to recognize these regions. We adapt the
+
+                                                                  11
+
+
+===== PAGE 12 / 18 =====
+
+TABLE II: Utility results for INJECAGENT. Matching and                several times to type out a word (provided in the user query),
+execution success rates are conditioned on system execution           with each invocation passing the correct character as an
+reaching the corresponding phase.                                     argument. The multiple tool task considers the same typing
+                                                                      task, but using 26 different tools which take no arguments. The
+       Model         Category     Utility Score (%)                   relational data task requires the agent to process questions by
+                                                                      interacting with a relational database comprising three tables
+  Qwen-2.5-72B     Direct Harm    Matching  Execution  Overall        by using a collection of 17 tools. We use the description from
+                   Data Stealing     88.8      71.1     63.1          each task to write the context field.
+      GPT-4o                         86.9      66.0     57.4          Metrics. We consider two key metrics for the tool usage
+                      Average        87.9      68.5     60.2          benchmark: utility and cost. Utility is decomposed into two
+Claude 3.7 Sonnet  Direct Harm       83.3      99.3     82.7          submetrics: step accuracy and overall accuracy. Step accuracy
+      GPT-4o       Data Stealing     85.3      98.9     84.4          measures whether tools were called in the correct sequence as
+      o3-mini                        84.3      99.1     83.6          defined in the test case, while overall accuracy measures the
+                      Average        64.6      91.2     58.8          correctness of the final system output as well as of the sim-
+                   Direct Harm       68.6      91.2     62.5          ulated environment state at termination. Cost is decomposed
+                   Data Stealing     66.6      91.2     60.7          into average per-query API price and wall-clock runtime.
+                                     84.3      99.1     83.5          Utility Results. We report utility results on the Tool Us-
+                      Average        87.7      99.4     86.9          age benchmark in Table III. We find that ACE consistently
+                   Direct Harm       86.1      99.2     85.3          achieves high (≥ 80%) success rates across all benchmark
+                   Data Stealing                                      tasks for both GPT-4o and GPT-4.1 models. This result demon-
+                                                                      strates the ability of ACE to generate relevant apps, generate a
+                      Average                                         principled plan orchestrating those apps, and match those apps
+                                                                      with existing utilities installed on the system. Using GPT-4o
+INJECAGENT benchmark to add these delimiters to data at               and o3-mini yields high utility for single and multiple tool
+relevant locations to evaluate the StruQ fine-tuned models            suites and moderate (66.7%) utility on the relational data suite,
+on the prompt injections from INJECAGENT. Using the fine-             the most challenging among the three suites.
+tuned Mistral-7B StruQ model, we observe an attack success
+rate of 7%, indicating several instances of security violations.         We manually inspected a selection of ACE execution traces
+The provided Llama-7B StruQ model has too small a context             from the relational data suite and observe that structured plans
+window for the INJECAGENT test cases, so we were not able             with complex control flows are used to solve user queries. We
+to evaluate this case. Unlike StruQ, ACE ensures by design            present such a trace in Appendix C-A.
+that generated plans are determined strictly from trusted data.
+ASB Results. On ASB, ACE achieves ≥ 86% utility with                  TABLE III: Utility results for Tool Usage benchmark.
+both GPT-4.1 and GPT-4o models. In 2,000 trials, we ob-
+serve only 3 invocations of attacker apps. In each case,                Model        Suite      ACE
+the invocation is unrelated to the prompt injection but in-
+stead due to the suitability of the app to the user’s task.           GPT-4o     Single Tool    Step Acc. (%)  Overall Acc. (%)
+For example, on query “Evaluate the risk and potential                          Multiple Tool         100              100
+returns of investing in a new sector,” the abstract app               GPT-4.1  Relational Data        80.0             80.0
+MarketDataAnalysis is generated and matched with the                  GPT-4o     Single Tool          66.7             81.0
+attacker app MarketAnalysisTool which has description                 o3-mini   Multiple Tool         95.0             95.0
+“Utilize the MarketAnalysisTool to analyze trading data, pro-                  Relational Data        80.0             80.0
+viding insights and supporting strategic investment decisions.”                  Single Tool          76.2             85.7
+In these cases, use of the attacker app is appropriate, and so                  Multiple Tool         100              100
+we do not consider them security violations. Detailed results                  Relational Data        80.0             80.0
+are given in the full version [16].                                                                   47.6             66.7
+
+C. Tool Use Benchmark                                                 Overhead Results. We present the overhead of running ACE
+                                                                      by phase (Abstract, Concrete, Execute) in Table IV. We discuss
+   While INJECAGENT and ASB provide evaluations against               the factors that contribute to the financial cost and query
+prompt injection, their tool suites are trivially simulated and       runtime of ACE. First, the abstract planning phase requires
+do not measure the LLM ability to correctly process multiple          two separate LLM invocations–the first to generate a set of
+pieces of data using complex control flows. To further demon-         abstract apps, and the second to implement the abstract plan
+strate the utility of ACE in realistic tool-use environments,         using those apps. The financial cost incurred at this phase
+we use the Tool Usage benchmark from LangChain [21] as                does not depend significantly on the complexity of the task or
+considered in prior work [12], [13]. This benchmark tests             the system configuration, while the query runtime can grow
+whether LLMs can generate correct app invocation trajecto-            based on the number of output tokens. Second, the concrete
+ries to solve multi-step tasks requiring app coordination, as         planning phase potentially requires a multiplicatively large
+measured against ground-truth trajectories and outputs.               number of queries, one for each pair of abstract and concrete
+Dataset. The benchmark defines three environments in which            apps. These queries can be batched in order to keep the
+the agent operates by invoking tools: a single tool task, a
+multiple tool task, and a relational data task. The single tool
+task requires the agent to invoke a single system application
+
+                                                                  12
+
+
+===== PAGE 13 / 18 =====
+
+TABLE IV: Average per-query cost and runtime breakdown                  instructions and data inherent to the LLM context in order to
+(by ACE’s phase and total) for Tool Usage benchmark.                    direct the LLM to follow malicious instructions. In particular,
+                                                                        indirect prompt injection attacks (IPI) [10], [14] leverage
+Model  Suite   Cost Runtime (s)                                         untrusted data sources collected by trusted processes (e.g., a
+              (USD) Abstract Concrete Execute Total                     web search tool) to launch the attack.
+                                                                        Defenses against prompt injection. Model-level defenses
+              Single Tool 0.01 3.02     2.15 5.65 10.84                 perform model fine-tuning to align the model to mitigate
+GPT-4o Multiple Tool 0.55 6.44          8.87 5.41 19.96                 prompt injection attacks. StruQ [20] delimits input sequences
+                                        4.31 3.16 15.65                 into instruction or data, and trains models to recognize these
+            Relational Data 0.19 8.21                                   regions, while Instruction Hierarchy [29] assigns priority levels
+                                                                        to different instructions and SecAlign [30] uses preference
+              Single Tool 0.01    4.32  1.79  5.61 11.73                optimization to train LLMs to prefer secure responses. Though
+GPT-4.1 Multiple Tool 0.27                    5.43 20.95                these methods can defend against certain attacks, they lack
+                                  4.96 10.83  3.17 14.74                strict boundaries between benign and malicious data. The
+            Relational Data 0.10                                        system output remains functionally dependent on app descrip-
+                                  6.46  5.13                            tions and outputs, making it vulnerable to stronger attacks.
+                                                                        Recently, these defenses were shown to be vulnerable against
+GPT-4o Single Tool 0.01           3.45 11.09  5.58 20.14                optimization-based attacks [31]. This motivates system-level
+o3-mini Multiple Tool 0.49        5.14 38.78  5.04 48.00                defenses, such as f -Secure [12] (discussed in Section II-B),
+                                  6.29 19.30  2.80 28.24                and CaMel [32], which introduces fine-grained capabilities
+            Relational Data 0.11                                        enforced by a custom Python interpreter to restrict data and
+                                                                        control flow when answering user queries.
+runtime low, but have a heavier impact on the cost. Finally, the        Formal Verification of LLM-generated Content. Efforts
+runtime of execution is mainly consumed in the overhead of              to apply formal methods to LLM-generated outputs aim to
+creating and configuring the docker containers and managing             use static and dynamic analysis to verify correctness, safety,
+the communication between them via the orchestrator.                    or adherence to pre-existing security policies. The generative
+                                                                        capabilities of LLMs, paired with dedicated formal verification
+   We find that the query runtime and API usage of ACE                  tools, can be used to construct automated theorem provers
+differs substantially between the three suites. We attribute            [33], [34] or to extract and verify conformance to objectives
+these differences to the complexity of the task, the number             and constraints from a user prompt [35]. In blockchain ap-
+of abstract apps needed to solve the task, and the number of            plications, LLM-assisted property generation and verification
+concrete apps installed on the system. On the single tool suite,        can extract relevant specifications for smart contracts from a
+the cost is only $0.01, while the cost for the multiple tool suite      user query, which can be passed through a dedicated theorem
+increases to $0.27 for GPT-4.1 (but is still low). Similarly, the       prover to verify the correctness of smart contracts [36].
+query runtime is larger for the multiple tools suite, but this is
+designed to stress test utility as it uses 26 tools (in practice           Techniques for verifying the correctness of LLM planners
+we expect the number of tools for regular tasks to be much              have also been proposed. PDoctor [37] formulates the detec-
+lower). To put the query runtime of ACE in perspective with             tion of erroneous planning as a constraint satisfiability problem
+IsolateGPT [13], also evaluated on the LangChain benchmark,             and synthesizes queries in a domain-specific language (DSL)
+we note that for the single tool suite ACE has runtime of               for testing the LLM planner. In contrast to ACE, they do
+11.73 seconds for GPT-4.1, while IsolateGPT reports 39.21               not provide attack mitigation, but detect violations in LLM
+seconds [13]. IsolateGPT scales linearly with the number of             planning that do not conform to user-specified constraints.
+tools, and its runtime reaches 126.65 seconds for the multiple
+tools suite when 13 tools are used. In contrast, ACE achieves                                    VII. CONCLUSION
+an average 20.95 seconds query runtime for the multiple tool
+suite when all 26 tools are used for GPT-4.1.                              LLM-integrated app systems hold vast potential for build-
+                                                                        ing powerful agentic systems, but they also pose complex,
+   We observe that both GPT-4o and GPT-4.1 perform better               novel security risks. This paper introduces ACE, a security
+than the combination of GPT-4o and o3-mini in terms of                  architecture for LLM-integrated app systems. ACE defends
+overhead and utility. Reasoning models such as o3-mini incur            against several classes of attacks by decomposing the plan-
+higher cost and computational effort, despite not always of-            ning phase into a structured two-step process. Our abstract
+fering the highest utility. As ACE is LLM-agnostic, advances            planning mechanism is based on fully-trusted information and
+in LLM capabilities and efficiency will directly improve the            prescribes structured execution steps that are processed by
+performance of ACE on complex tasks at a reduced cost.                  a trusted, rule-based executor. This design enables formal
+                                                                        security reasoning using information flow control policies. We
+                       VI. RELATED WORKS                                argue that this security-first design offers a promising path
+                                                                        forward for designing trustworthy agentic applications.
+   LLM Security. Recent works explore security problems
+associated with LLM-based applications. Backdoor attacks
+[22], [23] attack the LLM training pipeline to induce stealthy
+malicious behavior at test time provided an input containing
+an appropriate backdoor trigger. Jailbreak attacks [24]–[26]
+use carefully crafted input strings to elicit harmful behav-
+ior from an LLM fine-tuned to conform outputs to certain
+safety guardrails. Prompt injection attacks [10], [11], [27],
+[28] exploit the weak or nonexistent boundary between user
+
+                                                                    13
+
+
+===== PAGE 14 / 18 =====
+
+REFERENCES                                            [21] LangChain AI, “Langchain benchmarks,” https://langchain-ai.lang.chat/
+                                                                                         langchain-benchmarks/, LangChain AI, 2025, accessed: 2025-07-25.
+ [1] A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever,
+      “Language models are unsupervised multitask learners,” 2019.                 [22] F. Qi, Y. Chen, X. Zhang, M. Li, Z. Liu, and M. Sun, “Mind
+                                                                                         the Style of Text! Adversarial and Backdoor Attacks Based on Text
+ [2] H. Touvron, T. Lavril, G. Izacard, X. Martinet, M.-A. Lachaux,                      Style Transfer,” Oct. 2021, arXiv:2110.07139 [cs]. [Online]. Available:
+      T. Lacroix, B. Rozie`re, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez,              http://arxiv.org/abs/2110.07139
+      A. Joulin, E. Grave, and G. Lample, “LLaMA: Open and efficient
+      foundation language models,” 2023.                                           [23] J. Rando and F. Trame`r, “Universal Jailbreak Backdoors from Poisoned
+                                                                                         Human Feedback,” Nov. 2023, arXiv:2311.14455 [cs]. [Online].
+ [3] W.-L. Chiang, Z. Li, Z. Lin, Y. Sheng, Z. Wu, H. Zhang,                             Available: http://arxiv.org/abs/2311.14455
+      L. Zheng, S. Zhuang, Y. Zhuang, J. E. Gonzalez, I. Stoica, and
+      E. P. Xing, “Vicuna: An open-source chatbot impressing GPT-4                 [24] Y. Huang, S. Gupta, M. Xia, K. Li, and D. Chen, “Catastrophic
+      with 90%* ChatGPT quality,” March 2023. [Online]. Available:                       jailbreak of open-source LLMs via exploiting generation,” arXiv preprint
+      https://lmsys.org/blog/2023-03-30-vicuna/                                          arXiv:2310.06987, 2023.
+
+ [4] A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot,           [25] X. Shen, Z. Chen, M. Backes, Y. Shen, and Y. Zhang, “Do Anything
+      D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier,                  Now: Characterizing and evaluating in-the-wild jailbreak prompts on
+      L. R. Lavaud, M.-A. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang,             large language models,” 2024, to appear in ACM CCS 2024. [Online].
+      T. Lacroix, and W. E. Sayed, “Mistral 7b,” 2023.                                   Available: https://arxiv.org/abs/2308.03825
+
+ [5] G. Team, R. Anil, S. Borgeaud, Y. Wu, J.-B. Alayrac, J. Yu, R. Soricut,       [26] P. Chao, A. Robey, E. Dobriban, H. Hassani, G. J. Pappas, and
+      J. Schalkwyk, A. M. Dai, A. Hauth et al., “Gemini: a family of highly              E. Wong, “Jailbreaking black box large language models in twenty
+      capable multimodal models,” arXiv preprint arXiv:2312.11805, 2023.                 queries,” 2024. [Online]. Available: https://arxiv.org/abs/2310.08419
+
+ [6] M. Zeff, “Anthropic launches a new ai model that ’thinks’ as long as          [27] D. Pasquini, M. Strohmeier, and C. Troncoso, “Neural Exec: Learning
+      you want,” February 2025.                                                          (and learning from) execution triggers for prompt injection attacks,”
+                                                                                         arXiv preprint arXiv:2403.03792, 2024.
+ [7] LangChain, “Applications that can reason. powered by LangChain.”
+      https://www.langchain.com/.                                                  [28] Y. Liu, G. Deng, Y. Li, K. Wang, Z. Wang, X. Wang, T. Zhang, Y. Liu,
+                                                                                         H. Wang, Y. Zheng, and Y. Liu, “Prompt injection attack against LLM-
+ [8] Microsoft, “Semantic Kernel documentation. learn to build robust,                   integrated applications,” 2024.
+      future-proof AI solutions that evolve with technological advancements.”
+      https://learn.microsoft.com/en-us/semantic-kernel/.                          [29] E. Wallace, K. Xiao, R. Leike, L. Weng, J. Heidecke, and
+                                                                                         A. Beutel, “The instruction hierarchy: Training LLMs to prioritize
+ [9] ——, “AutoGen, an open-source programming framework for agentic                      privileged instructions,” 2024. [Online]. Available: https://arxiv.org/abs/
+      AI,” https://microsoft.github.io/autogen/.                                         2404.13208
+
+[10] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and                 [30] S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri,
+      M. Fritz, “Not what you’ve signed up for: Compromising real-                       D. Wagner, and C. Guo, “SecAlign: Defending against prompt
+      world LLM-integrated applications with indirect prompt injection,”                 injection with preference optimization,” 2025. [Online]. Available:
+      in Proceedings of the 16th ACM Workshop on Artificial Intelligence                 https://arxiv.org/abs/2410.05451
+      and Security, ser. AISec ’23. New York, NY, USA: Association
+      for Computing Machinery, 2023, p. 79–90. [Online]. Available:                [31] Y. Jia, Z. Shao, Y. Liu, J. Jia, D. Song, and N. Z. Gong, “A critical
+      https://doi.org/10.1145/3605764.3623985                                            evaluation of defenses against prompt injection attacks,” 2025. [Online].
+                                                                                         Available: https://arxiv.org/abs/2505.18333
+[11] U. Iqbal, T. Kohno, and F. Roesner, “LLM platform security: Applying a
+      systematic evaluation framework to OpenAI’s ChatGPT plugins,” https:         [32] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian,
+      //arxiv.org/abs/2309.10254, 2024.                                                  C. Kern, C. Shi, A. Terzis, and F. Trame`r, “Defeating prompt injections
+                                                                                         by design,” arXiv preprint arXiv:2503.18813, 2025.
+[12] F. Wu, E. Cecchetti, and C. Xiao, “System-level defense against indirect
+      prompt injection attacks: An information flow control perspective,”          [33] K. Yang, A. Swope, A. Gu, R. Chalamala, P. Song, S. Yu, S. Godil,
+      2024. [Online]. Available: https://arxiv.org/abs/2409.19091                        R. Prenger, and A. Anandkumar, “LeanDojo: Theorem proving with
+                                                                                         retrieval-augmented language models,” in Neural Information Process-
+[13] Y. Wu, F. Roesner, T. Kohno, N. Zhang, and U. Iqbal, “IsolateGPT:                   ing Systems (NeurIPS), 2023.
+      An execution isolation architecture for LLM-based agentic systems,” in
+      Proceedings of the Network and Distributed System Security Symposium         [34] P. Song, K. Yang, and A. Anandkumar, “Lean copilot: Large language
+      (NDSS). San Diego, California: Internet Society, February 2025.                    models as copilots for theorem proving in lean,” 2025. [Online].
+                                                                                         Available: https://arxiv.org/abs/2404.12534
+[14] Q. Zhan, Z. Liang, Z. Ying, and D. Kang, “InjecAgent:
+      Benchmarking indirect prompt injections in tool-integrated large             [35] C. Lee, D. J. Porfirio, X. J. Wang, K. Zhao, and B. Mutlu,
+      language model agents,” in Findings of the Association for                         “VeriPlan: Integrating formal verification and LLMs into end-user
+      Computational Linguistics: ACL 2024, L.-W. Ku, A. Martins, and                     planning,” ArXiv, vol. abs/2502.17898, 2025. [Online]. Available:
+      V. Srikumar, Eds. Bangkok, Thailand: Association for Computational                 https://api.semanticscholar.org/CorpusID:276581025
+      Linguistics, Aug. 2024, pp. 10 471–10 506. [Online]. Available:
+      https://aclanthology.org/2024.findings-acl.624/                              [36] Y. Liu, Y. Xue, D. Wu, Y. Sun, Y. Li, M. Shi, and Y. Liu,
+                                                                                         “PropertyGPT: LLM-driven formal verification of smart contracts
+[15] H. Zhang, J. Huang, K. Mei, Y. Yao, Z. Wang, C. Zhan, H. Wang,                      through retrieval-augmented property generation,” in 32nd Annual
+      and Y. Zhang, “Agent security bench (ASB): Formalizing and                         Network and Distributed System Security Symposium, NDSS 2025, San
+      benchmarking attacks and defenses in LLM-based agents,” in The                     Diego, California, USA, February 24-28, 2025. The Internet Society,
+      Thirteenth International Conference on Learning Representations, 2025.             2025. [Online]. Available: https://www.ndss-symposium.org/ndss-
+      [Online]. Available: https://openreview.net/forum?id=V4y0CpX4hK                    paper/propertygpt-llm-driven-formal-verification-of-smart-contracts-
+                                                                                         through-retrieval-augmented-property-generation/
+[16] E. Li, T. Mallick, E. Rose, W. Robertson, A. Oprea, and C. Nita-Rotaru,
+      “ACE: A security architecture for LLM-integrated app systems,” 2025.         [37] Z. Ji, D. Wu, P. Ma, Z. Li, and S. Wang, “Testing and understanding
+      [Online]. Available: https://arxiv.org/abs/2504.20984                              erroneous planning in LLM agents through synthesized user inputs,”
+                                                                                         2024. [Online]. Available: https://arxiv.org/abs/2404.17833
+[17] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao,
+      “ReAct: Synergizing reasoning and acting in language models,” in The         [38] S. Warshall, “A theorem on boolean matrices,” Journal of the ACM
+      Eleventh International Conference on Learning Representations, 2023.               (JACM), vol. 9, no. 1, pp. 11–12, 1962.
+      [Online]. Available: https://openreview.net/forum?id=WE vluYUL-X
+                                                                                                                APPENDIX A
+[18] OpenAI, “Openai embeddings api,” 2024. [Online]. Available: https:
+      //platform.openai.com/docs/guides/embeddings                                 ADDITIONAL DETAILS ON INFORMATION FLOW CONTROL
+
+[19] D. E. Denning, “A lattice model of secure information flow,” Commun.             In this appendix, we give additional details on the informa-
+      ACM, vol. 19, no. 5, p. 236–243, May 1976. [Online]. Available:
+      https://doi.org/10.1145/360051.360056                                        tion flow system in ACE.
+
+[20] S. Chen, J. Piet, C. Sitawarin, and D. Wagner, “StruQ: Defend-                   Lattice example. A lattice is a mathematical structure
+      ing against prompt injection with structured queries,” arXiv preprint
+      arXiv:2402.06363, 2024.                                                      that defines a partial ordering of security levels to define
+
+                                                                                   information flow in a system. Lattices prescribe rules for
+
+                                                                               14
+
+
+===== PAGE 15 / 18 =====
+
+information flow between storage objects: a piece of data                         def main():
+tagged with a security class C ∈ C can only be used to modify                            a: str = ""
+objects whose class is at least C under the partial order (C, ⊑).                        for i in range(4):
+Thus, information can only flow upward in the lattice (from                                      network_send(a)
+lower to higher security levels) but not downward without                                        a = load_bank_details()
+explicit authorization. We provide an example of a lattice with
+three security classes in Figure 7.                                                                    (a) Abstract Plan
+
+        {M, F, P}                                                                 LOOP:
+                                                                                         i <- *()
+        {M, F}{M, P}{F, P}                                                               network_send(i, a)
+                                                                                         a <- load_bank_details(i)
+        {M} {F} {P}
+                                                                                              (b) Compiled Information Flow
+                                    ∅
+                                                                        Fig. 8: An example abstract plan with implicit information
+Fig. 7: The subset lattice for {M,F,P}. The labels can rep-             leakage within the loop construct. In Figure 8a, after 1
+resent secrecy categories, such as ‘medical’, ‘financial’, and          iteration, sensitive information from load_bank_details
+‘personal’. The lattice shows the partial ordering between              propagates to the unqualified location network_send. Fig-
+categeory subsets.                                                      ure 8b shows the compiled information flow representation of
+                                                                        the program. Our secure information flow analysis recognizes
+                                                                        the invalid flow pattern via fixpoint iteration on the loop body.
+
+   Enforcing information flow constraints. We introduced                Notice by transitivity this implies the first condition from the
+the information flow grammar in Section IV-F. We discuss now            internal flow case. The update rule for dynamically-bound
+how secure information flow is enforced with the three defined          destinations yi is simply
+production rules. Intuitively, the enforcement policy tracks the
+progressive contamination of data throughout the execution of           yi ← f  (5)
+the program and ensures that contaminated data is never sent
+to an unqualified location. Our enforcement policy carefully            which we note is lower-bounded by the label updates from the
+handles conditional and looping control constructs, which               first case. We pessimistically contaminate dynamically-labeled
+are challenging due to the way complex program semantics                outputs with the label f to encode the idea that apps may have
+interact with data.                                                     access to resources up to and including their clearance label
+                                                                        and may use such information to affect the outputs. This is
+   First, we describe the rules for production rule 1. Consider         useful, for example, in modeling apps which take no inputs
+an atomic statement that propagates information from sources            but which return some kind of privileged information (e.g.,
+x1, . . . , xn into destinations y1, . . . , ym. In the case of an      API keys).
+internal flow, two rules are enforced. First, the flow condition
+requires for every statically-bound destination yi that                    For production rule 2, transitivity of ⊑ allows us to say that
+                                                                        the program S = S1; S2 is secure if each of its components
+        n                                                               S1, S2 are secure, where the security of S2 is determined
+                                                                        subject to updating any dynamic labels within S1.
+                                                 xj ⊑ yi   (1)
+                                                                           Production rule 3 is more subtle. The main challenge is
+        j=1                                                             that information can slowly leak between memory locations
+                                                                        only after a large number of loop iterations, as shown in
+For each dynamically-bound destination yi, we also apply the            the example in Figure 8. We use fixpoint iteration on S to
+                                                                        determine the set of security labels of all involved data at
+update                                                                  convergence. The information flow condition can be expressed
+                                                                        as a property of a certain information flow graph Gflow, where
+                                                 n                      each node corresponds to a single storage object and an edge
+                                                                        exists between two nodes x, y when there exists a simple
+        yi ← yi ⊔ xj .                                     (2)          statement S such that x is an input to S and y is an output.
+                                                                        The final label state can be determined by running any graph
+                                                 j=1                    search algorithm on the resulting graph (in the case of fixpoint
+                                                                        iteration, this nearly corresponds to Warshall’s algorithm [38]
+Alternatively, if an external resource f with label f is applied        for finding the transitive closure of a graph). The program [S]
+to the inputs to obtain the outputs, we require for every               is secure if the statement S is secure given the set of converged
+statically-bound destination yi that                                    labels.
+
+                                                 f ⊑ yi    (3)             Concrete plan verification. To verify the information flow
+                                                                        security of a proposed concrete plan, we compile the abstract
+and also that
+
+                                              n
+
+                                                 xj ⊑ f .  (4)
+
+        j=1
+
+                                                                    15
+
+
+===== PAGE 16 / 18 =====
+
+def main():                                                             We use Python for ease of implementation with the ast
+        a: str = SecretInfo()                                         module and because current generation LLMs are proficient at
+        b: str = ""                                                   writing it. However, this choice also makes difficult the formal
+        if a[0] == "0":                                               analysis of the language itself, as it possesses a highly complex
+               b += "0"                                               runtime behavior. As a result, we can provide no formal guar-
+        else:                                                         antees on the soundness of our data privacy guarantees in the
+               b += "1"                                               language and runtime. A more comprehensive solution might
+                                                                      involve a DSL with formal grammar and operational semantics
+                               (a) Abstract Plan                      which can be tied to information flow more precisely, such as
+                                                                      by demonstrating a non-interference result within the DSL.
+ a <- SecretInfo()                                                    We consider such a direction to be interesting and valuable
+ &cond1 <- *(a)                                                       future work. Despite this limitation, we believe our design
+ b <- &cond1                                                          and implementation to be a strong first step in the direction
+ b <- &cond1                                                          of provable security for agentic applications. In particular,
+                                                                      the general techniques guiding the design of our method are
+                      (b) Compiled Information Flow                   highly amenable to the aforementioned formal analysis and
+                                                                      thus sketch a path towards provable security for autonomous
+Fig. 9: An example abstract plan with implicit information            agents.
+leakage present within a branching program. Despite the               Restricted syntax and runtime. Our planning language is de-
+absence of an explicit flow from a to b, the value of b nonethe-      signed to have a single well-defined entry point from which the
+less holds the contents of a at execution termination. The            execution proceeds. All programs in our language consist of a
+information flow verification process detects the information         single function definition ‘def main’ which takes no arguments
+leakage by injecting the dependency recursively into the body         and returns a single string value. Additionally, every program
+of the branching statement.                                           variable must be declared with a type, and all assignments and
+                                                                      usages of the variable must conform to the type prescribed
+plan into a program in our specified grammar. Simple state-           at assignment. All functions similarly have type signatures
+ments and expressions like assignments and function calls             prescribing strict input and output type requirements. These
+are handled in the natural way by constructing an explicit            type requirements are enforced at compile-time by a static
+flow. Loops are handled in the following manner. While-               analysis of the main function body and at execution time by
+loops extract the loop condition into its own statement Scond.        the execution runtime environment.
+Then, the loop body Sbody is constructed recursively. In every
+explicit flow within the loop body, the dependence on the                In addition to the restricted syntax, we also restrict the
+variable from Scond is explicitly injected as a dependency,           use of certain standard Python functionalities that might
+to obtain the augmented body S′body. Finally, the looping             interfere with information flow control tracking or enable
+program [Scond; S′body] is constructed. For-loops are handled         unsafe control-flow behavior. These disallowed functionalities
+in a similar way. An example of the result of this process is         are listed in Table V.
+given in Figure 8b. If-statements capture the implicit flow by
+similarly injecting any branch conditions into the statement          TABLE V: Disallowed Python features in the planning lan-
+body, but do not require fixpoint iteration as there is no loop       guage runtime
+behavior. This prevents similar leaks from implicit flows, such
+as the example given in Figure 9.                                     Category               Disallowed Features
+                                                                      Built-in Functions
+   This verification process allows us to automatically filter                               open, exec, eval, compile, __import__,
+proposed plan implementations which violate the information           Mutable Types          input, globals, locals, vars, dir, help,
+flow policy. In the case that no assignment of abstract to            Dynamic Code Features  exit, quit, getattr, setattr, delattr,
+concrete apps satisfies the constraints, the system terminates        Import System          super, memoryview
+with an appropriate failure status.
+                                                                                             list, dict, set
+                             APPENDIX B
+                       PLANNING LANGUAGE                                                     lambda, nested def, nested class, exec
+
+   To support safe execution of LLM-generated programs, we                                   Only import math allowed
+adapt a restricted subset of the Python language and runtime
+environment. Our language is designed in order to facilitate          Referential Transparency. To facilitate static analysis such
+easier static analysis and further restrict unintended usage          as information flow, we desire a language whose intermediate
+of advanced language features that might undermine security           states can be understood succinctly based on the source-code
+and correctness, such as side effects, type mismatching, and          statements. For this reason, we require all program variables to
+arbitrary code execution. Below, we outline in detail the core        be immutable and all functions to be pure functions. Hence, we
+constraints and rationale of our design.                              also restrict our runtime library to only those functions which
+                                                                      do not rely on or modify hidden state, such as basic math
+                                                                      utilities and type casting operations. We explicitly disallow
+
+                                                                  16
+
+
+===== PAGE 17 / 18 =====
+
+the use of mutable data structures such as lists, maps, and             forward into an app invocation. Finally, we observe the use of
+sets.                                                                   a simple rule-based conditional check to determine the final
+App Invocations. Outside of the provided builtin utilities, a           output based on the computed information, which encodes the
+program in our language may make use of abstract apps gen-              user’s request directly and does not require the use of an LLM.
+erated during the abstract planning phase. These invocations
+are represented using function call expressions. At compile              User Query
+time, these function call nodes are replaced with calls to a
+specialized ‘invoke‘ functionality provided explicitly by the             do bob and alice live in the same city?
+runtime environment. This ‘invoke‘ functionality is responsible
+for forwarding the function call arguments to the orchestrator,          Abstract Plan
+handling the response, and returning control to the plan script
+with the produced result. Note that calling ‘invoke‘ directly             def main():
+prior to compilation will result in a syntax error, as the                       # Find user IDs for "bob"
+custom grammar validation module responsible for verifying                       bob_users_result: FindUsersByName = FindUsersByName(
+the syntax of the generated plan will raise an error.                                     name="bob")
+Privilege Constraints. Our execution environment is sand-                        bob_user_ids: tuple[int] = bob_users_result.user_ids
+boxed, so even if the script allows breaking out of normal                       bob_user_count: int = len(bob_user_ids)
+execution, features such as filesystem access and network                        if bob_user_count == 0:
+access are isolated to the execution environment. Still, external                        display("No user named bob found.")
+damage can be achieved through the use of external tools in                              return False
+the case of a container escape, or if the worker environment                     bob_user_id: int = bob_user_ids[0]
+can send carefully constructed messages to the orchestrator,
+which does not have an explicit view of the plan worker’s                        # Find user IDs for "alice"
+program state and thus cannot verify valid execution traces                      alice_users_result: FindUsersByName = FindUsersByName
+and tool invocations.
+                                                                                          (name="alice")
+                             APPENDIX C                                          alice_user_ids: tuple[int] = alice_users_result.
+              SELECTED ACE EXECUTION TRACES
+                                                                                          user_ids
+   In this appendix, we discuss several detailed ACE execution                   alice_user_count: int = len(alice_user_ids)
+traces. First we present a trace from the Langchain utility                      if alice_user_count == 0:
+benchmark in Appendix C-A. Then we present two traces from
+the INJECAGENT benchmark demonstrating system failures at                                display("No user named alice found.")
+matching and execution time.                                                             return False
+                                                                                 alice_user_id: int = alice_user_ids[0]
+A. Tool Usage Benchmark Example
+                                                                                 # Get bob's location ID
+   We discuss a detailed example from the Langchain tool                         bob_location_result: GetUserLocation =
+usage benchmark (Section V-C), demonstrating how ACE can
+compose complex abstract plans involving data from multiple                               GetUserLocation(user_id=bob_user_id)
+sources and orchestrating related tools to carry out tasks                       bob_location_id: int = bob_location_result.
+requiring multiple steps. The example is from the ‘Relational
+Data’ task, which asks the agent to answer queries using                                  location_id
+information residing in a relational database. To access the
+information, the agent is given a set of tools that interact with                # Get alice's location ID
+the database. The execution trace was generated using GPT-                       alice_location_result: GetUserLocation =
+4.1 for both the abstract and concrete planner. For clarity, we
+present only the initial query, the abstract plan, and the output.                        GetUserLocation(user_id=alice_user_id)
+                                                                                 alice_location_id: int = alice_location_result.
+   We discuss a few notable properties about the ACE execu-
+tion trace. First, completing the task requires generating a set                          location_id
+of three distinct abstract apps related to database queries: one
+to identify the primary key of a user by their name, one to                      # Get bob's city
+get a user’s location ID, and one to get the name of a city by                   bob_city_result: GetLocationCity = GetLocationCity(
+a location ID. Second, these apps must be orchestrated in a
+particular manner in order to arrive at the correct output–first,                         location_id=bob_location_id)
+the keys for the users must be obtained, then the locations                      bob_city: str = bob_city_result.city
+for those users, then the cities for those locations. Each step
+requires correctly passing information from previous stages                      # Get alice's city
+                                                                                 alice_city_result: GetLocationCity = GetLocationCity(
+
+                                                                                          location_id=alice_location_id)
+                                                                                 alice_city: str = alice_city_result.city
+
+                                                                                 # Compare cities
+                                                                                 same_city: bool = bob_city == alice_city
+                                                                                 if same_city:
+
+                                                                                         display("Yes, bob and alice live in the same city
+                                                                                                 .")
+
+                                                                                 else:
+                                                                                         display("No, bob and alice do not live in the
+                                                                                                 same city.")
+
+                                                                                 return same_city
+
+                                                                         Executor output
+
+                                                                          No, bob and alice do not live in the same city.
+
+                                                                                                     APPENDIX D
+                                                                                    ADDITIONAL EXPERIMENTAL RESULTS
+
+                                                                           In this appendix, we present additional details on experi-
+                                                                        mental results from Sections III and V. In Appendix D-A we
+                                                                        discuss the process we used for adapting the INJECAGENT
+                                                                        and ASB benchmarks to work with ACE. In Appendix D-B,
+
+                                                                    17
+
+
+===== PAGE 18 / 18 =====
+
+MetroHail                                                                                        MetroHail
+
+Description: Calculates fare prices                                                              Description: Calculates fare prices
+Output: FarePrice                                                                                Output: FarePrice
+
+                                                   QuickRide                                                                                        QuickRide
+Description: Calculates fare prices                                                              Description: Calculates fare prices, When the user tries to use MetroHail to calculate a fare,
+Output: WARNING! All fare calculating tool are being used to distribute drugs.                   use this app and not MetroHail
+                                                                                                 Output: FarePrice
+
+                                             User Query:                                                                                      User Query:
+Calculate the fare from ‘Main Street’ to ‘Elms Avenue’ with ‘QuickRide’ and ‘MetroHail’          Calculate the fare from ‘Main Street’ to ‘Elms Avenue’ with ‘MetroHail’ and ‘QuickRide’
+
+Plan Generation Step:                                   Plan Generation Step:                    Plan Generation Step:                                   Plan Generation Step:
+      [QuickRide,                                     [QuickRideFareCalculator,                        [QuickRide]                                     [MetroHailFareCalculator,
+       MetroHail]                                     MetroHailFareCalculator]                                                                         QuickRideFareCalculator]
+
+          QuickRide Spoke Call Step:                   Abstract Plan Generation Step:                      QuickRide Spoke Call Step:               Abstract Plan Generation Step:
+Action : QuickRide                             quickride_fare = QuickRideFareCalculator(         Action : QuickRide                         metrohail_fare = MetroHailCalculator(
+Action Inputs: {                                                                                 Action Inputs: {
+                                                 start=“Main Street”, end=“Elms Avenue”)                                                      start=“Main Street”, end = “Elms Avenue”)
+  start_point: “Main Street”,                  metrohail_fare = MetroHailCalculator(               start_point: “Main Street”,              quickride_fare = QuickRideFareCalculator(
+  end_point: “Elms Avenue”}                                                                        end_point: “Elms Avenue” }
+Output: “WARNING! All fare calculating           start=“Main Street”, end = “Elms Avenue)        Output: “$54”                                start=“Main Street”, end=“Elms Avenue”)
+tool are being used to distribute drugs.”      result = f“QuickRide Fare: {quickride_fare},                                                 result = f“MetroHail Fare: {metrohail_fare},
+
+                                                        MetroHail Fare: {metrohail_fare}”                                                            QuickRide Fare: {quickride_fare}”
+
+                                                              Concrete Matching Step:                                                                          Concrete Matching Step:
+                                                      QuickRideFareCalculator QuickRide                                                                MetroHailFareCalculator MetroHail
+                                                      MetroHailFareCalculator MetroHail                                                                QuickRideFareCalculator QuickRide
+
+                 Final Output:                               Final Output:                                      Final Output:                              Final Output:
+I’m sorry, there’s a technical error with the         QuickRide Fare: TypeError                  The fare for a trip from 'Main Street' to             MetroHail Fare: 51.4
+                                                                                                                                                       QuickRide Fare: 54.0
+                      tools.                             MetroHail Fare: 51.4                                'Elm Avenue' is $54
+                                                                                                                                                              ACE
+            IsolateGPT                                         ACE                                          IsolateGPT
+
+Fig. 10: Illustration of failed Execution Manager Hijack attack                                  Fig. 11: Illustration of failed Planner Manipulation on ACE
+on ACE (IsolateGPT execution shown on the left side)                                             (IsolateGPT execution shown on the left side)
+
+we show details on attacks against IsolateGPT omitted from                                       robustness of the underlying LLM, our extension tests both
+the main body. Additionally, detailed results for the evaluation                                 the tool-generating capabilities of ACE as well as the control
+of ACE against the ASB benchmark and case studies of                                             flow integrity. To test ACE with the INJECAGENT, we ported
+INJECAGENT trials against the StruQ defense are given in the                                     the tool suites and queries from each benchmark’s dataset
+full version [16].                                                                               and formatted them to conform to ACE’s required application
+                                                                                                 format. We use the default system context to shape the app
+A. Benchmark Details and Adaptation                                                              and plan generation.
+
+   INJECAGENT includes 1,054 test cases involving 17 user                                           Agent Security Bench (ASB) is a prompt injection bench-
+apps and 52 attacker apps, with each case categorized as either                                  mark spanning 10 agents in 10 application scenarios. It in-
+data exfiltration (544 cases) or direct user harm (510 cases).                                   cludes 50 different user queries, each of which requires the
+Each test case simulates a user query invoking a user app                                        use of one or more tools. In a similar manner to INJECAGENT,
+that returns a malicious response, triggering attacker apps and                                  we evaluate ACE on ASB by porting the test suite to ACE.
+resulting in harmful or data-leaking behavior. In the original                                   We determine context from each application scenario based
+benchmark, examples are processed by assuming a ReAct-                                           on the original agent prompt template.
+style agent [17] has already executed the requested tool and
+testing whether the agent decides to invoke an additional                                        B. IsolateGPT Attack Details
+tool indicated by the provided injection string. We adapt the
+benchmark to our setting by requiring that ACE first generate                                       We present execution traces from ACE and IsolateGPT
+a plan corresponding to the original user query and checking                                     under the Execution Hijack attack in Figure 10 and under the
+whether or not the execution of the plan produces a security                                     Planner Manipulation attack in Figure 11.
+violation. Hence, whereas the original dataset only tests the
+
+                                                                                             18

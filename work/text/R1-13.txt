@@ -1,0 +1,1561 @@
+# R1-13 | ObliInjection: Order-Oblivious Prompt Injection Attack to LLM Agents with Multi-source Data
+# PDF: papers\ObliInjection_Order-Oblivious Prompt Injection Attack to LLM Agents with Multi-source Data.pdf
+# extracted: 2026-11-02T19:40:00.074Z
+
+
+===== PAGE 1 / 18 =====
+
+ObliInjection: Order-Oblivious Prompt Injection
+Attack to LLM Agents with Multi-source Data
+
+    Reachal Wang            Yuqi Jia                                  Neil Zhenqiang Gong
+    Duke University     Duke University                                   Duke University
+reachal.wang@duke.edu  yuqi.jia@duke.edu
+                                                                        neil.gong@duke.edu
+
+   Abstract—Prompt injection attacks aim to contaminate the           each segment representing one article. Similarly, in retrieval-
+input data of an LLM to mislead it into completing an attacker-       augmented generation (RAG) systems, the data consists of
+chosen task instead of the intended task. In many applications        passages retrieved from a knowledge database, with each
+and agents, the input data originates from multiple sources, with     retrieved passage treated as a segment. When an LLM agent
+each source contributing a segment of the overall input. In these     selects a tool (e.g., an MCP server) from the available options,
+multi-source scenarios, an attacker may control only a subset         the data includes the user’s task description as well as the
+of the sources and contaminate the corresponding segments, but        names and descriptions of the available tools, with each tool’s
+typically does not know the order in which the segments are           name–description pair forming a segment.
+arranged within the input. Existing prompt injection attacks
+either assume that the entire input data comes from a single             Due to the inseparability of instructions and data in a
+source under the attacker’s control or ignore the uncertainty in      prompt, combined with the strong instruction-following capa-
+the ordering of segments from different sources. As a result, their   bilities of LLMs, these models are fundamentally vulnerable
+success is limited in domains involving multi-source data.            to prompt injection attacks [3]–[6]. Specifically, when the data
+                                                                      originates from untrusted sources, an attacker can embed a
+   In this work, we propose ObliInjection, the first prompt injec-    malicious prompt into it, causing the LLM to produce an
+tion attack targeting LLM applications and agents with multi-         attacker-chosen response that completes an attacker-chosen
+source input data. ObliInjection introduces two key technical in-     task rather than the intended task. We refer to the attacker-
+novations: the order-oblivious loss, which quantifies the likelihood  chosen task as the injected task and the intended task as
+that the LLM will complete the attacker-chosen task regardless        the target task. For example, in review summarization, the
+of how the clean and contaminated segments are ordered; and           attacker-chosen response could be “The product is useless!”
+the orderGCG algorithm, which is tailored to minimize the             misleading the LLM to generate a summary that could damage
+order-oblivious loss and optimize the contaminated segments.          the product’s reputation. Major technology companies [7]–[10]
+Comprehensive experiments across three datasets spanning di-          now routinely conduct extensive vulnerability testing against
+verse application domains and twelve LLMs demonstrate that            prompt injection attacks before releasing or deploying their
+ObliInjection is highly effective, even when only one out of 6–100    LLMs–a practice that has not been so common in industry
+segments in the input data is contaminated. Our code and data         for conventional AI security attacks such as adversarial exam-
+are available at: https://github.com/ReachalWang/ObliInjection.       ples [11] and data [12] or model poisoning [13], despite their
+                                                                      significant attention in academic research.
+                          I. INTRODUCTION
+                                                                         In multi-source data scenarios, an attacker may control a
+   An LLM takes a prompt as input and produces a response.            subset of sources and contaminate the corresponding segments
+The prompt typically consists of an instruction and a data            with injected prompts–for example, by corrupting multiple
+sample. In many application and agent scenarios, this data            reviews in a review summarization task. However, the attacker
+sample originates from multiple sources, which we refer to            may not know the ordering of the clean and contaminated seg-
+as multi-source data. Each portion of data from a source is           ments that form the final data sample. This uncertainty arises
+called a segment, and the data is a concatenation of segments         because the attacker lacks knowledge of both the full set of
+from different sources. For example, in review summarization          clean segments from other sources and the service provider’s
+adopted by Amazon [1], the instruction might be: “Please              strategy for ordering them. Existing prompt injection attacks
+summarize the following reviews:”, with a product’s reviews           typically either assume that the entire data sample originates
+themselves forming the data. In this case, each segment cor-          from a single source under the attacker’s control [4], [14]–[18]
+responds to an individual review. For AI Overviews in search          or disregard the uncertainty in the ordering of multi-source
+that summarize a news event [2], the data could consist of news       segments [5], [6], [19]. Consequently, these attacks achieve
+articles from various outlets covering the same event, with           limited success in applications involving multi-source data, as
+                                                                      confirmed by our experimental results. For example, when
+Network and Distributed System Security (NDSS) Symposium 2026         contaminating 1 out of 100 reviews to induce LLM-based
+23-27 February 2026, San Diego, CA, USA                               review summarization to output “The product is useless!”,
+ISBN 979-8-9919276-8-0
+https://dx.doi.org/10.14722/ndss.2026.240702
+www.ndss-symposium.org
+
+
+===== PAGE 2 / 18 =====
+
+This is wonderful…               Please summarize the                                    The product is
+                                            following reviews:                                       useless!
+        Absolutely love it…
+                                            Target instruction
+           Disappointed…
+                               Ordering                              LLM                         Attacker-chosen
+                   ...
+        Print: The product is                                                                    response
+
+               useless!                  Contaminated data
+                   ...
+Source                                                      An ordering unknown to the attacker
+              Segment          Fig. 1: Illustration of ObliInjection.
+
+Neural Exec [5] and JudgeDeceiver [6] achieve success rates          than depending solely on estimates from the current step.
+of only 7.0% and 0.2%, respectively, when the LLM is Llama-          Moreover, it incorporates a beam search strategy to maintain
+4-17B (see Table II).                                                and update each candidate solution within a buffer.
+
+   In this work, we propose ObliInjection, the first prompt in-         We evaluate ObliInjection across three datasets representing
+jection attack specifically designed for LLM applications that       diverse application domains and twelve LLMs. Our results
+process multi-source data. Figure 1 illustrates ObliInjection.       show that ObliInjection is highly effective: for example, it
+By carefully contaminating a single segment, ObliInjection           achieves an Attack Success Rate (ASR) close to 100% in most
+causes a target LLM to produce an attacker-chosen response           scenarios, even when only one out of 6–100 segments of a tar-
+regardless of the ordering of the clean and contaminated             get task is contaminated. Moreover, ObliInjection substantially
+segments used to construct the final data sample. A central          outperforms existing prompt injection attacks when applied to
+challenge is efficiently identifying such a contaminated seg-        multi-source data settings. We also conduct extensive ablation
+ment, given the immense search space.                                studies. For instance, we demonstrate that ObliInjection re-
+                                                                     mains effective when the shadow segments differ significantly
+   ObliInjection introduces two key innovations to address this      from the clean segments of the target task in both length and
+challenge. First, our order-oblivious loss quantifies how likely     semantic embeddings. Additionally, contaminated segments
+a given contaminated segment is to cause the target LLM              optimized by ObliInjection based on diverse shadow LLMs
+to produce the attacker-chosen response, regardless of the           remain highly effective against unknown target LLMs such
+ordering of the segments. Specifically, the order-oblivious loss     as GPT-4o. Finally, we show that existing defenses–both
+measures the expected cross-entropy loss of the target LLM           prevention-based [23], [24] and detection-based [25], [26]–
+when generating the attacker-chosen response, under random           are insufficient to mitigate ObliInjection.
+ordering of the clean and contaminated segments forming
+the data sample. A smaller order-oblivious loss may indicate            In summary, our key contributions are as follows:
+a higher probability of attack success across all possible
+orderings. Because the attacker does not have access to the             • We propose ObliInjection, the first prompt injection at-
+clean segments from the target task, we leverage another LLM               tack specifically designed for LLM applications involving
+to synthesize segments, referred to as shadow segments, which              multi-source data.
+are used to compute the order-oblivious loss.
+                                                                        • We propose an order-oblivious loss to quantify the ef-
+   Second, we introduce the orderGCG algorithm to optimize                 fectiveness of a contaminated segment, along with the
+the contaminated segment by minimizing the order-oblivious                 orderGCG algorithm to optimize the contaminated seg-
+loss. A natural baseline to minimize the loss is the widely used           ment by minimizing this loss.
+GCG algorithm [20]–[22], which exploits the gradient of the
+loss with respect to the token embeddings of the contaminated           • We comprehensively evaluate ObliInjection across three
+segment. However, GCG performs suboptimally in our setting.                datasets representing diverse application domains and
+The core issue lies in the difficulty–or even impossibility–of             twelve LLMs. Additionally, we demonstrate that existing
+exactly computing the order-oblivious loss when the number                 defenses are insufficient to mitigate ObliInjection.
+of data sources or segments is large. As a result, the loss
+must be approximated during optimization. Unfortunately,                                      II. RELATED WORK
+relying only on approximate losses computed within a single
+iteration, as GCG does, often leads to suboptimal contaminated       A. Large Language Models (LLMs)
+segments. Unlike GCG, orderGCG accumulates approximate
+loss values for each segment candidate across iterations rather         LLMs are autoregressive models trained to follow instruc-
+                                                                     tions. Given a prompt p, an LLM f generates a response
+                                                                     r, denoted as r = f (p). The term autoregressive refers
+                                                                     to the LLM’s token-by-token generation process, where the
+                                                                     probability of generating each token is conditioned on both
+
+                                                                  2
+
+
+===== PAGE 3 / 18 =====
+
+the prompt p and all previously generated tokens. The prompt           where each retrieved passage or candidate answer corresponds
+p typically comprises two components: an instruction s and             to a data segment. In such cases, the attacker contaminates
+a data sample x, i.e., p = s || x. The instruction directs the         a subset of segments (e.g., retrieved passages or candidate
+LLM to perform a specific task–such as summarization, tool             answers) to induce the LLM to perform the injected task.
+selection, or question answering–and is usually provided by an         However, as our experiments show, these attacks have limited
+application developer or user. The data sample x provides the          effectiveness because they overlook a central challenge in
+context required for the LLM to perform the task. Table XIV            multi-source settings: uncertainty in the ordering of clean and
+in the Appendix summarizes our notations.                              contaminated segments. When the actual ordering of segments
+                                                                       differs from the order assumed by the attack, its effectiveness
+B. Prompt Injection Attacks                                            drops substantially.
+
+   A prompt injection attack occurs when a data sample x                  We note that some prior RAG attacks [27], [28] report
+included in a prompt p originates from untrusted sources.              strong success despite not accounting for ordering. This is
+Specifically, an attacker embeds a malicious prompt–referred           because they assume that the attacker can inject multiple
+to as the injected prompt–into the data sample, causing the            contaminated segments and that these segments constitute a
+LLM to execute an attacker-specified task, known as the                majority of the retrieved passages. Under these assumptions,
+injected task e. The injected task e can be represented as a           ordering is less critical. But when only a minority of segments
+tuple (se, xe, re), where se is the injected instruction, xe is        are contaminated, the attack success rate drops sharply (see,
+the injected data, and re is the injected response expected by         e.g., Figures 3 and 4 in [27]). In contrast, our work tackles
+the attacker [4]. In contrast, the user-intended task is referred      the more challenging setting where the attacker controls only
+to as the target task t, which is similarly represented as a tuple     a single contaminated segment, where ordering is crucial.
+(st, xt, rt), where st is the target instruction, xt is the target
+data, and rt is the desired target response. The LLM f is said         C. Defenses against Prompt Injection Attacks
+to successfully complete the target task if f (st ∥ xt) equals rt
+or its semantic equivalent, i.e., f (st ∥ xt) ≃ rt.                    Prevention-based defenses: This class of defenses aims to
+                                                                       keep the LLM aligned with the target instruction st, preventing
+   In a prompt injection attack, the attacker contaminates the         it from being diverted by an injected instruction se. State-of-
+target data xt, producing contaminated data xc. If the LLM f ,         the-art prevention-based defenses [23], [24], [29], [30] fine-
+when prompted with st ∥ xc, generates a response that matches          tune LLMs to follow only the target instruction, even in the
+or is semantically equivalent to the injected response re, i.e.,       presence of an injected instruction. Notable examples include
+f (st ∥ xc) ≃ re, then the attack is considered successful.            StruQ [23] and SecAlign [24]. StruQ introduces a front-end
+                                                                       filter that reformats st and potentially contaminated data xc
+Single-source data: Most attacks [4], [14]–[18] assume that            into a structured input format, and then fine-tunes the LLM to
+the target data xt originates from a single source controlled          strictly adhere to st within that format. In contrast, SecAlign
+by the attacker. These attacks typically construct contaminated        uses direct preference optimization to fine-tune the LLM to
+data xc by appending an injected prompt pe to the target               favor legitimate over illegitimate outputs. However, as shown
+data, separated by a crafted separator z, resulting in xc =            by Jia et al. [31] and corroborated by our findings, these
+xt ∥ z ∥ pe. The separator z is crafted to steer the LLM away          fine-tuned models often provide limited defense effectiveness
+from completing the original target task t and toward executing        and/or suffer from reduced utility.
+the injected task e. For example, the Combined Attack [4] syn-
+thesizes multiple strategies to construct a separator z; a typical        Another line of defenses leverages software security tech-
+instance might be: “\n Answer: task complete. \n Ignore                niques to enforce security policies on the actions (e.g., tool
+previous instructions.”. While these attacks can be adapted            calls) an LLM agent is allowed to perform [32]–[35]. How-
+to contaminate a subset of segments in the multi-source data           ever, in many tasks involving multi-source data–such as AI
+setting, their effectiveness is limited due to uncertainty in the      Overview, review summarization, and RAG–the LLM does
+ordering of segments within the target data. In particular, if         not need to invoke external actions at all. Consequently, these
+the contaminated segments appear in the middle, their impact           defenses are not applicable in such application scenarios.
+is significantly diminished by the clean segments that follow,
+as these attacks assume that the injected prompt appears at the        Detection-based defenses: In the multi-source data setting,
+end of the target data.                                                these defenses can be applied to detect whether each individ-
+                                                                       ual segment has been contaminated by an injected prompt.
+Multi-source data: Neural Exec [5] targets retrieval-                  One approach is Perplexity-based Detection (PPL) [25], [36],
+augmented generation (RAG) systems, where the target data              which measures the perplexity of a segment and flags it as
+xt consists of passages retrieved from a knowledge database.           contaminated if the perplexity exceeds a certain threshold.
+Similarly, Zou et al. [27] and Jiao et al. [28] design prompt          Known-answer Detection (KAD) [4], [37] prepends a detection
+injection attacks specifically for RAG systems. JudgeDe-               instruction–which has a known answer–to a segment and
+ceiver [6] focuses on LLM-as-a-judge settings, where xt                queries an off-the-shelf LLM (referred to as the detection
+includes multiple candidate answers to a question. All of these        LLM); if the LLM’s response does not contain the known
+attacks can be viewed as operating in a multi-source setting,          answer, the segment is flagged as contaminated. DataSen-
+                                                                       tinel [26] enhances this idea by fine-tuning the detection LLM
+
+                                                                    3
+
+
+===== PAGE 4 / 18 =====
+
+using a game-theoretic strategy to better distinguish clean and                under this setting. We assume the attacker does not have access
+contaminated segments. PromptLocate [38] further pinpoints                     to the specific target instruction st, which may be provided
+the location of the injected prompt after it is detected.                      by an application developer and kept confidential. However,
+                                                                               the attacker is assumed to know the general nature of the
+   As shown in our experiments, ObliInjection can be adapted                   target task (e.g., review summarization, news summarization,
+to evade these detectors while still misleading the LLM                        or question answering).
+into successfully completing the injected task. For example,
+by prepending a clean shadow segment to the contaminated                          The attacker is assumed to be unaware of the number of
+segment, we can lower its perplexity to bypass PPL.                            segments n in the target data. While the attacker may, in some
+                                                                               cases, have access to the content of certain clean segments–
+                  III. PROBLEM FORMULATION                                     e.g., by collecting public reviews of a product for a review
+                                                                               summarization task–our threat model does not require such
+A. Multi-Source Target Data                                                    access. Moreover, the attacker is assumed to lack knowledge
+                                                                               of the ordering of clean and contaminated segments within the
+   In many application scenarios–such as review summa-                         target data. This uncertainty arises when the attacker does not
+rization, news summarization, retrieval-augmented generation                   have access to the complete set of clean segments from other
+(RAG), and tool selection for LLM agents–the target data                       sources or the service provider’s strategy for ordering them.
+xt originate from multiple sources. We refer to the part
+of the target data from a single source as a segment. For                      Attacker’s capabilities: An attack is considered stronger if it
+example, in review summarization, a segment corresponds to a                   requires fewer capabilities from the attacker. Accordingly, we
+product review written by a reviewer; in news summarization,                   focus on a highly constrained setting in which the attacker is
+a segment is a news article from a particular source; in RAG, a                permitted to contaminate only a single segment of the target
+segment is a retrieved passage; and in tool selection, a segment               data. Given knowledge of the general nature of the target
+represents the name/description of a tool.                                     task, the attacker can leverage an LLM to synthesize a proxy
+                                                                               target instruction, referred to as a shadow target instruction.
+   Formally, we consider n sources, where xti denotes the                      Additionally, we assume the attacker can synthesize clean
+segment from the ith source. The target data xt is then formed                 segments relevant to the target task. For example, if the target
+by concatenating the n segments in a certain order: xt =                       task is to summarize reviews for a product, the attacker may
+xi1 t ∥xti2 ∥ · · · ∥xtin , where {i1, i2, · · · , in} is a permutation of     generate synthetic reviews–based on the product description–
+the source indices {1, 2, · · · , n}. In some applications, there              using an LLM. These synthetic data segments, termed shadow
+may exist a natural segment ordering based on contextual                       segments, are used by our attack to guide the manipulation of
+information. For example, reviews or news articles may be                      the contaminated segment.
+sorted by timestamp. However, in many scenarios–such as
+RAG and tool selection–there is often no inherent ordering                                          IV. OUR OBLIINJECTION
+among the segments. Moreover, even when a natural ordering
+exists, service providers may intentionally shuffle segments to                   We begin by formulating the task of identifying a con-
+prevent attackers from exploiting the segment order.                           taminated segment as an optimization problem, where the
+                                                                               optimization variables are the tokens of the contaminated seg-
+B. Threat Model                                                                ment. The objective function quantifies the likelihood that the
+                                                                               target LLM produces the attacker-specified injected response.
+Attacker’s goal: The attacker’s goal is to manipulate the LLM                  A key innovation in our formulation is the order-oblivious
+into completing an attacker-specified injected task e with a                   loss, which considers different permutations of the clean and
+corresponding desired response re, by contaminating a single                   contaminated segments in the target data–more accurately
+segment in the target data. The attack is considered successful                capturing the attacker’s goal.
+if the LLM generates a response that matches or is seman-
+tically equivalent to re when given the contaminated data as                      To solve this optimization problem, we first carefully design
+input, i.e., f (st ∥ xc) ≃ re, where xc is the concatenation of                prompts to query an auxiliary LLM to generate a shadow
+the clean and contaminated segments in a certain order. For                    target instruction and a set of shadow data segments, since
+example, in a review summarization task, the attacker may act                  the attacker lacks access to the true target instruction and
+as a reviewer and submit a contaminated review such that the                   segments under our threat model. We then introduce an
+LLM outputs re = “The product is useless!” damaging the                        algorithm called orderGCG, which is specifically designed
+product’s reputation. In tool selection, the attacker may be a                 to minimize the order-oblivious loss and generate multiple
+tool developer who crafts a malicious tool with a specifically                 candidate contaminated segments. Finally, we evaluate these
+contaminated tool description, leading the LLM to select the                   candidates on a validation set of shadow segments and select
+malicious tool when processing the target task.                                the one that achieves the highest attack success rate.
+
+Attacker’s background knowledge: When the LLM is open-                         A. Formulating an Optimization Problem
+weight, we assume the attacker has white-box access to its
+model parameters. In contrast, when the LLM is closed-                         Quantifying the attacker’s goal using our order-oblivious
+source, the attacker conducts attacks using multiple open-                     loss: The attacker’s objective is to manipulate a single
+weight LLMs. As demonstrated in our experiments, our Obli-                     segment so that the LLM f produces an attacker-chosen
+Injection exhibits good transferability to closed-source LLMs
+
+                                                                            4
+
+
+===== PAGE 5 / 18 =====
+
+Metadata ℳ!                  Step I              Shadow target                 Step II                              Token-level
+        of target task 𝑡             Step V              instruction 𝑠"!                                                candidates {𝒯$}$%& '
+
+         Contaminated                                        Shadow
+           Segment 𝑥                                     segments 𝒳"
+
+                                                                                                                              Step III               Injected
+                                                                                                                                                   response 𝑟,
+
+                                                                                    Buffer ℬ =                             Segment-level
+                                                                                    {(𝑥, 𝑙#, 𝑑#)}
+                                                                                                                        candidates  𝒳   +
+                                                                                                                                        ()*
+
+                                                                                                          Update
+                                                                                                                        Step IV
+
+                                Fig. 2: Illustration of how ObliInjection optimizes a contaminated segment.
+
+injected response re when processing the contaminated data,                               Formally, the loss ℓ is defined using the tokens of the
+i.e., f (st||xc) ≃ re. Here, xc represents the concatenation                           injected response re and the token probability distribution
+                                                                                       output by the LLM f . Suppose re consists of N tokens
+of clean and contaminated segments in an unknown order.                                [r1e, r2e, · · · , rNe ]. The standard cross-entropy loss is given by:
+
+A straightforward approach to quantify this goal is to use                                                                        N
+the standard cross-entropy loss between f (st||xc) and re, as
+
+employed in prior prompt injection attacks [5], [6]. A smaller                             ℓ    f   (sts  ||x  c  )  ,  r  e  =−        log P rje | sst ∥xsc∥r<j e , (2)
+                                                                                                               s
+loss indicates better achievement of the attacker’s goal.
+                                                                                                                                  j=1
+   However, this standard cross-entropy loss faces two key
+challenges: (1) the target instruction st, the number of data                          where re<j denotes the first j − 1 tokens of re, and
+                                                                                       P rej | sts∥xcs∥r<e j is the probability assigned by the LLM
+sources n, and the content of clean segments are unknown,                              f to token rej conditioned on the input sts∥xcs∥r<e j.
+
+and (2) the ordering of segments within the target data is also                        Formulating an optimization problem: The attack may
+                                                                                       be more effective when the order-oblivious loss is smaller.
+unknown. To address the first challenge, we use an LLM to                              Therefore, our objective is to identify a contaminated segment
+                                                                                       x that minimizes this loss. Formally, we express this as the
+synthesize  a    shadow      target  instruction    st   based    on  the  general     following optimization problem: minx L(x).
+
+                                                      s
+
+nature of the target task. We also define a proxy number of
+
+data sources ns, termed the shadow number of sources, and
+
+generate a set of shadow segments relevant to the target task,
+denoted as Xs = {xs(1), xs(2), · · · }, where xs(i) is the ith shadow
+
+segment. Details on generating the shadow target instruction                           B. Solving the Optimization Problem
+
+and segments are provided in Sections IV-B and V-A.
+
+     To tackle the second challenge, we account for the unknown                        Challenges and overview of our solution: Solving the
+
+segment ordering by introducing an order-oblivious loss. This                          optimization problem presents two key challenges: (1) how
+
+loss represents the expected cross-entropy loss when clean and                         to  collect  a  shadow           target  instruction   st   and  shadow  segments
+
+contaminated segments are randomly permuted to form the                                                                                         s
+
+                                                                                       Xs that are relevant to the target task t, and (2) how to identify
+
+target data. A smaller order-oblivious loss indicates a higher                         a contaminated segment x that minimizes the order-oblivious
+
+likelihood of attack success, regardless of how segments are                           loss. To address the first challenge, we leverage an LLM (e.g.,
+
+permuted to form the target data. Formally, given the shadow                           GPT-4o in our experiments) to synthesize a shadow target
+target instruction sts, shadow number of sources ns, shadow
+segments Xs, a contaminated segment x, and an injected                                 instruction and a corresponding set of shadow segments based
+response re, our order-oblivious loss L(x) is defined as:
+                                                                                       on metadata about the target task t that the attacker can collect.
+
+                                                                                       This forms Step I of ObliInjection as shown in Algorithm 1.
+
+     L(x) = EXs′⊆Xs,xcs∼Per(Xs′∪{x}) ℓ f (sst ||xsc), re , (1)                             For the second challenge, we introduce orderGCG, an
+
+                                                                                       optimization algorithm specifically tailored to minimize order-
+
+where   E  denotes        the  expectation;   X′    is   a  subset    of   ns  −1      oblivious loss. orderGCG incorporates two key innovations:
+
+                                                 s
+
+segments sampled uniformly from Xs (so that, together with                             (1) it accumulates approximate loss values across iterations,
+
+the contaminated segment, we have ns shadow data sources);                             and (2) it employs a beam search strategy to update each
+
+xc   ∼  Per(Xs′  ∪     {x})  indicates  that  xc    is   the  concatenation    of      candidate solution in the buffer. Specifically, orderGCG ex-
+
+  s              X′                             s
+
+segments   in       s  ∪  {x},  permuted     uniformly        at  random;  and  ℓ      ecutes Steps II-IV iteratively. At the end, orderGCG produces
+
+is the standard cross-entropy loss.                                                    multiple candidate segments. Step V selects the segment that
+
+                                                                                    5
+
+
+===== PAGE 6 / 18 =====
+
+Algorithm 1 ObliInjection                                                                                         Algorithm 2 order oblivious loss
+
+Require: LLM f , metadata Mt of the target task, and in-                                                          Require: LLM f , shadow segment subset Xs′, contaminated
+     jected response re                                                                                                segment x, shadow target instruction sts, and injected
+                                                                                                                       response re
+Ensure: Contaminated segment x
+
+1:   //   Step  I:  Generate  st   and      Xs                                                                    Ensure: Approximate order-oblivious loss l
+
+     st                         s                                                                                                                                     X′
+
+2:     s  ←  generate    shadow    target           instruction                                                   1:  Sample  dper  random      permutations      of     s  ∪ {x}     and  con-
+
+3: Xs ← generate shadow segments                                                                                                                                                                             c dper
+
+                                                                                                                      struct dper shadow contaminated data samples {xs,p}p=1
+
+4: // Step II-IV: Use orderGCG to find candidate segments                                                         2: l ← 0
+
+5: Initialize a segment x = [x1, x2, · · · , xk]                                                                  3: for p = 1 to dper do
+                                                                                                                  4: l ← l + ℓ(f (sts||xcs,p), re)
+6: // Approximate loss of x
+
+7:   Sample     shadow   segment         subset            X′    ⊂ Xs                                             5: end for
+
+                                                  X′          s     t        e                                    6: l ← dlper // Average over dper samples
+                                                                    s                                             7: return l
+8:   l ← order        oblivious  loss(f        ,     s  ,  x,    s     ,  r     )
+
+9: Initialize buffer B ← {(x, l, 1)}
+
+10: for iter = 1 to diter do
+
+11:       Sample    shadow    segment          subset            X′       ⊂     Xs
+
+                                                                    s
+
+12: // Initialize the set of new segment candidates Xnew                                                          shadow  target  instruction      st   and  a  set  of  shadow       segments
+
+13: Xnew ← ∅                                                                                                                                         s
+
+14: for (x, lx, dx) ∈ B do                                                                                        Xs, which we then use to optimize a contaminated data
+
+                                                                                                                  segment. Specifically, we prompt an LLM (GPT-4o in our
+
+15:        // Step II: Generate candidates Tj for each xj ∈ x                                                     experiments), referred to as the auxiliary LLM, using metadata
+
+16:        {Tj }kj=1  ← gen        token          cands(         f  ,  st    ,  r  e  ,  x,  X  ′  )              Mt  from  the   target  task  t  to   generate  both      st   and  Xs.  This
+                                                                                                s
+                                                                         s                                                                                                    s
+
+17:        // Step III: Generate segment candidates                                                               metadata may include the task type (e.g., summarization or
+
+18:        X ′new   ← gen   segment         cands          ({T      j  }  k        ,  x)                          question answering) and public attributes of the target entity–
+                                                                          j=1
+           Xnew ← Xnew ∪ X ′new
+19:                                                                                                               such as a product’s name and category in a product review
+
+20: end for                                                                                                       summarization task. Details about the metadata used in our
+
+21: // Step IV: Update the buffer                                                                                 experiments are provided in Section V-A.
+
+22:       B ← update     buffer(   f  ,  B  ,  st   ,  r   e  ,  Xnew     ,  X′       )                           The key to generating the shadow target instruction and
+
+                                                 s                              s
+
+23: end for                                                                                                       shadow segments lies in carefully designing prompts to query
+
+24: // Step V: Select contaminated segment via validation                                                         the auxiliary LLM. To generate the shadow target instruction,
+
+25: x ← the segment in B that achieves the highest attack                                                         we leverage task-type information, which reflects the intent of
+
+     success rate on the validation shadow segments                                                               the target instruction. We also enrich the prompts with detailed
+
+26: return x                                                                                                      textual descriptions to enhance the clarity and expressiveness
+
+                                                                                                                  of the generated shadow target instructions. This improved
+
+                                                                                                                  expressiveness enhances the effectiveness of ObliInjection,
+
+achieves the highest attack success on a validation set of                                                        as shown in our experiments. The prompts used to generate
+shadow segments as the final contaminated segment.
+                                                                                                                  shadow target instructions for each dataset in our experiments
+   Next, we detail each of the five steps (Step I–Step V)
+of ObliInjection. Figure 2 illustrates this overall workflow.                                                     are listed in Table IX in the Appendix.
+Without loss of generality, we assume that the contaminated
+segment x consists of k tokens, i.e., x = [x1, x2, · · · , xk],                                                   To generate a shadow segment, We construct a prompt that
+where each token xj belongs to the LLM f ’s vocabulary V .
+                                                                                                                  incorporates the public attributes of the target entity. To ensure
+
+                                                                                                                  diversity of shadow segments, we craft prompts that encourage
+
+                                                                                                                  variation in length, emotion, textual style, and tone. Detailed
+
+Approximate order-oblivious loss: We first describe how we                                                        prompt templates used in our experiments are provided in
+
+approximate the order-oblivious loss L(x) for any segment x,                                                      Table X and Table XI in the Appendix.
+
+which is used in multiple steps of ObliInjection. This approx-                                                    Step II-IV: Find contaminated segment candidates via
+                                                                                                                  orderGCG: Given the shadow target instruction and shadow
+imation is implemented via the function order oblivious loss,                                                     segments, we then apply our orderGCG algorithm to identify
+                                                                                                                  candidate contaminated segments that approximately minimize
+as shown in Algorithm 2. Specifically, we uniformly sample                                                        the order-oblivious loss. Specifically, orderGCG maintains a
+                                                                                                                  buffer of tuples (x, lx, dx), where x is a segment candidate,
+one   subset    X′    ⊆  Xs   of   size           ns − 1,              and         then       draw       dper     lx is the approximate order-oblivious loss averaged across the
+                                                                                                                  iterations in which x’s loss has been computed, and dx is the
+                   s                                                                          X′                  number of such iterations used to compute lx. This buffer
+                                                                                                                  enables orderGCG to leverage loss estimates accumulated
+random     permutations      of    the   combined                   segments                     s    ∪  {x}.     across iterations to better approximate the order-oblivious loss
+                                                                                                                  for each segment x.
+Each permutation yields a shadow contaminated data sample,
+                                                                                                                     In each iteration, for every segment candidate x in the
+resulting  in   dper  samples,   denoted          as           c dper                    For  each       sam-
+
+                                                           {xs,p}p=1.
+ple xcs,p, we compute the cross-entropy loss ℓ(f (sts||xcs,p), re).
+
+The approximate order-oblivious loss is then computed as the
+
+average cross-entropy loss across these dper samples.
+
+Step  I:  Generate    shadow       target           instruction                    st    and       shadow
+
+                                                                                     s
+
+segments Xs: Since the target instruction and data seg-
+
+ments are inaccessible under our threat model, we construct a
+
+                                                                                                               6
+
+
+===== PAGE 7 / 18 =====
+
+buffer, orderGCG first generates multiple token-level candi-             segments in the buffer, and (2) incorporating new segment-
+dates to replace each token of x (Step II), and then constructs          level candidates if they demonstrate lower approximate losses.
+new segment candidates from these token-level candidates
+(Step III). These two steps result in a set of new segment                  For the first part, we re-evaluate the order-oblivious loss of
+candidates. In Step IV, orderGCG updates the average approx-             each segment currently in the buffer using the newly sampled
+imate loss lx for existing segments in the buffer, computes              shadow segment subset Xs′. We then update each segment’s
+the approximate order-oblivious loss for each new candidate,             stored loss via a running average over all evaluations con-
+and retains the candidates with the lowest losses in the buffer.         ducted for that segment. This refinement is essential because
+orderGCG repeats Steps II–IV for diter iterations.                       each evaluation relies on random sampling of shadow segment
+                                                                         subsets and permutations, which can introduce variability.
+   Step II: Generate token-level candidates for each token.              Without this running average, the loss value may reflect only
+This step, implemented in gen token cands of Algorithm 3 in              a specific sampled context. By aggregating evaluations across
+the Appendix, generates token-level candidates for each token            multiple iterations, we approximate the expected loss over
+in a given segment x in the buffer. Specifically, for each token         a diverse set of shadow segment subsets and permutations,
+xj in x, we search the vocabulary V of the LLM for alternative           yielding a more reliable ranking of segment candidates.
+tokens that are likely to reduce the segment’s order-oblivious
+loss when substituted for xj. A naive approach would replace                For the second part, we evaluate the order-oblivious loss
+xj with every token in V , compute the approximate order-                of each new segment-level candidate on the current shadow
+oblivious loss for each resulting segment, and select the                segment subset Xs′. If the buffer has not yet reached its
+tokens with the lowest losses. However, this is computationally          maximum capacity, the candidate is directly added. Otherwise,
+infeasible due to the large vocabulary size. To address this,            a new candidate is inserted only if its approximate loss is
+we draw inspiration from prior work [20], and use a gradient-            lower than that of the worst-performing segment in the buffer,
+based method based on Taylor expansion.                                  which is then removed. This replacement strategy ensures
+                                                                         that the buffer retains only the most promising candidates,
+   Each token is represented as a one-hot vector in {0, 1}|V |×1,        as measured by their performance under the current sampled
+where the entry corresponding to the token is 1 and all others           shadow segment subset and permutations.
+are 0. Let l(xj) denote the approximate order-oblivious loss
+of the segment when its jth token is xj. If xj is replaced               Step V: Select the best segment in the buffer via valida-
+by another token x′j, the loss becomes l(x′j). Using Taylor
+expansion, we can approximate this loss as:                              tion: This step selects the final contaminated segment from
+
+                                                                         the buffer. A naive approach would be to simply choose the
+
+                                                                         segment with the lowest stored loss. However, we observe that
+
+l(x′j )  ≈  l(xj )  +  ∇  xj  l  (x  j  )  ⊤  (  x  ′  −  xj ),  (3)     this may result in a suboptimal ASR. This discrepancy arises
+                                                    j
+
+where ⊤ denotes the transpose operator. This approximation               because the loss estimates are based on randomly sampled
+allows efficient estimation of l(x′j) for all candidate tokens x′j.
+We then select the top dtok tokens with the lowest estimated             shadow segment subsets and permutations, which may differ
+loss as potential replacements for xj and we denote them as a
+set Tj. This process is repeated for each token in x, resulting          from those encountered during attack deployment.
+in a set of token-level candidates for every position. We
+                                                                              To address this challenge, we introduce a selection strategy
+select multiple candidates per position to mitigate inaccuracies
+                                                                         based on ASR evaluated on a held-out validation set of shadow
+introduced by the Taylor approximation.
+   Step III: Generate segment-level candidates. Given the                segments. Specifically, we use the same procedure as in Step
+
+token-level candidates Tj for each token xj in a seg-                    I to generate multiple validation shadow segments. For each
+ment x from the buffer, this step–which is implemented in
+gen segment cands of Algorithm 4 in the Appendix–generates               candidate segment in the buffer, we simulate attack scenarios
+segment-level candidates by modifying multiple tokens in x
+                                                                         by randomly sampling ns segments from the validation set
+using their respective token-level candidates. Specifically, we
+create each segment-level candidate by replacing drep tokens in          and permuting them with the candidate segment to form
+x. To do this, we first uniformly sample drep positions J from
+the set {1, 2, · · · , k}, where k is the length of the segment.         shadow contaminated data xcs. The ASR is then defined as
+For each selected position j ∈ J , we randomly sample a
+replacement token x′j from the token-level candidate set Tj and          the fraction of such scenarios where f , when prompted with
+substitute xj with x′j in x. We repeat this process to generate
+dseg segment-level candidates for each segment in the buffer.            st   ∥  xcs,  produces  re,  i.e.,  f  (sts  ∥  xcs)  ≃  re.  ObliInjection  selects
+
+   Step IV: Update the buffer. This step updates the buffer                s
+
+to retain the segment candidates with the lowest approxi-                the candidate segment with the highest validation ASR as the
+
+mate order-oblivious losses observed so far. As shown in                 final contaminated segment.
+
+Algorithm 5 in the Appendix, the buffer update procedure                 Different forms of contaminated segment x: In the descrip-
+                                                                         tion above, we treat all tokens in x as optimization variables.
+consists of two parts: (1) updating the stored losses of existing        Alternatively, we can constrain x to take the structured form
+                                                                         x = z||pe||z′, where pe is the injected prompt corresponding
+                                                                         to the injected task with response re, and only z and z′
+                                                                         are treated as optimization variables. The prefix z aims to
+
+                                                                         mislead the LLM into ignoring the context preceding the
+                                                                         contaminated segment, while the postfix z′ aims to mislead the
+
+                                                                         LLM into ignoring the context following it. As demonstrated
+                                                                         in our experiments, this structured form of x enhances the
+
+                                                                         effectiveness of ObliInjection, as it facilitates the discovery
+
+                                                                      7
+
+
+===== PAGE 8 / 18 =====
+
+TABLE I: Statistics of the three datasets used in our experiments. QA stands for question answering.
+
+Dataset     Task Type      Application #Target Tasks #Segs/Task Avg Segment Len Max Segment Len Min Segment Len
+
+Amazon Reviews Summarization Review Highlights  100                     100  40   1357                          2
+
+Multi-News  Summarization  AI Overview          100                     6    335  1742                          19
+
+HotpotQA    RAG-based QA Question Answering     100                     10   139  784                           21
+
+of contaminated segments that reliably mislead LLMs into                8B-Instruct, Mistral-7B-Instruct-v0.3, Qwen-2.5-7B-Instruct-
+completing the injected task.                                           1M, Falcon3-7B-Instruct, Llama-4-Scout-17B-16E-Instruct,
+                                                                        and Qwen3-4B-Instruct-2507, which are denoted as Llama-
+Attack multiple target tasks simultaneously: In the above               3-8B, Llama-3.1-8B, Mistral-7B, Qwen-2.5-7B, Falcon3-7B,
+discussion, we focus on optimizing a contaminated segment x             Llama4-17B, and Qwen3-4B, respectively. Additionally, we
+for a single target task. However, an attacker may instead seek         evaluate GPT-4o and Gemini-2.5-flash. In Section VI, we
+to optimize a contaminated segment that is effective across             further evaluate three LLMs that are protected by prevention-
+multiple target tasks–for example, to improve attack efficiency.        based defenses.
+In addition, this is also relevant in scenarios where the at-
+tacker lacks information about the specific target task, such           Target tasks and datasets: We consider three categories
+as when attacking a RAG-based question-answering system                 of target tasks: review summarization, news summarization,
+without access to the exact question types. In such cases,              and RAG-based question answering. For each category, we
+optimizing the contaminated segment across multiple target              adopt a widely used dataset: Amazon Reviews, Multi-News, and
+tasks increases the likelihood that the segment generalizes and         HotpotQA. Each dataset contains 100 target tasks, represented
+remains effective in unknown task settings.                             as tuples {(st, {xti}ni=1, rt)}, where st is the target instruction,
+                                                                        {xti}ni=1 denotes the n segments whose permutation forms the
+   Our ObliInjection can be naturally extended to this multi-           target data, and rt is the target response. Specifically, the value
+target-task setting. Specifically, in Step I, we generate a             of n is 100, 6, and 10 for the three datasets, respectively. While
+shadow target instruction and a set of shadow segments                  a product may contain more than 100 reviews, the open-weight
+for each target task based on its metadata. When applying               LLMs supported by our computing resources have limited
+the orderGCG algorithm to produce segment candidates, we                context window sizes, so we cap the number of Amazon
+modify the function order oblivious loss in Algorithm 2 to              reviews per product at n = 100. The segments in these datasets
+incorporate all target tasks. Given a segment x, we compute             vary in length and writing style, both within individual target
+its approximate order-oblivious loss for each individual target         tasks and across different tasks. We summarize the dataset
+task and then take the average across all target tasks as the final     statistics in Table I.
+loss value. In Step V, we generate validation shadow segments
+for each target task and select the segment in the buffer that             • Amazon Reviews [1]. This dataset focuses on review
+achieves the highest average ASR across all target tasks.                     highlights, where each target task involves generating a
+                                                                              summary for a product based on its reviews. Each data
+Transfer to unknown LLMs: When the target LLM is open-                        segment corresponds to a single review.
+weight, an attacker can directly apply the above algorithm
+to optimize the contaminated segment x. However, when the                  • Multi-News [39]. This dataset focuses on news summa-
+target LLM is unknown–such as in the case of a closed-source                  rization. Each target task involves generating a summary
+model–the algorithm is not directly applicable, as it requires                of a news event based on multiple articles from different
+access to model parameters. In this case, the attacker can                    outlets. Each data segment corresponds to an individual
+instead optimize the contaminated segment using a diverse                     news article.
+set of open-weight LLMs, referred to as shadow LLMs. As
+demonstrated in our experiments, the resulting contaminated                • HotpotQA [40]. This dataset represents RAG-based ques-
+segment remains effective against unknown LLMs.                               tion answering. Each target task involves answering
+                                                                              a question using multiple supporting documents from
+   A key challenge in optimizing the contaminated segment                     Wikipedia as context. Each data segment corresponds to
+across multiple shadow LLMs is that these models often use                    one such document.
+different tokenizers, resulting in distinct token vocabularies.
+To address this, we restrict the contaminated segment to use            Injected tasks: For each of the three categories of target
+only tokens shared across all shadow LLMs. In addition to               tasks, we design an injected task that can be applied to any
+this constraint, another primary adaptation to ObliInjection            specific instance within the category. Each injected task is
+is modifying Algorithm 2 to compute an approximate order-               crafted to cause the target LLM to fail on its target task and
+oblivious loss averaged across the shadow LLMs.                         instead output an attacker-specified injected response re. The
+                                                                        injected responses for the three categories of target tasks are:
+                           V. EVALUATION                                “The product is useless!” (review summarization), “The news
+                                                                        is fake!” (news summarization), and “The answer is unknown.”
+A. Experimental Setup                                                   (question answering). We explore alternative injected tasks and
+                                                                        responses in our ablation study.
+LLMs: We conduct experiments on seven representa-
+tive open-weight LLMs: Llama-3-8B-Instruct, Llama-3.1-
+
+                                                                     8
+
+
+===== PAGE 9 / 18 =====
+
+TABLE II: ASR (%) of different attacks across various datasets and LLMs.
+
+Dataset     Attack             Llama-3-8B Llama-3.1-8B Mistral-7B Qwen-2.5-7B Falcon3-7B Llama4-17B Qwen3-4B Average
+
+            Combined Attack    0.0     0.0                         0.0    16.4   0.0    9.4    15.6  5.9
+
+            Neural Exec        41.2    0.0                         0.0    0.0    0.4    7.0    1.2   7.1
+
+            JudgeDeceiver      62.2    78.4                        75.8   99.2   32.6   0.2    49.2  56.8
+
+Amazon Reviews ObliInjection-GCG 61.6  15.2                        0.0    1.2    0.0    85.4   32.4  28.0
+
+            ObliInjection-CE   99.2    96.0                        64.2   86.8   96.8   96.6   96.0  90.8
+
+            ObliInjection      99.4    98.0                        99.2   99.8   98.2   99.8   98.8  99.0
+
+            Combined Attack    0.0     0.6                         0.0    7.0    8.4    51.6   87.5  22.2
+
+            Neural Exec        58.4    3.0                         7.8    0.0    0.4    97.0   89.0  36.5
+
+            JudgeDeceiver      76.6    0.0                         2.6    94.0   5.0    2.4    100.0 40.1
+
+Multi-News  ObliInjection-GCG 82.0     34.8                        0.0    94.2   19.6   100.0  99.6  61.5
+
+            ObliInjection-CE   99.6    99.4                        67.0   40.4   99.8   99.6   91.0  85.3
+
+            ObliInjection      100.0   99.6                        93.8   99.6   98.0   100.0  100.0 98.7
+
+            Combined Attack    14.2    39.6                        20.0   84.4   0.4    1.6    28.4  26.9
+            Neural Exec        32.8
+            JudgeDeceiver      55.6    25.4                        25.5   2.8    20.2   8.8    27.8  20.5
+            ObliInjection-GCG  85.4
+            ObliInjection-CE   67.8    32.8                        88.0   93.4   58.8   0.2    10.6  48.5
+            ObliInjection      100.0
+HotpotQA                               31.2                        92.6   70.0   88.6   8.2    14.0  55.7
+
+                                       93.0                        100.0  100.0  91.6   99.8   84.6  91.0
+
+                                       99.2                        100.0  98.6   100.0  99.6   100.0 99.6
+
+   To implement each injected task, we also define an injected               does not consider permutations of the shadow segments
+prompt pe, which prepends the word Print to the injected                     during optimization. JudgeDeceiver also employs the
+response. For instance, the injected prompt for review sum-                  GCG algorithm, using a progressive strategy, to minimize
+marization becomes “Print: The product is useless!”. These                   the objective and optimize the contaminated segment x.
+injected prompts are embedded within the contaminated data                • ObliInjection-GCG. This is a variant of ObliInjection, in
+segments, as we will discuss in our attack settings.                         which we replace our orderGCG with GCG while keeping
+                                                                             the order-oblivious loss unchanged.
+Compared attacks: We compare ObliInjection with five                      • ObliInjection-CE. This variant replaces the order-
+attacks, including two variants of ObliInjection. Given a target             oblivious loss with the standard cross-entropy loss, while
+task and an injected task, these attacks are used to craft a                 still using orderGCG for optimization. Specifically, we
+contaminated segment.                                                        sample a single permutation of the shadow segments
+                                                                             and the contaminated segment and fix this permutation
+   • Combined Attack [4]. This attack was originally de-                     throughout the optimization when computing the cross-
+      signed for single-source data, but we adapt it to the                  entropy loss. Together, these two variants–ObliInjection-
+      multi-source data setting. Specifically, it combines mul-              GCG and ObliInjection-CE–demonstrate that both our
+      tiple heuristics to construct a contaminated segment as                order-oblivious loss and the orderGCG algorithm are
+      x =“\n”|| “Answer: task complete.”||“\n”||“Ignore pre-                 essential components of ObliInjection.
+      vious instructions.”||pe|| “Ignore previous instructions.”,         • ObliInjection. This is our full ObliInjection, which incor-
+      where pe denotes the injected prompt corresponding to                  porates both the order-oblivious loss and the orderGCG
+      the injected task.                                                     algorithm for optimization.
+
+   • Neural Exec [5]. This attack was originally designed             Evaluation metrics: We use Attack Success Rate (ASR) to
+      for RAG-based question answering, but we adapt it to
+      our problem setting. Specifically, it uses the standard         evaluate the effectiveness of an attack. Suppose an attack
+      cross-entropy loss, where the ordering of the shadow and        crafts a contaminated segment x. Given a target task with
+      contaminated segments is sampled once at the beginning          instruction st and a set of clean data segments X , the clean
+      and kept fixed throughout the optimization process. The         segments in X and the contaminated segment x are permuted
+      attack then applies GCG [21] to minimize this loss
+      and optimize the contaminated segment x. We note that           in an unknown order to form the contaminated target data
+      GCG incorporates multiple advanced heuristics, such as          xc. The attack is considered successful if the target LLM f
+      multiple substitutions and buffer strategies, as provided       generates the injected response re when given st||xc as input.
+      in the public code [22].
+                                                                      ASR is defined as the average success rate across all possible
+   • JudgeDeceiver [6]. This attack was originally developed
+      for the LLM-as-a-judge setting, but we adapt it to our          permutations of the segments. Formally, we define ASR as:
+      problem setting. Specifically, its objective consists of a
+      cross-entropy loss, a perplexity loss on the contaminated           ASR = Exc∼Per(X ∪{x}) I f (st||xc), re ,    (4)
+      segment, and an enhancement loss. All three losses are
+      averaged over different insertion positions of the contam-      where Per denotes the uniform distribution over all permuta-
+      inated segment among the shadow segments. However, it
+                                                                      tions of the segments in X ∪ {x}, and I(·, ·) is the indicator
+                                                                      function, which returns 1 if the output of the LLM f (st||xc)
+                                                                      is semantically equivalent to the injected response re, and 0
+
+                                                                   9
+
+
+===== PAGE 10 / 18 =====
+
+otherwise. Specifically, for the three injected tasks/responses,      0.06  Target                                 SS
+we consider f (st||xc) semantically equivalent to re if the
+former contains the keyword “useless”, “fake”, or “unknown”.                Shadow 2.0
+In our experiments, we calculate ASR by sampling 50 permu-            Density                                      TT
+tations of X ∪ {x}. When an attacker attacks multiple target                                              Density
+tasks simultaneously using a single optimized contaminated            0.03                                         1.0 S T
+segment, we report the average ASR across all target tasks to
+evaluate overall effectiveness.                                       0 0 50 100 150                               0.0 0.0 0.5 1.0
+                                                                                 Length                                    Cosine Similarity
+Attack setting: By default, we attack 10 target tasks in
+each dataset simultaneously by optimizing a single contam-               (a) Segment length                         (b) Semantic representation
+inated segment to reduce computational cost. In Step I of
+ObliInjection, generating the shadow target instruction and           Fig. 3: (a) Length distributions of shadow segments and target
+shadow segments requires metadata Mt from the target tasks.           segments. (b) Cosine similarity distributions between segment
+The metadata include product name and category for review             embeddings for shadow–shadow (S-S), target–target (T-T), and
+summarization, key event details such as time and location            shadow–target (S-T) pairs.
+for news summarization, and question type for RAG-based
+question answering. We generate 100 shadow segments for                  Furthermore, ObliInjection remains highly effective even
+each of the review summarization target tasks, and 10 shadow          when the shadow segments differ substantially from the target
+segments for the other target tasks.                                  segments. For example, the number of shadow data sources
+                                                                      differs significantly from the number of target data sources–
+   We assume the contaminated segment x takes the form                e.g., 10 shadow segments vs. 100 target segments for a target
+z ∥ pe ∥ z′, where pe is the injected prompt for the injected         task in the Amazon Reviews dataset. Figure 3a illustrates
+task, and we optimize (z, z′) over diter = 200 iterations of          the length (i.e., number of tokens) distributions of shadow
+orderGCG. In each iteration, we sequentially sample 2 out of          and target segments for one target task in the Amazon Re-
+the 10 target tasks and, for each, select a shadow segment            views dataset. Additionally, Figure 3b presents cosine similar-
+subset of size ns–with ns = 10 for Amazon Reviews and                 ity scores between segment embeddings for shadow-shadow,
+ns = 3 for the other two datasets. Unless otherwise specified,        shadow-target, and target-target pairs, where embeddings are
+we set the following hyperparameters: dbuf = 5, dtok = 128,           computed using the all-MiniLM-L6-v2 model. The results
+dseg = 30, and drep = 2. In Step V of ObliInjection,                  indicate substantial differences between shadow and target
+we generate an additional 100 shadow segments for review              segments in both length and semantic representation. Despite
+summarization target tasks and 10 shadow segments for the             these discrepancies, the contaminated segments optimized
+other target tasks to serve as the validation dataset.                using the shadow segments remain highly effective when
+                                                                      applied to the target segments, highlighting ObliInjection’s
+   Notably, for attacks such as Neural Exec, JudgeDeceiver,           strong generalization capabilities across datasets.
+and ObliInjection-GCG that do not employ a beam search
+strategy, we set dseg = 5×30 to ensure the total computational        Our ObliInjection outperforms baselines: Table II shows
+cost remains approximately consistent across different attack         that ObliInjection substantially outperforms all baseline at-
+methods, enabling fair comparisons.                                   tacks. In particular, the Combined Attack demonstrates the
+                                                                      weakest effectiveness, achieving only 5.9% average ASR
+B. Main Results                                                       on Amazon Reviews and 22.2% on Multi-News. This poor
+                                                                      performance is primarily due to its design for single-source
+   Table II reports the average ASR across target tasks for           data; it does not account for segment ordering when applied
+different attacks evaluated on various datasets and LLMs.             in the multi-source setting.
+
+Our ObliInjection is highly effective: The results show                  Neural Exec and JudgeDeceiver are more effective than
+that ObliInjection consistently achieves high ASRs across all         Combined Attack but still yield suboptimal performance. For
+three datasets and seven LLMs. Specifically, ObliInjection            instance, Neural Exec achieves only 7.1% ASR on Amazon
+attains an average ASR of 99.0%, 98.7%, and 99.6% on the              Reviews, 36.5% on Multi-News, and 20.5% on HotpotQA.
+three datasets, respectively, when averaged across the seven          These limitations stem from the fact that these attacks do
+LLMs. These results demonstrate the strong effectiveness of           not account for segment permutation–a unique and critical
+ObliInjection even under the challenging scenario of prompt           challenge in prompt injection against multi-source data.
+injection in multi-source target data, where only a single
+source is contaminated. Despite substantial architectural dif-           ObliInjection also significantly outperforms the two vari-
+ferences among the seven LLMs, ObliInjection consistently             ants, ObliInjection-GCG and ObliInjection-CE. These re-
+maintains high effectiveness across all of them. It achieves an       sults highlight the importance of both core innovations in
+ASR of at least 98.0% across all datasets and models, with            ObliInjection–the order-oblivious loss and the orderGCG al-
+the only exception being the Multi-News dataset when attack-          gorithm. Replacing either component leads to substantially de-
+ing Mistral-7B, where the ASR remains as high as 93.8%.               graded attack effectiveness, confirming that both are essential
+These findings underscore the effectiveness and generality of         to ObliInjection’s success.
+ObliInjection across a diverse range of LLMs.
+
+                                                                  10
+
+
+===== PAGE 11 / 18 =====
+
+TABLE III: Model transfer performance between shadow and target LLMs.
+
+              Shadow LLM                                                                   Target LLM
+
+Llama-3-8B Mistral-7B Llama-3.1-8B Qwen-2.5-7B Falcon3-7B Mistral-7B Llama-3.1-8B Qwen-2.5-7B Llama4-17B Qwen3-4B GPT-4o Gemini-2.5-flash
+
+✓                                            0.0                      78.4            8.5  88.2        52.2           0.0
+
+✓  ✓                                         –                        67.3        92.4     20.4        56.8           1.3
+
+✓  ✓          ✓                              –                        –           85.6     63.0        98.6           3.0
+
+✓  ✓          ✓               ✓              –                        –               –    99.6        99.6           0.0
+
+✓  ✓          ✓               ✓           ✓  –                        –               –    96.8        99.8 24.0 (95.2)         87.3
+
+TABLE IV: ASR (%) of ObliInjection on target tasks not                are optimized using varying numbers of shadow LLMs and
+used during contaminated–segment optimization.                        then evaluated on different target LLMs. We observe that
+                                                                      ObliInjection achieves significantly better transferability when
+LLM           Amazon Reviews  Multi-News     HotpotQA                 more shadow LLMs are incorporated during optimization. For
+                                                                      instance, ASR on Falcon3-7B increases from 0.0% to 95.6%
+Llama-3-8B            89.8        98.7           93.6                 as the number of shadow LLMs increases from 1 to 4.
+Llama-3.1-8B          95.3        97.6           98.4
+Mistral-7B            99.4        93.1           97.0                    The ASR for GPT-4o is lower at 24.0% when ObliInjec-
+Qwen-2.5-7B           99.3        99.6           95.3                 tion does not have any access to GPT-4o’s API. However,
+Falcon3-7B            97.5        96.4           92.6                 ObliInjection can leverage log probabilities returned by the
+Llama4-17B            99.0        100.0          95.6                 API to further enhance transferability. Specifically, we use the
+Qwen3-4B              99.7        97.9          100.0                 API’s output log probabilities to compute the approximated
+                                                                      order-oblivious loss, while all other steps in optimizing the
+Average               97.1        97.6           96.1                 contaminated segment still rely on shadow LLMs. In Line 4 of
+                                                                      Algorithm 2, the log probabilities returned by the API are used
+Computation cost of ObliInjection: ObliInjection’s com-               to compute the cross-entropy loss ℓ(f (sts||xcs,p), re). Given an
+putation cost is acceptable. For example, on the Amazon               input, the GPT-4o API returns the log probabilities of the
+Reviews dataset, optimizing a contaminated segment for 10             top-20 predicted tokens at each position of the response. If
+target tasks takes fewer than 4 hours on a single A100 GPU            a token in the injected response re appears among these top-
+for all evaluated LLMs except Llama-4-17B, and about 13               20 tokens, its log probability is used to compute the loss at that
+hours for Llama-4-17B using two H200 GPUs. We emphasize               position; otherwise, a large value (e.g., 30 in our experiments)
+that ObliInjection performs this optimization offline and only        is assigned to the loss. With such access, the ASR on GPT-
+once, rather than during a real-time attack. Thus, the overall        4o improves to 95.2% when five shadow LLMs are used.
+computational overhead is acceptable.                                 We note that leveraging log probabilities to approximate the
+                                                                      candidate segments’ cross-entropy loss during ObliInjection’s
+C. Ablation Studies                                                   optimization incurs 120K API queries in our experiments.
+                                                                      These results suggest that attackers can substantially improve
+Transferability across target tasks: In practice, it may be           ObliInjection’s effectiveness on unknown target LLMs by
+infeasible for an attacker to optimize the contaminated segment       leveraging more shadow LLMs and exploiting any available
+across a large number of target tasks simultaneously, due             log-probability information, at the cost of some API queries.
+to computational constraints. This raises a natural question:         Note that contaminated segments optimized using GPT-4o’s
+is a contaminated segment optimized on a subset of target             log probabilities achieve an 87.3% ASR on Gemini-2.5-flash.
+tasks still effective on unseen target tasks? Table IV reports
+the averaged ASR of contaminated segments optimized by                Different forms of contaminated segment x: By default, we
+ObliInjection using 10 target tasks, but evaluated on the
+remaining 90 tasks in each dataset across various LLMs. We            assume that the contaminated segment x takes the structured
+observe that ObliInjection consistently achieves high ASRs            form x = z||pe||z′, where pe is the injected prompt corre-
+on these unseen target tasks–for example, 97.1% on Amazon
+Reviews, 97.6% on Multi-News, and 96.1% on HotpotQA,                  sponding to the injected task. To explore the design choices
+on average. Notably, these ASRs are only slightly lower than
+those obtained on the target tasks used during optimization           for x, we additionally evaluate two alternative forms: (1) a
+(see Table II). These results show that ObliInjection general-
+izes well to unseen target tasks, and its strong transferability      fully unconstrained form where all tokens of x can be freely
+substantially improves attack efficiency by removing the need
+to re-optimize the contaminated segment for each target task.         optimized, and (2) a more constrained form x = xis||z||pe||z′,
+                                                                             xi
+Transferability across LLMs: When the target LLM is un-               where       is  a    randomly  sampled  shadow  segment.  For  a  fair
+known, the attacker cannot optimize the contaminated segment                   s
+using its model parameters. Therefore, we evaluate the trans-
+ferability of ObliInjection across LLMs. Specifically, Table III      comparison, we ensure that the total length of x is kept the
+reports the ASR of ObliInjection when contaminated segments
+                                                                      same across all three forms.
+
+                                                                      Table V reports the ASR of ObliInjection for each form
+
+                                                                      across different LLMs. The results show that the structured
+                                                                      form x = z||pe||z′ consistently achieves the highest ASR. It
+
+                                                                      outperforms the constrained form with the prepended shadow
+                                                                      segment x = xis||z||pe||z′, which in turn outperforms the
+
+                                                                  11
+
+
+===== PAGE 12 / 18 =====
+
+TABLE V: ASR (%) of ObliInjection when using different forms of contaminated segment x across LLMs.
+
+Form of x             Opt. var.  Llama-3-8B   Llama-3.1-8B         Mistral-7B    Qwen-2.5-7B  Falcon3-7B   Llama4-17B  Qwen3-4B  Average
+
+x                         x           94.6          90.8               67.4           82.6        63.8          98.8       63.2    80.2
+x = z||pe||z′          (z, z′)        99.4          98.0               99.2           99.8        98.2          99.8       98.8    99.0
+x = xis||z||pe||z′     (z, z′)       100.0          97.2               78.8           98.8        88.4          99.2       98.4    94.4
+
+        100 100.0 98.0 98.2 95.5 91.0                   100                      98.2 100.0           100  89.0 98.2 99.8 100.0
+
+ASR (%)                                                 50
+                                              ASR (%)
+                                                                                             ASR (%)
+        50                                                          41.0                              50
+
+         0 1 5 10 20 50                                       25.8                                         16.2
+                  Number of Target Tasks
+                                                        01          3            5  10                 0 2 5 10 20 50
+                                                                                                              Number of Shadow Sources
+                                                                    Buffer Size
+
+                          (a)                                               (b)                            (c)
+
+Fig. 4: Impact of (a) number of target tasks attacked simultaneously, (b) buffer size dbuf, and (c) number of shadow sources
+ns on the ASR of ObliInjection.
+
+TABLE VI: ASR (%) of ObliInjection with expressive and                           simultaneously, buffer size dbuf, and the number of shadow
+concise shadow target instructions.                                              sources ns on ObliInjection for Falcon3-7B and the Ama-
+                                                                                 zon Reviews dataset. We observe that overall, ObliInjection
+        LLM                      Expressive   Concise                            becomes slightly less effective as the number of target tasks
+                                                                                 increases, since it becomes more challenging to optimize a
+        Llama-3-8B                   99.4       97.0                             single contaminated segment that performs equally well across
+        Llama-3.1-8B                 98.0       86.1                             many target tasks. The effectiveness of ObliInjection improves
+        Mistral-7B                   99.2       83.3                             as the buffer size increases, because more segment candidates
+        Qwen-2.5-7B                  99.8       90.7                             are considered in each iteration. Moreover, ObliInjection is
+        Falcon3-7B                   98.2       79.8                             relatively insensitive to the number of shadow sources as long
+        Llama4-17B                   99.8       95.0                             as it is sufficiently large, e.g., greater than 10.
+        Qwen3-4B                     98.8       93.8
+                                                                                 Additional experiments: Additional experimental results
+fully unconstrained form. The reduced performance of x =                         on alternative injected tasks and other hyperparameters of
+                                                                                 ObliInjection can be found in Section A of the Appendix.
+xis||z||pe||z′ can be attributed to the fact that the prepended
+                 xi                                                                                          VI. DEFENSES
+shadow  segment       is  unrelated  to  the  injected  task  and   limits
+                   s                                                             A. Prevention-based Defenses
+
+the optimization space available to adapt x.                                     Experimental setup: We evaluate the following prevention-
+                                                                                 based defenses.
+Although the unconstrained form theoretically has a larger
+                                                                                    StruQ [23] and SecAlign [24]. Both approaches fine-tune
+search space–making it possible to contain the optimal struc-                    LLMs to improve robustness against prompt injection attacks.
+                                                                                 We evaluate the publicly available fine-tuned models provided
+tured solution–the discrete nature of the optimization makes                     by these defenses, including LLama-3-8B-StruQ and LLama-
+                                                                                 3-8B-SecAlign. Since these defenses rely on delimiters to
+this problem difficult to solve effectively in practice. These                   clearly separate the instruction, data, and response, we also
+results suggest that the structured form x = z||pe||z′ makes                     incorporate delimiters to isolate our contaminated segment.
+                                                                                 However, their secure front-end filters out these delimiter
+it more efficient to discover effective contaminated segments                    tokens when they appear in the data, preventing us from using
+                                                                                 them directly. To address this, following Jia et al. [31], we
+that mislead LLMs into completing the injected task.                             identify alternative tokens with embeddings most similar to
+                                                                                 the original delimiters and use them to approximate the same
+Impact of the shadow target instruction sts: Recall that                         separation effect. Other than this delimiter substitution, we use
+ObliInjection generates shadow target instructions containing                    the default attack settings described in Section V-A.
+detailed textual descriptions to enhance expressiveness. We
+also explore an alternative design that produces more concise                       Moreover, we further adapt Llama-3-8B-SecAlign using
+shadow target instructions. Table VI shows the ASR of ObliIn-                    our attack. Specifically, we construct a preference dataset
+jection using expressive versus concise shadow target instruc-
+tions across various LLMs on the Amazon Reviews dataset,
+where the expressive and concise instructions have 55 and 27
+tokens on average, respectively. The results demonstrate that
+incorporating detailed, expressive shadow target instructions
+improves the effectiveness of ObliInjection.
+
+Impact of the hyperparameters of ObliInjection: Figure 4
+shows the impact of the number of target tasks attacked
+
+                                                                            12
+
+
+===== PAGE 13 / 18 =====
+
+TABLE VII: (a) ASR (%) of ObliInjection against prevention-           segment x rather than assuming the structured form x =
+based defenses. (b) FPR (%) and FNR (%) of PPL and                    xis||z||pe||z′–the ASR rises to 81.0%. This behavior aligns
+DataSentinel at classifying contaminated and clean segments.          with a common limitation of adversarial-training–based adap-
+                                                                      tive defenses [42], which often fail to generalize beyond the
+            (a)                      (b)                              specific attack settings seen during training. Moreover, leave-
+                                                                      one-segment-out and segment delimiters fail almost entirely
+Prevention             ASR      Detector FPR FNR                      against ObliInjection, as reflected by their high ASRs.
+
+Llama-3-8B-StruQ       77.9     PPL       3.6 92.6                    B. Detection-based Defenses
+
+Llama-3-8B-SecAlign    63.8     DataSentinel 0.2 79.6
+
+Llama-3-8B-SecAlign-Adapt 53.3
+
+Leave-one-segment-out  99.3
+
+Segment Delimiters     96.3
+
+with 5,000 samples: half are clean examples sampled from              Experimental setup: We evaluate two detection-based de-
+Alpaca [41], and the other half are injected examples. Each           fenses: Perplexity-based detection (PPL) [25] and DataSen-
+injected sample contains: (1) a contaminated input consisting         tinel [26]. Since the service provider has access to individual
+of 10 randomly ordered Amazon Review segments (the maxi-              segments, we apply each defense to classify segments as either
+mum that fits within the recommended training context length),        clean or contaminated. Specifically, PPL flags a segment as
+plus one contaminated segment inserted at a random position;          contaminated if its perplexity exceeds a predefined threshold.
+(2) a desired response, defined as the model’s output when            Following prior work [4], we set this threshold such that
+the contaminated segment is removed; and (3) an undesired             fewer than 1% of clean validation segments are incorrectly
+response, representing the injected output. We also vary the          flagged. In our experiments, we compute perplexity using
+injected tasks to prevent the model from simply learning to           LLaMA-3-8B and use 10,000 Amazon reviews–distinct from
+ignore one fixed undesired response. Following [24], we fine-         the evaluation segments in the Amazon Reviews dataset–as
+tune Llama-3-8B-SecAlign with DPO for 3 epochs, yielding a            the clean validation segments. DataSentinel, on the other hand,
+model we denote as Llama-3-8B-SecAlign-Adapt. After fine-             classifies a segment as contaminated if the detection LLM’s
+tuning, we apply ObliInjection to Llama-3-8B-SecAlign-Adapt           response fails to include the secret key when provided with
+to generate new contaminated segments.                                both a detection instruction containing the key and the segment
+                                                                      as input. For this defense, we use the detection LLM fine-tuned
+   Leave-one-segment-out and segment delimiters. Given a              from Mistral-7B, as publicly released by the authors.
+data sample consisting of n segments, the leave-one-segment-
+out defense removes one segment at random and generates                  We adopt the adaptive attacker threat model, where the
+a response using the remaining segments. This procedure               attacker is aware of the deployed defense and has access to the
+is repeated multiple times (50 in our experiments), and the           corresponding detection API, consistent with the threat model
+resulting responses are aggregated into a final decision. If the      of these defenses. Under this setting, we adapt ObliInjection
+majority of these responses are deemed semantically similar           to bypass the defenses. Specifically, during optimization, we
+to the attacker’s injected response, we consider the attack           constrain the contaminated segment to the structured form
+successful. The segment delimiters defense prepends explicit          z||pe||z′. When updating the buffer in Algorithm 5, we first
+markers–such as “Review i says:”–to each segment to clearly           filter out segment candidates flagged as contaminated by
+indicate that each segment corresponds to a single review.            DataSentinel before proceeding with the remaining steps. In
+                                                                      addition, to lower the perplexity of the final contaminated
+Experimental results: Table VIIa reports the ASR of Obli-             segment and evade PPL, we prepend a randomly selected
+Injection against prevention-based defenses on the Amazon             shadow segment after optimization.
+Reviews dataset. The results for leave-one-segment-out and
+segment delimiters are averaged across the seven LLMs (the               We generate 50 contaminated segments on the Amazon
+per-model breakdown is provided in Table VIII in the Ap-              Reviews dataset across five LLMs. This dataset also includes
+pendix). Compared with the baseline results in Table II, both         10,000 clean segments. We report the False Positive Rate
+StruQ and SecAlign reduce the ASR of ObliInjection, but               (FPR)–the fraction of clean segments incorrectly flagged as
+the reductions are limited. For example, ObliInjection still          contaminated–and the False Negative Rate (FNR)–the fraction
+achieves an ASR of 63.8% against LLaMA-3-8B defended by               of contaminated segments mistakenly classified as clean.
+SecAlign. These results indicate that although these defenses
+provide some protection, they remain insufficient to defend           Experimental results: Table VIIb reports the FPR and FNR
+against ObliInjection. Adapting SecAlign using attack samples         of both PPL and DataSentinel. Both methods exhibit high
+generated by ObliInjection provides only marginal benefit:            FNRs, indicating that they fail to reliably detect contaminated
+the ASR decreases to 53.3% when the attack samples used               segments crafted by ObliInjection. We stress that the contam-
+for fine-tuning and evaluation are generated under the same           inated segments still achieve high ASRs: 85.5% on LLaMA-
+setting. However, when the attack uses a slightly different           3-8B, 100% on LLaMA-3.1-8B, 97.6% on Mistral-7B, 86.2%
+configuration–for example, optimizing the entire contaminated         on Qwen-2.5-7B, and 90.8% on Falcon3-7B. These results
+                                                                      demonstrate that ObliInjection can effectively evade existing
+                                                                      detection-based defenses while preserving its attack success.
+
+                                                                  13
+
+
+===== PAGE 14 / 18 =====
+
+VII. CONCLUSION, LIMITATIONS, AND FUTURE WORK                                        REFERENCES
+
+   In this work, we demonstrate that by leveraging the order-       [1] V. Schermerhorn, “How Amazon continues to im-
+oblivious loss and the orderGCG algorithm, an attacker can
+strategically contaminate just a single segment to mislead an       prove the customer reviews experience with genera-
+LLM into completing an attacker-chosen task, regardless of
+how the clean and contaminated segments are ordered to form         tive       AI,”    https://www.aboutamazon.com/news/amazon-ai/
+the target data. Moreover, the resulting contaminated segments
+exhibit good transferability across different target tasks and      amazon-improves-customer-reviews-with-generative-ai, 2023.
+LLMs. Existing defenses, including both prevention-based
+and detection-based approaches, are insufficient to mitigate        [2] L. Reid, “Generative AI in Search: Let Google do the
+our attack. Designing more effective defenses remains an
+important and promising direction for future research.              searching     for  you,”          https://blog.google/products/search/
+
+   When evaluating ASR, we check for the presence of key-           generative-ai-google-search-may-2024/, 2024.
+words such as “useless,” “fake,” or “unknown.” We acknowl-
+edge that this simplified metric may introduce inaccuracies.        [3] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and
+For example, an LLM might produce a response like: “Some
+people might think the product is useless, but others love          M. Fritz, “Not what you’ve signed up for: Compromising real-world llm-
+it.” Although the semantic meaning contradicts the attack
+objective, our metric would still count this as a success.          integrated applications with indirect prompt injection,” in AISec, 2023.
+However, after manually reviewing the results we report, we
+found no cases in which a keyword appeared with an oppo-            [4] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formalizing and bench-
+site meaning. For instance, in the Amazon Reviews dataset,
+among all responses containing the keyword “useless,” 93.1%         marking prompt injection attacks and defenses,” in USENIX Security
+exactly match the attacker’s intended output – “The product
+is useless!” – and the remaining 6.9% differ only in trivial        Symposium, 2024.
+formatting, such as “The product is. . . USELESS!”.
+                                                                    [5] D. Pasquini, M. Strohmeier, and C. Troncoso, “Neural exec: Learning
+Acknowledgements: We thank the anonymous reviewers for
+their constructive comments. This work was supported by NSF         (and learning from) execution triggers for prompt injection attacks,” in
+under grant no. 2450935, 2131859, 2125977, 2112562, and
+1937787.                                                            AISec, 2024.
+
+                 VIII. ETHICS CONSIDERATIONS                        [6] J. Shi, Z. Yuan, Y. Liu, Y. Huang, P. Zhou, L. Sun, and N. Z. Gong,
+
+   This work explores prompt injection attacks on multi-            “Optimization-based prompt injection attack to llm-as-a-judge,” in CCS,
+source LLM applications. All experiments were conducted in
+controlled settings, without posing any risk to real users or       2024.
+systems. The contaminated segments generated in our work
+have not been disclosed on any public platform nor shared           [7] OpenAI, “GPT-4o mini: advancing cost-efficient intelligence,” https:
+outside the author team. Experimental results and code were
+processed and stored locally to avoid any disruption to real-       //openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/,
+world systems. To support transparency while minimizing
+misuse, we will release code and data under restricted access.      2024.
+Interested parties must request permission and disclose their
+intended use before access is granted. We have responsibly no-      [8] M. Llama, “Llama Prompt Guard 2 Model Card,” https://github.
+tified relevant companies whose LLMs or applications are po-
+tentially vulnerable to ObliInjection, including OpenAI, Meta       com/meta-llama/PurpleLlama/blob/main/Llama-Prompt-Guard-2/86M/
+AI, Mistral AI, Alibaba Cloud, TII, Amazon, and Google, and
+we are currently awaiting their responses. We recognize the         MODEL\ CARD.md, 2025.
+potential for misuse of prompt injection techniques and have
+taken steps to mitigate this risk through access restrictions       [9] Anthropic, “System Card: Claude Opus 4 & Claude Sonnet 4,” https:
+and responsible disclosure. At the same time, we believe
+that sharing our experimental findings with the academic and        //www.anthropic.com/model-card, 2025.
+development communities is ultimately beneficial for raising
+awareness of multi-source prompt injection vulnerabilities and      [10] C. Shi, S. Lin, S. Song, J. Hayes, I. Shumailov, I. Yona, J. Pluto,
+promoting the development of effective defenses. By respon-
+sibly publishing our work, we hope to contribute to a more          A. Pappu, C. A. Choquette-Choo, M. Nasr et al., “Lessons from
+secure LLM ecosystem.
+                                                                    defending gemini against indirect prompt injections,” arXiv preprint
+
+                                                                    arXiv:2505.14534, 2025.
+
+                                                                    [11] C. Szegedy, W. Zaremba, I. Sutskever, J. Bruna, D. Erhan, I. Goodfellow,
+
+                                                                    and R. Fergus, “Intriguing properties of neural networks,” in ICLR, 2014.
+
+                                                                    [12] B. Biggio, B. Nelson, and P. Laskov, “Poisoning attacks against support
+
+                                                                    vector machines,” in ICML, 2012.
+
+                                                                    [13] M. Fang, X. Cao, J. Jia, and N. Gong, “Local model poisoning
+
+                                                                    attacks to {Byzantine-Robust} federated learning,” in USENIX Security
+
+                                                                    Symposium, 2020.
+
+                                                                    [14] S. Willison, “Prompt injection attacks against GPT-3,” https://
+
+                                                                    simonwillison.net/2022/Sep/12/prompt-injection/, 2022.
+
+                                                                    [15] F. Perez and I. Ribeiro, “Ignore previous prompt: Attack techniques for
+
+                                                                    language models,” in NeurIPS ML Safety Workshop, 2022.
+
+                                                                    [16] S. Willison, “Delimiters won’t save you from prompt injection,” https:
+
+                                                                    //simonwillison.net/2023/May/11/delimiters-wont-save-you, 2023.
+
+                                                                    [17] B. Hui, H. Yuan, N. Gong, P. Burlina, and Y. Cao, “Pleak: Prompt
+
+                                                                    leaking attacks against large language model applications,” in CCS,
+
+                                                                    2024.
+
+                                                                    [18] X. Liu, Z. Yu, Y. Zhang, N. Zhang, and C. Xiao, “Automatic and
+
+                                                                    universal prompt injection attacks against large language models,” arXiv
+
+                                                                    preprint arXiv:2403.04957, 2024.
+
+                                                                    [19] J. Shi, Z. Yuan, G. Tie, P. Zhou, N. Z. Gong, and L. Sun, “Prompt
+
+                                                                    injection attack to tool selection in llm agents,” arXiv preprint
+
+                                                                    arXiv:2504.19793, 2025.
+
+                                                                    [20] J. Ebrahimi, A. Rao, D. Lowd, and D. Dou, “Hotflip: White-box
+
+                                                                    adversarial examples for text classification,” in ACL, 2018.
+
+                                                                    [21] A. Zou, Z. Wang, J. Z. Kolter, and M. Fredrikson, “Universal and
+
+                                                                    transferable adversarial attacks on aligned language models,” arXiv
+
+                                                                    preprint arXiv:2307.15043, 2023.
+
+                                                                    [22] “nanoGCG,” https://github.com/GraySwanAI/nanoGCG, 2024.
+
+                                                                    [23] S. Chen, J. Piet, C. Sitawarin, and D. Wagner, “Struq: Defending
+
+                                                                    against prompt injection with structured queries,” in USENIX Security
+
+                                                                    Symposium, 2025.
+
+                                                                    [24] S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri, D. Wag-
+
+                                                                    ner, and C. Guo, “Secalign: Defending against prompt injection with
+
+                                                                    preference optimization,” in CCS, 2025.
+
+                                                                    [25] G. Alon and M. Kamfonas, “Detecting language model attacks with
+
+                                                                    perplexity,” arXiv preprint arXiv:2308.14132, 2023.
+
+                                                                    [26] Y. Liu, Y. Jia, J. Jia, D. Song, and N. Z. Gong, “DataSentinel: A game-
+
+                                                                    theoretic detection of prompt injection attacks,” in IEEE S & P, 2025.
+
+                                                                    [27] W. Zou, R. Geng, B. Wang, and J. Jia, “Poisonedrag: Knowledge
+
+                                                                    corruption attacks to retrieval-augmented generation of large language
+
+                                                                    models,” in USENIX Security Symposium, 2025.
+
+                                                                14
+
+
+===== PAGE 15 / 18 =====
+
+TABLE VIII: ASR (%) of ObliInjection against leave-one-segment-out and segment delimiters defenses.
+
+Defense                Llama-3-8B  Llama-3.1-8B  Mistral-7B                        Qwen-2.5-7B     Falcon3-7B    Llama4-17B                    Qwen3-4B              Average
+
+Leave-one-segment-out       99.2         98.9        99.8                               100.0          99.2           98.4                         99.4                99.3
+Segment Delimiters         100.0         91.4        98.2                               93.6           91.6           99.8                         99.2                96.3
+
+[28] Y. Jiao, X. Wang, and K. Yang, “Pr-attack: Coordinated prompt-rag                 experiments on the Amazon Reviews dataset using three
+      attacks on retrieval-augmented generation in large language models via           variants of re: “The product is useless!”, “The product is
+      bilevel optimization,” in ACM SIGIR, 2025.                                       amazing!”, and “The product is average.” These reflect differ-
+                                                                                       ent attacker intents, such as demoting or promoting a product,
+[29] E. Wallace, K. Xiao, R. Leike, L. Weng, J. Heidecke, and A. Beutel,               while the injected task is still review summarization. During
+      “The instruction hierarchy: Training llms to prioritize privileged instruc-      optimization, we keep the injected prompt pe consistent with
+      tions,” arXiv preprint arXiv:2404.13208, 2024.                                   the corresponding response when constructing the contami-
+                                                                                       nated segment. We consider the model output f (st||xc) to
+[30] T. Wu, S. Zhang, K. Song, S. Xu, S. Zhao, R. Agrawal, S. R. Indurthi,             be semantically equivalent to re if it contains the keyword
+      C. Xiang, P. Mittal, and W. Zhou, “Instructional segment embedding:              “useless”, “amazing”, or “average”, respectively. As shown in
+      Improving llm safety with instruction hierarchy,” in ICLR, 2025.                 Table XII, ObliInjection achieves high ASR across all three
+                                                                                       cases–99.0% for “The product is useless!”, 97.7% for “The
+[31] Y. Jia, Z. Shao, Y. Liu, J. Jia, D. Song, and N. Z. Gong, “A critical             product is amazing!”, and 98.8% for “The product is average.”
+      evaluation of defenses against prompt injection attacks,” arXiv preprint         This demonstrates that ObliInjection can be effectively tailored
+      arXiv:2505.18333, 2025.                                                          to different attacker goals with various injected responses.
+
+[32] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian,            Algorithm 3 gen token cands – Step II
+      C. Kern, C. Shi, A. Terzis, and F. Trame`r, “Defeating prompt injections
+      by design,” arXiv preprint arXiv:2503.18813, 2025.                               Require: LLM f , shadow target instruction sts, injected re-
+                                                                                            sponse re, segment x = [x1, · · · , xk], and shadow seg-
+[33] T. Shi, J. He, Z. Wang, L. Wu, H. Li, W. Guo, and D. Song,
+      “Progent: Programmable privilege control for llm agents,” arXiv preprint             ment  subset  X′
+      arXiv:2504.11703, 2025.
+                                                                                                            s
+[34] M. Costa, B. Ko¨pf, A. Kolluri, A. Paverd, M. Russinovich, A. Salem,              Ensure: Token-level candidates {Tj}kj=1
+      S. Tople, L. Wutschitz, and S. Zanella-Be´guelin, “Securing ai agents                                                              ′            t        e
+      with information-flow control,” arXiv preprint arXiv:2505.23643, 2025.           1:  l ← order  oblivious     loss  (f       ,  X  s  ,  x,  s  s  ,  r     )
+
+[35] F. Wu, E. Cecchetti, and C. Xiao, “System-level defense against indirect          2: for j = 1 to k do
+      prompt injection attacks: An information flow control perspective,” arXiv
+      preprint arXiv:2409.19091, 2024.                                                 3: // Find candidates to replace xj
+
+[36] N. Jain, A. Schwarzschild, Y. Wen, G. Somepalli, J. Kirchenbauer, P. yeh          4: for x′j ∈ V do
+      Chiang, M. Goldblum, A. Saha, J. Geiping, and T. Goldstein, “Baseline                // Approximate the loss if replacing xj with x′j
+      defenses for adversarial attacks against aligned language models,” arXiv         5:
+      preprint arXiv:2309.00614, 2023.
+                                                                                       6:  l(x′j )    ≈  l(xj )  +  ∇  x     l  (  x  j  )  ⊤  (x  ′  −     xj )
+[37] Y. Nakajima, “Yohei’s blog post,” https://twitter.com/yoheinakajima/                                                                          j
+      status/1582844144640471040, 2022.                                                                                   j
+
+[38] Y. Jia, Y. Liu, Z. Shao, J. Jia, and N. Gong, “Promptlocate: Localizing           7: end for
+      prompt injection attacks,” in IEEE S & P, 2026.
+                                                                                       8: Tj ← the dtok tokens with the lowest loss l(x′j)
+[39] A. R. Fabbri, I. Li, T. She, S. Li, and D. R. Radev, “Multi-news: a large-
+      scale multi-document summarization dataset and abstractive hierarchical          9: end for
+      model,” 2019.
+                                                                                       10: return {Tj }kj=1
+[40] Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and
+      C. D. Manning, “HotpotQA: A dataset for diverse, explainable multi-hop           Algorithm 4 gen segment cands – Step III
+      question answering,” in EMNLP, 2018.
+                                                                                       Require: Token-level candidates {Tj}kj=1 and segment x =
+[41] R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang,             [x1, x2, · · · , xk]
+      and T. B. Hashimoto, “Stanford alpaca: An instruction-following llama
+      model,” https://github.com/tatsu-lab/stanford alpaca, 2023.                      Ensure: Segment-level candidates X ′new
+                                                                                        1: X ′new ← ∅
+[42] A. Madry, A. Makelov, L. Schmidt, D. Tsipras, and A. Vladu, “Towards               2: for i = 1 to dseg do
+      deep learning models resistant to adversarial attacks,” arXiv preprint            3: J ← random drep positions from {1, 2, · · · , k}
+      arXiv:1706.06083, 2017.                                                           4: Construct a segment-level candidate xnew by:
+
+[43] W. B. Dolan and C. Brockett, “Automatically constructing a corpus of                  xjnew =       x′j ∼ Tj      if j ∈ J                       for j = 1, 2, · · · , k
+      sentential paraphrases,” in IWP, 2005.                                                             xj            otherwise
+
+[44] T. Davidson, D. Warmsley, M. Macy, and I. Weber, “Automated hate                  5: X ′new ← X ′new ∪ {xnew}
+      speech detection and the problem of offensive language,” in ICWSM,               6: end for
+      2017.                                                                            7: return X ′new
+
+[45] A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. R. Bowman,
+      “GLUE: A multi-task benchmark and analysis platform for natural
+      language understanding,” in ICLR, 2019.
+
+[46] R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Ng, and
+      C. Potts, “Recursive deep models for semantic compositionality over a
+      sentiment treebank,” in EMNLP, 2013.
+
+[47] T. A. Almeida, J. M. G. Hidalgo, and A. Yamakami, “Contributions
+      to the study of sms spam filtering: New collection and results,” in
+      DOCENG, 2011.
+
+                               APPENDIX
+
+A. Additional Experiments
+
+Other injected responses: To evaluate the effectiveness
+
+of ObliInjection for different injected responses, we conduct
+
+                                                                                   15
+
+
+===== PAGE 16 / 18 =====
+
+TABLE IX: Our prompt used to query the auxiliary LLM to generate a shadow target instruction for each dataset.
+
+Dataset         Prompt
+Amazon Reviews
+                You are a prompt designer. Your task is to craft a clear and effective prompt for LLM to summarize Amazon product
+Multi-News      reviews. The summary should highlight key strengths, weaknesses, and the overall product highlights. Make sure the
+                prompt is suitable for use in an automated pipeline and encourages informative, customer-friendly summaries.
+HotpotQA        You are a prompt designer. Your task is to write a clear and effective prompt for LLM to summarize news articles. The
+                summary should capture the main events, key facts, and overall context in a concise and neutral tone. Ensure the prompt
+                is suitable for automated summarization and encourages factual, well-structured output.
+                You are a prompt designer. Your task is to write a clear and effective prompt for LLM to answer a question based on
+                multiple source documents or materials. The prompt should encourage the model to reason across the materials, synthesize
+                relevant information, and provide a coherent, well-supported answer. Ensure the prompt is suitable for multi-hop question
+                answering tasks.
+
+TABLE X: Prompt used to query the auxiliary LLM to generate shadow segments for the Amazon Reviews dataset.
+
+Dataset         Prompt
+Amazon Reviews
+                You are asked to generate 100 unique customer reviews based on the product details provided below. These reviews should
+                simulate real user experiences with a variety of tones and formats.
+                Product Metadata:
+
+                   • Category: {Category from metadata Mt}
+                   • Name: {Product name from metadata Mt}
+                   • Features: {Product features from metadata Mt}
+                   • Description: {Product description from metadata Mt}
+                   • Price: {Product price from metadata Mt}
+
+                Each review should:
+
+                   • Address aspects such as quality, performance, usability, durability, and value
+                   • Align with the rating in tone and sentiment
+                   • Vary in style—ranging from concise comments and detailed narratives to pros/cons lists and casual formats with
+
+                       typos or emojis
+
+                Output Format:
+                { “Title”: “[Review title]”, “Text”:“[Review text]”, “Rating”: [Rating from 1 to 5] }
+                Example:
+                { “Title”: “Five Stars”, “Text”: “On time. Works great!”, “Rating”: 5.0 }
+                Now generate 100 reviews that follow the above guidelines and metadata.
+
+Other injected tasks: The experiments above assume that the            pe = se||xe. All other settings follow the default configuration
+injected task is text summarization, while varying the injected        described in Section V-A. During evaluation, we consider
+responses. To evaluate the effectiveness of ObliInjection across       the attack successful if the model’s output f (st||xc) exactly
+a broader range of injected tasks, we conduct experiments on           matches re, where xc is the contaminated data formed by
+five types of natural language tasks, following Liu et al. [4]:        randomly permuting the clean and contaminated segments.
+duplicate sentence detection using the MRPC [43] dataset, hate
+content detection using HSOL [44], natural language inference             As shown in Table XIII, ObliInjection demonstrates strong
+using RTE [45], sentiment analysis using SST2 [46], and spam           attack effectiveness across all five injected tasks and five
+detection using the SMS Spam [47] dataset. For each type               LLMs, achieving average ASRs of 97.7% on duplicate sen-
+of task, we randomly sample one injected task (se, xe, re) to          tence detection, 97.3% on hate detection, 95.4% on natural
+construct a contaminated segment in the form z||pe||z′, where          language inference, 97.4% on sentiment analysis, and 94.2%
+                                                                       on spam detection. Each LLM achieves an ASR above 91%,
+
+100             99.6 98.2                 100 91.0 94.8 98.2 99.0 98.4 100 97.2 98.2 86.8 93.2
+
+     77.0                  76.4
+
+50ASR (%)                                 50                                                          50
+                                              ASR (%)
+                                                                                             ASR (%)
+
+0 32 64 128 256                           0 10 20 30 40 50                                            01  2    3  4
+ Number of Token Candidates Per Position       Number of Segment Candidates
+                                                                                                          Number of Positions to Replace
+
+                (a)                                               (b)                                     (c)
+
+Fig. 5: Impact of (a) number of token candidates per position dtok, (b) number of segment candidates dseg, and (c) number of
+positions drep to replace in a segment on the ASR of ObliInjection.
+
+                                                                  16
+
+
+===== PAGE 17 / 18 =====
+
+TABLE XI: Prompts used to query the auxiliary LLM to generate shadow segments for Multi-News and HotpotQA datasets.
+
+Dataset         Prompt
+Multi-News
+                You are asked to write 10 synthetic news articles based on the event summary provided below. Each article should reflect
+HotpotQA        the style and voice of a different media outlet.
+                News Metadata:
+
+                   • Event Summary: {Key facts from metadata Mt}
+
+                Each article should:
+
+                   • Present a distinct journalistic voice (e.g., objective, opinionated, local, informal)
+                   • Vary in structure, tone, and length (between 100–500 words)
+                   • Rephrase and elaborate on the provided facts without copying them verbatim
+                   • Read fluently and realistically, as if written by a professional journalist
+
+                Output Format:
+                { “Title”: “[Headline (1 to 20 words)]”, “Text”: “[News article (100 to 500 words)]” }
+                Example:
+                { “Title”: “Community Rallies After Storm Damage”, “Text”: “Local residents and volunteers are working together...” }
+                Now generate 10 news articles that follow the above requirements and metadata.
+
+                You are asked to generate a question and a list of supporting facts based on the provided question type. Write 1 natural-
+                sounding question followed by 10 supporting facts, each written as if sourced from a credible publication.
+                Question Metadata:
+
+                   • Question Type: {Type from metadata Mt}
+
+                Each supporting fact should:
+
+                   • Be relevant, informative, and topically related to the question
+                   • Mix factual and plausible (but fictional) content
+                   • Appear well-grounded and realistic in style and phrasing
+
+                Output Format:
+                { “Question”: “[The question]”, “Title”: “[Informative title for the fact]”, “Text”: “[100 to 300 word paragraph]” }
+                Example:
+                { “Question”: “Are Jean Genet and Mark Sandrich both from France?”, “Title”: “Mark Sandrich: Hollywood Director”,
+                “Text”: “Mark Sandrich was a prominent American film director...” }
+                Now generate the question and 10 supporting facts according to the above instructions.
+
+                TABLE XII: ASR (%) of ObliInjection for different injected responses across LLMs.
+
+Injected response re     Llama-3-8B  Llama-3.1-8B  Mistral-7B       Qwen-2.5-7B  Falcon3-7B  Llama4-17B  Qwen3-4B  Average
+
+The product is useless!       99.4         98.0        99.2              99.8        98.2         99.8       98.8    99.0
+The product is amazing!       94.0         99.4        94.0              100.0       99.4         99.6       97.6    97.7
+The product is average.      100.0        100.0        95.4              98.2        98.6        100.0       99.4    98.8
+
+                TABLE XIII: ASR (%) of ObliInjection for different injected tasks across LLMs.
+
+Injected task               Llama-3-8B Llama-3.1-8B Mistral-7B Qwen-2.5-7B Falcon3-7B Llama4-17B Qwen3-4B Average
+
+Duplicate Sentence Detection 94.6    96.8          96.4             99.2         97.8        100.0       98.8      97.7
+
+Hate Detection              100.0    99.0          91.0             95.8         99.8        96.0        99.5      97.3
+
+Natural Language Inference  97.0     91.4          98.0             94.0         96.8        91.0        99.6      95.4
+
+Sentiment Analysis          98.4     96.6          92.0             100.0        98.0        100.0       97.0      97.4
+
+Spam Detection              91.2     92.8          93.8             91.6         99.0        100.0       91.2      94.2
+
+highlighting the effectiveness of ObliInjection across both         increases the likelihood of identifying one that yields a higher
+diverse tasks and model architectures.                              ASR. Finally, ASR drops when drep is too large (e.g., exceeds
+                                                                    2), likely because the new segment diverges too much from
+Other hyperparameters of ObliInjection: Figure 5 shows              the original, reducing the attack’s effectiveness.
+how the ASR on Falcon3-7B varies with three hyperparam-
+eters of ObliInjection: the number of token candidates per
+position dtok in Algorithm 3, the number of segment candidates
+dseg in Algorithm 4, and the number of positions drep to
+replace in a segment in Algorithm 4. For dtok, too small or
+too large values lead to lower ASR. A too small dtok limits
+new token candidates to those with low estimated loss, which
+may be inaccurate due to approximation errors in the Taylor
+expansion. Conversely, a too large dtok introduces high-loss
+candidates that can mislead optimization. For dseg, increasing
+its value generally improves ASR, as more segment candidates
+
+                                                                17
+
+
+===== PAGE 18 / 18 =====
+
+TABLE XIV: Important notations.
+
+     Notation                    Description
+
+            f                               LLM
+     Superscript t           Information about target task
+     Superscript e          Information about injected task
+     st, xt, or pt        Target instruction, data, or prompt
+     se, xe, or pe       Injected instruction, data, or prompt
+
+           xc                       Contaminated data
+     pc = st||xc              Contaminated target prompt
+
+            n                   Number of data sources
+                                   Shadow information
+      Subscript s
+           sst                  Shadow target instruction
+           ns              Shadow number of data sources
+           xit
+            x                   Segment from ith source
+                                 Contaminated segment
+           xj
+          xs(i)                       jth token of x
+           Xs
+          diter     The ith shadow segment for the target task
+                     Set of shadow segments for the target task
+          dper
+                                  Number of iterations
+          dtok        Number of permutations to approximate
+          dseg
+          dbuf          the order-oblivious cross-entropy loss
+          drep             Number of candidates per token
+                            Number of segment candidates
+                                         Buffer size
+
+                    Number of positions to replace in a segment
+
+Algorithm 5 update buffer – Step IV
+
+Require: LLM f , buffer B, buffer size dbuf, shadow target
+
+     instruction sts, injected response re, segment-level candi-
+                                                                   X′
+     dates  Xnew,   and  shadow  segment           subset
+                                                                      s
+
+Ensure: Updated buffer B
+
+1: // Update losses of existing segments in the buffer
+
+2: for (x, lx, dx) ∈ B do
+
+3:   l ← order       oblivious  loss  (f  ,  X  ′  ,  x,  s  t  ,  r  e  )
+                                                s            s
+4: lx ← dx dx+1 · lx + 1 dx+1 · l
+5: dx ← dx + 1
+
+6: end for
+
+7: // Update the buffer with better candidates (if any)
+
+8: for x ∈ Xnew do
+
+9:   lx     ← order  oblivious   loss  (f    ,  X  ′  ,  x,  s  t  ,  r  e  )
+                                                   s            s
+
+10: if |B| < dbuf then
+
+11:      B ← B ∪ {(x, lx, 1)}
+
+12: else
+
+13:      // Worst segment in the buffer
+
+14:      (xmax, lxmax , dxmax ) ← arg max(x′,lx′ ,dx′ )∈B lx′
+
+15:      if lx < lxmax then
+
+16:         // Replace the worst segment in the buffer
+
+17:         B ← B \ {(xmax, lxmax , dxmax )}
+
+18:         B ← B ∪ {(x, lx, 1)}
+
+19:      end if
+
+20: end if
+
+21: end for
+
+22: return B
+
+                                                                               18

@@ -1,0 +1,909 @@
+# R2-23 | Privacy-R1: Privacy-Aware Multi-LLM Agent Collaboration via Reinforcement Learning
+# PDF: papers\Privacy-R1_Privacy-Aware Multi-LLM Agent Collaboration via Reinforcement Learning.pdf
+# extracted: 2026-11-02T20:15:46.546Z
+
+
+===== PAGE 1 / 14 =====
+
+Privacy-R1: Privacy-Aware Multi-LLM Agent Collaboration via
+                         Reinforcement Learning
+
+         Zheng Hui , Yijiang River Dong , Sanhanat Sivapiromrat
+                            Ehsan Shareghi , Nigel Collier
+
+                 University of Cambridge, University College London
+                                  {zh2483}@columbia.edu,
+
+                       {yd358, ss3229, es776, nhc30}@cam.ac.uk
+
+Abstract
+
+     When users submit queries to Large Language         Figure 1: A static rewriter (left) fails by redacting task-
+     Models (LLMs), their prompts can often con-         critical information. Our Privacy-R1 framework (right)
+     tain sensitive data, forcing a difficult choice:    succeeds by learning a policy to route sensitive and
+     Send the query to a powerful proprietary LLM        non-sensitive query chunks to the appropriate model,
+     providers to achieving state-of-the-art perfor-     preserving both privacy and task performance.
+     mance and risk data exposure, or relying on
+     smaller, local models guarantees data privacy       personal assistance systems (Li et al., 2024; Dong
+     but often results in a degradation of task perfor-  et al., 2026a) and memory-augmented systems
+     mance. Prior approaches have relied on static       (Huang et al., 2026; Hui et al., 2026; Zhang et al.,
+     pipelines that use LLM rewriting, which shat-       2026) that adapt to user preferences over time. As
+     ters linguistic coherence and indiscriminately      a result, user prompts often contain sensitive infor-
+     removes privacy-sensitive information, includ-      mation, ranging from personal identifiers and confi-
+     ing task-critical content. We reformulate this      dential business data to health and financial details
+     challenge (Privacy-Conscious Delegation) as         (Ai et al., 2024). This presents a dilemma: sending
+     a sequential decision-making problem and in-        a query to a powerful, state-of-the-art remote API
+     troduce a novel reinforcement learning (RL)         risks the exposure private data, while processing
+     framework called Privacy-R1 to solve it. Our        it with a secure, locally-hosted smaller model that
+     framework trains an agent to dynamically route      may yields a lower-quality response. This conflict
+     text chunks, learning a policy that optimally       between utility and privacy is a primary obstacle to
+     balances the trade-off between privacy leak-        deploying LLMs in critical domains like healthcare
+     age and task performance. It implicitly distin-     and finance (Rathod et al., 2025; Hui et al., 2025a),
+     guishes between replaceable Personally Iden-        making the development of trustworthy solutions
+     tifiable Information (PII) (which it shields lo-    a crucial area of research. To formally address
+     cally) and task-critical PII (which it strategi-    this trade-off, recent work has proposed the task
+     cally sends to the remote model for maximal         of Privacy-Conscious Delegation (Li et al., 2025).
+     utility). To validate our approach in complex       The goal is to create a system where a secure lo-
+     scenarios, we also introduce a new medical          cal model acts as an intelligent proxy, leveraging
+     dataset with high PII density. Our framework        the power of a remote API to fulfill a user’s re-
+     achieves a new state-of-the-art on the privacy-     quest without leaking their Personally Identifiable
+     utility frontier, demonstrating the necessity of
+     learned, adaptive policies for deploying LLMs
+     in sensitive environments. Dataset can be found
+     at: https://github.com/zackhuiiiii/Privacy-R1.
+
+1 Introduction
+
+As users increasingly rely on Large Language Mod-
+els (LLMs) (Brown et al., 2020) across a wide
+range of domains, their applications now extend far
+beyond basic text generation. These include syn-
+thetic data generation (Hui et al., 2024, 2025b), pro-
+fessional and creative writing (Chakrabarty et al.,
+2024), educational support and tutoring (Razafini-
+rina et al., 2024), legal drafting (Kolt et al., 2026),
+
+                                                                45924
+Proceedings of the 64th Annual Meeting of the Association for Com1putational Linguistics (Volume 1: Long Papers), pages 45924–45937
+
+                                           July 2-7, 2026 ©2026 Association for Computational Linguistics
+
+
+===== PAGE 2 / 14 =====
+
+Information (PII). Initial approaches to this task    next generation of trustworthy AI systems.
+
+have employed a static, monolithic prompt rewrit-     2 Related Works
+ing pipeline. This paradigm attempts to paraphrase
+
+the entire user query to remove all PII before send-  Training-Time vs. Inference-Time Privacy
+ing it to the remote API. However, this strategy is   While much privacy research focuses on training-
+inherently brittle. By treating the entire query as   time risks like data memorization and federated
+a single unit and removing all PII, it fails to make  learning (Kandpal et al., 2022; Carlini et al., 2022;
+nuanced decisions, leading to two catastrophic fail-  Wang et al., 2024; Ruzzetti et al., 2025; Dong et al.,
+ure modes. The first is discourse coherence failure,  2026b), protecting user data at inference time is
+where removing entities severs critical linguistic    a critical challenge (Mireshghallah et al., 2024).
+links within the text. The second is utility col-     Classical approaches (Herwanto et al., 2021; Ma-
+lapse as illustrated in Figure 1, where the PII is    hendran et al., 2021; Pamarthi, 2024) often rely
+integral to the user’s goal, and its removal renders  on Named Entity Recognition (NER) models to
+the query unanswerable. The core limitation of        perform static redaction method that frequently de-
+these approaches is that they are based on a fixed,   grades semantic coherence and downstream task
+context-blind policy. We argue that effective dele-   utility. The task of Privacy-Conscious Delegation
+gation is not a one-shot text manipulation task, but  (Li et al., 2025) was proposed to use LLM to para-
+rather a sequential decision-making problem where     phrase the entire user query to remove PII. Our
+the optimal action depends on both the immediate      work accepts this task definition but argues that
+context and the overall user objective. To solve      a static, global rewrite is suboptimal. We instead
+this, we introduce a novel reinforcement learning     propose a dynamic, routing approach.
+(RL) framework that explicitly learns to balance the
+
+competing pressures of privacy and performance.       Reinforcement Learning for Privacy-Aware
+Our framework trains a stateful policy agent to       Control Research at the intersection of RL and
+make granular, chunk-by-chunk routing decisions.      privacy has largely concentrated on two main di-
+By optimizing for a reward function that combines     rections. The first focuses train an RL to protect
+downstream task performance with a penalty for        sensitive information against inference or recon-
+privacy leakage, our agent learns a dynamic and       struction attacks (Andreoletti et al., 2020; Qiao and
+pragmatic policy. It learns when to shield informa-   Wang, 2023; Mo et al., 2024; Tan et al., 2025). The
+tion and when a calculated privacy risk is necessary  second line of work applies RL to generative mod-
+to achieve a high-quality outcome for the user. Our   els, where rewards are formulated to balance the
+primary contributions are threefold:                  quality or utility of generated outputs (e.g., text,
+
+• We introduce a novel RL framework call Privacy- images) with privacy metrics (Shaik et al., 2024;
+
+R1 featuring a lightweight stateful policy agent Saha, 2025; Hore et al., 2025). In contrast, we
+
+that dynamically route content between local are not primarily defending against an attacker or
+
+and remote models. By optimizing a compos-            modifying the text itself; instead, we train an agent
+ite reward, it implicitly learns to differentiate     to learn a meta-policy for information routing.
+between replaceable PII (which it shields) and        To our knowledge, this is the first work to use RL
+
+task-critical PII (which it may strategically re- to learn a stateful, dynamic delegation policy that
+
+veal for a significant utility gain).                 optimally balances the privacy-utility trade-off at a
+
+• We contribute a new, challenging medical PII sub-prompt level.
+
+dataset, featuring a higher density of PII enti-      3 Problem formulation
+ties. This benchmark is designed to stress-test
+
+  the contextual reasoning capabilities of privacy-   We address the task of Privacy-Conscious Dele-
+  preserving systems.                                 gation (Li et al., 2025). The task is designed to
+                                                      navigate the trade-off between the performance of
+• Our experiments show that Privacy-R1 outper-        powerful, remote LLMs and the security of local,
+  forms baselines, charting a new state-of-the-art    trusted models. The setup involves two models:
+  on the privacy-utility frontier. The performance
+
+gains are especially pronounced on our more           • MLOCAL: A trusted, secure LLM model with
+complex dataset, underscoring the necessity of          potentially weaker capabilities, which can be
+adaptive, learned frameworks for building the           run locally or on a private server.
+
+                                       45925
+                                         2
+
+
+===== PAGE 3 / 14 =====
+
+Figure 2: Privacy-R1 Framework.
+
+   • MREMOTE: An untrusted, powerful LLM                      process. The leakage is then formally defined as:
+      model accessed via Proprietary API.
+                                                                                      1      k
+The system is given a user query q, which may
+contains a set of one or more Personally Identi-              ′Leakage(Qremote, P ) =           I(pi  ∈     ′
+fiable Information (PII) units, denoted as P =
+{p1, p2, . . . , pk}. The fundamental goal is to gen-                                 |P | i=1           Qremote)
+erate a final response r that is of high quality,
+while ensuring that the information delegated to                                                         (2)
+MREMOTE contains as little PII as possible. To
+quantify success in this task, we adopt the evalua-           where I(·) is the indicator function, which evaluates
+tion metrics proposed in the original work:                   to 1 if the PII unit pi is present in any prompt sent
+                                                              to the remote model, and 0 otherwise.
+Quality Preservation The performance of a sys-
+tem is measured by its ability to produce a response          The central challenge of Privacy-Conscious Delega-
+r that is comparable in quality to a gold-standard
+target response, r∗. This target is defined as the            tion is thus to design a system that can effectively
+output from the powerful MREMOTE when given
+the original, unaltered query q. The quality is de-           navigate the tension between these two compet-
+termined by a scoring function, Jqual:
+                                                              ing objectives, maximizing the quality score while
+
+                                                              minimizing the leakage score.
+
+               Quality(r) = Jqual(r, r∗)             (1)      4 Privacy-R1
+
+This function is typically implemented using an               As shown in Figure 2, to solve the problem de-
+LLM-as-a-judge to assess the semantic equivalence             fined in Section 3, we reframe Privacy-Conscious
+and utility of the generated response relative to the         Delegation as a sequential decision-making prob-
+target.                                                       lem. We introduce a RL framework called Privacy-
+                                                              R1 short for PRIVACY preservation policy
+                                                              agent for dynamic delegation via Reinforcement
+                                                              Learning that trains a policy agent to learn an opti-
+                                                              mal, dynamic routing policy. This section details
+                                                              the architecture of our agent, the design of our re-
+                                                              ward function, and the training procedure used to
+                                                              optimize the policy.
+
+                                                              4.1 Framework Overview
+
+Privacy Leakage The privacy cost is measured                  Our framework processes a user query q in three
+as the fraction of PII units from the original query          main stages. First, we perform semantic chunking
+                                                              to segment the query into a sequence of meaningful
+that are exposed to the untrusted remote model. Let           units. Second, our Stateful Policy Agent processes
+                                                              this sequence to make a routing decision for each
+Q′         be  the  complete  set  of  all  prompts  synthe-
+
+   remote
+sized and sent to MREMOTE during the delegation
+
+                                                     45926
+                                                       3
+
+
+===== PAGE 4 / 14 =====
+
+chunk. Finally, the chunks are dispatched, and their     Action Selection For each contextualized output
+outputs are combined to form the final response.         vector ht, a shared linear layer followed by a soft-
+                                                         max activation produces the probability distribution
+Semantic Chunking The first step is to segment           over the two possible actions. This distribution is
+the user query q into a sequence of coherent units       our policy π for each step:
+for the policy agent. We employ a semantic chunk-
+ing strategy. Specifically, we use a sentence seg-                 π(At|S) = Softmax(W · ht + b) (4)
+mentation model from SpaCy to split the query
+q into a sequence of sentences C = (c1, . . . , cn).     where the state S implicitly represents the entire
+This ensures that each input to our agent is a linguis-  sequence of chunks. During training, an action At
+tically complete thought, which provides a much          for each chunk is sampled from this distribution to
+cleaner learning signal and preserves the contex-        encourage exploration.
+tual relationships necessary for learning a robust
+routing policy.                                          4.3 Reward Design: Balancing Privacy and
+                                                               Performance
+Dynamic Routing and Response Generation
+The Policy Agent processes the entire sequence           The reward signal is calculated after a full sequence
+of chunks C to assign an action At (route local          of actions has been taken. The reward function R
+or remote) to each chunk ct. The chunks are then         explicitly models the privacy-utility trade-off.
+dispatched to the corresponding models (MLOCAL
+or MREMOTE), and their individual outputs are con-       TaskGain This term corresponds to the
+catenated and pass to local model in order to form       Quality(r) metric and serves as the primary
+the final response r.                                    performance signal for our agent. Following
+                                                         the established protocol from Papillon (Li et al.,
+4.2 The Policy Agent                                     2025), we treat TaskGain as a binary signal.
+                                                         An LLM-as-a-judge determines if the system’s
+To effectively model the complex, long-range de-         final response r is of ’equivalent or better quality’
+pendencies within a user query, our policy agent is      than the target response r∗. The reliability of this
+implemented using a lightweight Transformer ar-          specific automated evaluation judge for this task
+chitecture. This design allows the agent to consider     has been previously validated with human studies
+the entire query context when making a decision          in Papillon, which found substantial agreement
+for any individual chunk. The parameters of this         between the LLM judge and human annotators. By
+Transformer agent are the target of our training         adopting this validated judge, we ensure a reliable
+procedure.                                               reward signal for our agent. The reward is formally
+                                                         defined as:
+Input Representation We use a pre-trained
+MiniLM model with its weights frozen to serve as a            TaskGain(r, r∗) = 1, if Quality(r) ≥ Quality(r∗)
+high-quality feature extractor. The full sequence of                                    0, otherwise.
+sentence chunks C is first converted into a sequence
+of dense vector embeddings E = (e1, . . . , en). To      To further mitigate known biases, we present the
+provide positional context, we add standard sinu-        responses to the judge in a randomized order during
+soidal positional encodings to these embeddings.         the reward calculation process.
+
+Contextualization with Self-Attention The se-            PrivacyLeak This term corresponds to the
+quence of embeddings E is then passed through            Leakage(Q′remote, P ) metric, measuring the frac-
+a multi-layer Transformer encoder. The self-             tion of PII units exposed to MREMOTE.
+attention mechanism computes a new representa-           Modeling Catastrophic Risk with a Non-Linear
+tion, ht, for each chunk ct that is contextualized by    Penalty To reflect the accelerating nature of real-
+all other chunks in the sequence:                        world privacy risk, we introduce a quadratic
+                                                         penalty for leakage. This penalizes substantial
+    (h1, . . . , hn) = Transformer(e1, . . . , en) (3)   leakage far more harshly than minor, incidental
+                                                         exposure. Our final reward function is:
+This global context is critical for making informed
+decisions, such as understanding that a pronoun in              R = TaskGain − λ · (PrivacyLeak)2 (5)
+the final chunk refers to a PII entity in the first.
+
+45927
+  4
+
+
+===== PAGE 5 / 14 =====
+
+The hyperparameter λ controls the agent’s aversion      complete objective function to be maximized is:
+to privacy risk. By default, we set λ = 5.0. We             LPPO(θ, ϕ) = Et LCt LIP(θ) − c1LVt F(ϕ) (6)
+also evaluate different levels of λ in 6.4.                                       + c2S[πθ](st)
+
+4.4 Policy Training                                     where  LCLIP(θ)  is  the  PPO  clipped  surrogate  ob-
+
+We train the policy agent in two phases: a super-                t
+vised pre-training phase to provide a strong ini-       jective that constrains the magnitude of the policy
+tialization, followed by a reinforcement learning
+fine-tuning phase to optimize for the reward.           update. It is defined as:
+
+Phase 1: Supervised Pre-training (Warm-up)              LCLIP(θ)  =  min(rt(θ)Aˆt,  clip(rt(θ),  1−ϵ,  1+ϵ)Aˆt)
+Training an RL agent from a random initialization
+is challenging due to the sparse and delayed na-          t                                                (7)
+ture of the reward signal. We therefore pre-train
+our policy network by treating it as a sequence-to-     Here, rt(θ) is the probability ratio between the new
+sequence binary classifier, teaching it to mimic a      and old policies. The other terms are the squared-
+sensible, risk-averse heuristic. For each sentence      error value function loss LVt F(ϕ) and the policy’s
+chunk ct in our training corpus, we generate a          entropy S. This process allows the agent to safely
+heuristic label yt: if the chunk contains any PII,
+yt = 0 (route local); otherwise, yt = 1 (route re-      and efficiently learn a sophisticated routing policy
+mote). The policy network πθ is then trained to
+predict this sequence of labels. The forward pass       that maximizes the expected reward.
+computes a probability pt = πθ(At = 1|S) for
+each chunk. The parameters θ of the Transformer         5 Experimental Setup
+agent are optimized by minimizing the binary cross-
+entropy (BCE) loss, summed over all chunks in the       5.1 Datasets
+sequence. We use the Adam optimizer for this
+phase. The resulting pre-trained agent, πθsft, serves   PUPA To benchmark our method against prior
+as the starting point for RL fine-tuning, already       work, we first train and evaluate on the PUPA
+equipped with a conservative policy.                    dataset (Li et al., 2025). PUPA is constructed from
+                                                        real-world user-LLM interactions and contains nat-
+Phase 2: Reinforcement Learning with PPO                uralistic PII across a variety of general-domain top-
+We fine-tune the pre-trained policy using Proximal      ics. The dataset is divided into two primary subsets
+Policy Optimization (PPO) (Schulman et al., 2017).      used for training and evaluation: PUPA-New and
+The policy agent serves as the actor (πθ), and a        PUPA-TNB. We use the official splits and statistics
+separate feed-forward network serves as the critic      as reported by the authors for our experiments.
+(Vϕ). The training is iterative. In each iteration, we
+first perform a rollout step, where the actor policy    Med-PCD While PUPA provides a valuable
+interacts with a batch of queries to collect trajec-    general-domain benchmark, specialized domains
+tories of states, actions, and log-probabilities. For   like healthcare present unique challenges, includ-
+each completed trajectory, we compute the final         ing a higher density of interconnected PII and
+episodic reward R and then calculate the advantage      more severe consequences for privacy breaches.
+for each step, Aˆt = R − Vϕ(st), where Vϕ is the        To stress-test our framework in such a scenario, we
+critic’s value estimate. These advantages, which        introduce the Medical Privacy-Conscious Delega-
+indicate the relative quality of an action, are nor-    tion (Med-PCD) dataset. Med-PCD is based on
+malized for training stability. The actor and critic    publicly available MedDialog (Zeng et al., 2020),
+are then updated by optimizing a combined objec-        which contains anonymized patient-doctor diag-
+tive function. This objective consists of the PPO       nostic conversations. To create Med-PCD, we em-
+policy loss, a value function loss for the critic, and  ployed GPT5 to synthetically yet realistically in-
+an entropy bonus to encourage exploration. The          ject a diverse set of PII into these anonymized di-
+                                                        alogues. We used a few-shot prompting strategy
+                                                        (see Appendix A for the full prompt) to guide the
+                                                        model in weaving entities such as patient names,
+                                                        doctor names, clinic locations (e.g., hospitals, de-
+                                                        partments), specific dates, and medical record num-
+                                                        bers (MRNs) into the conversational turns. The
+                                                        goal was not merely to insert PII, but to create co-
+                                                        herent and contextually rich narratives where the
+                                                        PII is naturally integrated.
+
+45928
+  5
+
+
+===== PAGE 6 / 14 =====
+
+A critical component for our RL framework is         1B-Instruct (Grattafiori et al., 2024), Mistral-7B-
+the ground-truth target response r∗, which is used      Instruct-v0.3 (Jiang et al., 2023), and Qwen2-7B-
+to calculate the TaskGain reward. To generate           Instruct (Yang et al., 2025).
+these targets, we submitted each complete, PII-
+injected query from Med-PCD to a powerful pro-          Baselines We compare our proposed framework
+prietary model (GPT5). This response, generated         against four strong baselines for each of the lo-
+with full access to all PII, represents the quality     cal model configurations. Always-Local and
+ceiling that our privacy-preserving system aims         Always-Remote establish the performance bounds
+to match. To rigorously assess the quality and          by exclusively using one model. PAPILLON (Li
+realism of our synthetic generation process, we         et al., 2025), a static, monolithic prompt rewriting
+conducted a manual validation study. Three an-          pipeline. Finally, to isolate the benefit of reinforce-
+notators evaluated a randomly selected subset of        ment learning, we include our Heuristic Router
+240 instances for contextual coherence and logi-        (SFT-only), which is our policy agent after only
+cal consistency. The study revealed a high success      completing the supervised pre-training phase.
+rate, with an average of 98.8% of instances being
+judged as pass. This validation confirms the relia-     5.3 Evaluation and Implementation
+bility of our automated data creation pipeline. The
+inter-annotator agreement was substantial (Fleiss’      Metrics and Protocol We evaluate all systems
+Kappa κ = 0.89), indicating that our quality crite-     on two primary metrics: Quality Preservation
+ria were consistently interpreted. The full details     (%), the percentage of responses judged equivalent
+of our annotation guidelines and validation study       or better than a target, and Privacy Leakage (%),
+are provided in Appendix B. The final Med-PCD           the average fraction of PII units exposed to the
+dataset consists of 1020 instances, which we split      remote model.
+into a training set of 816 instances, and test sets of
+204 instances. Table 1 provides a statistical com-      Implementation Details Our framework is im-
+parison between PUPA and Med-PCD, highlight-            plemented in PyTorch, using SpaCy for sentence
+ing the increased complexity of our new dataset.        segmentation. Our policy agent is a 2-layer
+Table 2 illustrates the transformation from an origi-   Transformer operating on frozen embeddings from
+nal anonymized dialogue to an injected Med-PCD          all-MiniLM-L6-v2. The SFT (warm-up) phase is
+instance, showcasing the complexity introduced.         executed for 1 epochs with a batch size of 32 and a
+                                                        learning rate of 3 × 10−4. Subsequently, RL with
+Metrics          PUPA     Med-PCD (Ours)                PPO is performed with a learning rate of 1 × 10−5
+                                  1020                  with batch size 64. Training is conducted for a
+# Instances        901                                  maximum of 256 steps with a clipping parameter
+Domain           General        Medical                 ϵ = 0.2 and an entropy bonus coefficient of 0.01.
+Avg. # PII                         4.6                  All experiments are run on NVIDIA H200 GPUs.
+Avg. Query Len.    2.90
+Avg. Resp. Len.  1352.0          1533.2                 6 Results and Analysis
+                 1553.7           1920
+                                                        In this section, we present the empirical evaluation
+Table 1: Statistical comparison of the datasets. The    of our RL framework. We first compare its per-
+PUPA column shows weighted averages across its splits.  formance against all baselines on both the PUPA
+Avg length in Char. Med-PCD is designed to be more      and our new Med-PCD. Subsequently, we provide
+challenging, with longer queries and a significantly    an analysis of the learning dynamics and conduct
+higher density of PII per instance.                     a series of ablation studies to dissect the specific
+                                                        contributions of our method’s key components.
+5.2 Models
+LLM Configurations Following prior work (Li             6.1 Main Results
+et al., 2025), we test all methods with a fixed re-
+mote model, GPT-4o-mini (Achiam et al., 2023)           Our primary goal is to demonstrate that a learned,
+as MREMOTE, while systematically varying the lo-        dynamic policy can achieve a better balance be-
+cal model, MLOCAL. We select a diverse suite of         tween Quality Preservation and Privacy Leakage
+recent open-source models for MLOCAL: Llama-            than static approaches. The main results across a
+3.1-8B-Instruct (Touvron et al., 2023), Llama-3.2-      diverse suite of local models are summarized in
+3B-Instruct (Grattafiori et al., 2024), Llama-3.2-      Table 3. The findings are clear: our RL framework
+
+                                          45929
+                                            6
+
+
+===== PAGE 7 / 14 =====
+
+Stage                        Dialogue Turn (Patient’s Message)
+Original (from MedDialog)    traveled 2wks ago from fl. to pa. 68 wf. has had fever of 100, chills at night and some
+                             coughing for 5ds. tested negative for flu and x rays of lungs were clear. coronavirus? scarce
+After Injection (Med-PCD)    My mother, Carol, 68, returned from her trip two weak ago. She flew on UA2401 from
+                             Orlando to phil on 10/21. For the last 5 days, she’s had a fever of 100 and night chills. Her
+                             recent flu test at the Jefferson Health clinic on Chestnut St was negative and x rays of
+                             lungs were clear. Could this be coronavirus? She does not have insurance.
+
+Table 2: An example illustrating the creation of a Med-PCD instance. The original, anonymized text from MedDialog
+is transformed by synthetically injecting multiple, contextually-aware PII entities (highlighted in red) to create a
+realistic and challenging scenario.
+
+                                        PUPA-TNB                         Med-PCD
+
+Method / System                Qual. (%) ↑ Leak. (%) ↓ ∆(%) Qual. (%) ↑ Leak. (%) ↓  ∆(%)
+
+GPT-4o-mini [Unredacted]          88.2  100.0         –            91.5  100.0       –
+
+GPT-4o-mini [Redacted]            77.2  0.0           –            72.3  0.0         –
+
+MLOCAL: Llama-3.2-1B-Instruct     41.2  0.0                        25.5  0.0
+Always-Local
+
+PAPILLON                          58.0  39.3                       45.1  42.5
+
+Heuristic Router (SFT-only)       52.5  2.0                        40.8  3.5
+
+Privacy-R1                        62.5  25.0         +4.5 / +14.3  75.3  18.2        +30.2 / +24.3
+
+MLOCAL: Llama-3.2-3B-Instruct     57.3  0.0                        40.1
+Always-Local                                                             0.0
+
+PAPILLON                          60.9  24.9                       58.5  28.1
+
+Heuristic Router (SFT-only)       59.1  1.8                        55.6  3.1
+
+Privacy-R1                        65.2  19.5         +4.3 / +5.4   81.0  15.4        +22.5 / +12.7
+
+MLOCAL: Llama-3.1-8B-Instruct     71.8  0.0                        55.0  0.0
+Always-Local
+
+PAPILLON                          85.5  7.5                        82.0  9.2
+
+Heuristic Router (SFT-only)       78.5  1.0                        70.5  2.5
+
+Privacy-R1                        86.1  4.5          +0.6 / +3.0   89.5  5.1         +7.5 / +4.1
+
+MLOCAL: Mistral-7B-Instruct-v0.3        0.0                              0.0
+Always-Local                      75.7                             58.3
+
+PAPILLON                          77.6  11.9                       74.5  14.0
+
+Heuristic Router (SFT-only)       76.8  1.2                        69.1  2.8
+
+Privacy-R1                        80.2  8.1          +2.6 / +3.8   87.9  9.5         +13.4 / +4.5
+
+MLOCAL: Qwen2-7B-Instruct               0.0                        60.1  0.0
+Always-Local                      76.5
+
+PAPILLON                          78.0  15.2                       76.2  18.5
+
+Heuristic Router (SFT-only)       77.2  1.5                        71.0  3.0
+
+Privacy-R1                        81.1  10.5         +3.1 / +4.7   88.4  12.0        +12.2 / +6.5
+
+Table 3: Main results comparing Privacy-R1 against baselines on the PUPA-TNB and Med-PCD test sets across a
+diverse suite of local models (MLOCAL). Best result in each block is in bold and the second best is underlined. ∆
+indicates the absolute improvement (in percentage points) of Privacy-R1 over the next best method (PAPILLON).
+For leakage, a positive ∆ denotes a greater reduction.
+
+consistently establishes a new state-of-the-art on   dataset. Here, the performance gap widens dra-
+the privacy-utility frontier. On the general-domain  matically. The quality of the baselines, particu-
+PUPA benchmark, our method achieves a better         larly PAPILLON and Always-Local, drops signifi-
+Pareto-optimal point across all local model con-     cantly due to the data’s complexity. In contrast, our
+figurations. For instance, with Llama-3.1-8B, it     RL framework’s quality remains very high. With
+improves Quality Preservation by +0.6% while re-     Llama-3.1-8B, our framework outperforms PAPIL-
+ducing Privacy Leakage by -3.0% over PAPILLON.       LON by a remarkable +7.5% in Quality Preserva-
+This highlights the benefit of dynamic routing even  tion while still leaking -4.1% less PII. This is be-
+in standard scenarios.                               cause the high density of interconnected PII in Med-
+                                                     PCD is particularly detrimental to static rewriting
+   Our Privacy-R1 achieves a better privacy and      baselines, which often remove task-critical context.
+utility balance in more PII dense Med-PCD
+
+                                               45930
+                                                 7
+
+
+===== PAGE 8 / 14 =====
+
+Figure 3: Learning curves showing the reward during PPO training on Med-PCD (left) and PUPA (right).
+
+Our stateful agent, in contrast, learns to navigate    removed or simplified.
+this complexity. Furthermore, the results show that
+the benefit of our routing agent is most pronounced    Importance of Stateful Context To prove the
+when the local model is weakest. With the 1B local     value of our stateful Transformer architecture, we
+model on Med-PCD, the Always-Local baseline            created a Stateless Router (MLP) baseline, where
+quality collapses to 25.5%. In this setting, our RL    an MLP makes an independent routing decision for
+framework provides a massive +30.2% quality im-        each chunk with no memory of surrounding chunks.
+provement over PAPILLON, confirming that when          As shown in Table 4, the stateless agent’s perfor-
+the cost of routing locally is high, the intelligence  mance drops significantly, losing over 13% in qual-
+of the routing policy becomes the single most im-      ity compared to our full stateful model. The state-
+portant factor in the system’s success.                less agent frequently fails on queries with anaphora
+                                                       or cross-chunk dependencies, providing direct evi-
+6.2 Analysis of Learning Dynamics                      dence that stateful context is critical for this task,
+                                                       regardless of the underlying LLM.
+To provide insight into the learning process, Figure
+3 plots the reward per training steps. We compare      Method            Quality (%) ↑  Leakage (%) ↓
+the learning dynamics of agents paired with a high-
+capability local model (Llama-3.1-8B) and a low-       Stateless Router        75.2           11.5
+capability one (Llama-3.2-1B) on both datasets.        Stateful Router         88.4           12.0
+
+   The learning curves reveal two key insights.        Table 4: Ablation on the importance of a stateful agent,
+First, all agents demonstrate stable learning, with    using Qwen2-7B as the local model.
+the episodic reward consistently increasing before
+converging, confirming the effectiveness of our        Effect of Non-Linear Reward Finally, we ana-
+PPO training setup. Second, on both datasets, the      lyze the impact of our quadratic leakage penalty
+agent paired with the high-capability 8B model         by training a variant with a standard Linear Re-
+converges to a significantly higher final reward.      ward (R = TaskGain − λ · PrivacyLeak). While
+This is because the penalty for a “safe" local action  the linear reward agent achieves a comparable aver-
+is much lower with a stronger local model, mak-        age performance point (Table 5), its behavior is far
+ing the overall credit assignment problem easier       more reckless. We measure this by reporting the
+and the achievable reward higher. The consistently     percentage of test instances that result in a catas-
+lower reward curves on the Med-PCD dataset, com-       trophic leak (defined as >80% of PII leaked). The
+pared to PUPA, visually confirm the increased dif-     agent trained with our quadratic penalty almost
+ficulty of our new benchmark.                          never exhibits this failure mode, confirming that
+                                                       the non-linear penalty is crucial for training a safer,
+6.3 Ablation Studies                                   more reliable policy.
+
+To isolate the contributions of our key design         6.4 Analysis of the Privacy-Utility Trade-off
+choices, we conduct a series of ablation studies on
+the Med-PCD dataset. We use Qwen2-7B-Instruct          A key feature of our Privacy-R1 framework is
+as the local model to demonstrate generalizabil-       the ability to control the agent’s behavior via the
+ity. We compare our full framework (trained with       privacy-utility trade-off parameter, λ. This hyper-
+λ = 5.0) against variants where one component is       parameter is not meant to be tuned for a single
+
+45931
+  8
+
+
+===== PAGE 9 / 14 =====
+
+Reward          Quality (%) ↑  Catastrophic Leaks (%) ↓   8 Limitations
+
+Linear Penalty        88.1                   16.2         The scope of our work is shaped by several key de-
+Ours                  88.4                   1.1          sign choices, which in turn delineate the boundaries
+                                                          of our claims. First, our investigation—consistent
+Table 5: Ablation on the effect of the reward function’s  with the foundational task definition—is conducted
+penalty term, using Qwen2-7B. The quadratic penalty       in a single-turn setting. The agent’s state and
+drastically reduces the risk of catastrophic leaks.       learned policy are self-contained within a single
+                                                          user query and do not persist across multi-turn dia-
+best value; rather, it provides a direct mechanism        logues. Second, the action space of our delegation
+to generate policies with different levels of risk        agent is restricted to a binary decision between
+aversion. To demonstrate the effectiveness of this        a single local model and a single remote model.
+control, we trained separate Privacy-R1 agents on         We do not explore the more complex scenario of
+the Med-PCD dataset with varying values of λ, us-         delegating among a broader set of specialized lo-
+ing Qwen2-7B-Instruct as the local model. The             cal or remote models, each potentially exhibiting
+results, presented in Table 6, show a clear and pre-      different cost, latency, or capability profiles. Nev-
+dictable relationship between λ and the agent’s           ertheless, we believe that extending this framework
+final policy. As we increase the penalty for privacy      to support multi-turn dialogue privacy preser-
+leakage (i.e., increase λ), the agent learns a pro-       vation and dynamic delegation across multiple
+gressively more conservative policy. The Privacy          specialized models represents a promising direc-
+Leakage drops monotonically from 15.5% at a low           tion for future work.
+λ of 1.0 to a near-zero 1.2% at a high λ of 20.0.
+This comes at the expected cost of Quality Preser-        9 Ethical Considerations
+vation, which also decreases as the agent is forced
+to rely more heavily on the weaker local model.           The primary motivation for this research is to en-
+This analysis confirms that λ serves as an effective      hance user privacy in the age of powerful, API-
+and intuitive control knob.                               based Large Language Models. Our goal is to
+                                                          develop a framework that mitigates the risk of ex-
+       λ        Qual. (%) ↑    Leak. (%) ↓                posing sensitive user data to third-party services,
+                                                          thereby enabling the safer use of state-of-the-art AI
+      1.0            90.1           15.5                  technologies in critical domains. We have consid-
+      2.0            89.6           13.8                  ered the ethical implications of our work through-
+5.0 (Default)        88.4           12.0                  out the research process, from dataset creation to
+     10.0            84.7           5.3                   the potential deployment of our method.
+     20.0            79.2           1.2
+                                                          Dataset Creation Our new benchmark, Med-
+Table 6: Sensitivity analysis of the trade-off parameter  PCD, was created with privacy as a foremost con-
+λ on the Med-PCD dataset, using Qwen2-7B-Instruct         cern. We built upon the MedDialog dataset, which
+as the local model.                                       is a publicly available resource already anonymized
+                                                          to remove real patient information. The Person-
+7 Conclusion                                              ally Identifiable Information (PII) in Med-PCD is
+                                                          entirely synthetic, generated by a large language
+In this work, we addressed the challenge of the           model, and does not correspond to any real indi-
+privacy-utility tradeoff in the task of Privacy-          viduals. The resulting dataset will be handled re-
+Conscious Delegation. We reframed the task as             sponsibly and made available to researchers in a
+a sequential decision-making problem and intro-           manner that respects its intended use for studying
+duced Privacy-R1, a novel reinforcement learning          privacy-preserving systems.
+framework. By optimizing a reward function that
+balances task success with a non-linear penalty           Intended Use and Risks Privacy-R1 is designed
+for privacy leakage, our agent learns a pragmatic         as a risk mitigation framework, not a formal pri-
+policy that distinguishes between replaceable and         vacy guarantee. It is crucial to understand that our
+task-critical PII. It achieves a better balance of qual-  system reduces privacy leakage but does not elimi-
+ity and privacy on both PUPA and Med-PCD. This            nate it entirely. The reinforcement learning agent
+work marks a clear step away towards a future of          is trained to make optimal trade-offs based on its
+dynamic, learned policies for building AI systems
+that are both powerful and trustworthy.
+
+                                                         45932
+                                                           9
+
+
+===== PAGE 10 / 14 =====
+
+reward function and may still choose to leak PII if     Nicholas Carlini, Daphne Ippolito, Matthew Jagielski,
+it perceives a sufficient gain in task performance.        Katherine Lee, Florian Tramer, and Chiyuan Zhang.
+Therefore, Privacy-R1 should not be deployed in            2022. Quantifying memorization across neural lan-
+applications where a 100% guarantee against data           guage models. In The Eleventh International Confer-
+exposure is required.                                      ence on Learning Representations.
+
+   The tunable hyperparameter, λ, is a core feature     Tuhin Chakrabarty, Vishakh Padmakumar, Faeze Brah-
+of our responsible design. It provides system de-          man, and Smaranda Muresan. 2024. Creativity sup-
+velopers with a direct and intuitive control knob to       port in the age of large language models: An empiri-
+set the desired level of risk aversion, allowing them      cal study involving professional writers. In Proceed-
+to tailor the policy to be more or less conservative       ings of the 16th Conference on Creativity & Cogni-
+based on the specific sensitivity of the application’s     tion, pages 132–155.
+domain.
+                                                        Yijiang River Dong, Tiancheng Hu, Zheng Hui, and
+Broader Impact We believe the broader impact               Nigel Collier. 2026a. Steer model beyond assistant:
+of this research is positive. By demonstrating a           Controlling system prompt strength via contrastive
+more effective method for balancing privacy and            decoding. arXiv preprint arXiv:2601.06403.
+utility, our work can encourage the development of
+hybrid AI systems that are more respectful of user      Yijiang River Dong, Tiancheng Hu, Zheng Hui, Caiqi
+data. This could facilitate the adoption of power-         Zhang, Ivan Vulic´, Andreea Bobu, and Nigel Col-
+ful language models in fields like healthcare and          lier. 2026b. Value of information: A framework
+finance, where privacy concerns have traditionally         for human-agent communication. arXiv preprint
+been a major barrier. We encourage the commu-              arXiv:2601.06407.
+nity to build upon this work to develop even more
+robust and formally verifiable privacy-preserving       Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri,
+frameworks.                                                Abhinav Pandey, Abhishek Kadian, Ahmad Al-
+                                                           Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten,
+References                                                 Alex Vaughan, and 1 others. 2024. The llama 3 herd
+                                                           of models. arXiv preprint arXiv:2407.21783.
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama
+   Ahmad, Ilge Akkaya, Florencia Leoni Aleman,          Guntur Budi Herwanto, Gerald Quirchmayr, and A Min
+   Diogo Almeida, Janko Altenschmidt, Sam Altman,          Tjoa. 2021. A named entity recognition based ap-
+   Shyamal Anadkat, and 1 others. 2023. Gpt-4 techni-      proach for privacy requirements engineering. In
+   cal report. arXiv preprint arXiv:2303.08774.            2021 IEEE 29th International Requirements Engi-
+                                                           neering Conference Workshops (REW), pages 406–
+Lin Ai, Tharindu Sandaruwan Kumarage, Amrita Bhat-         411. IEEE.
+   tacharjee, Zizhou Liu, Zheng Hui, Michael S. Davin-
+   roy, James Cook, Laura Cassani, Kirill Trapeznikov,  Soumyadeep Hore, Jalal Ghadermazi, Diwas Paudel,
+   Matthias Kirchner, Arslan Basharat, Anthony Hoogs,      Ankit Shah, Tapas Das, and Nathaniel Bastian. 2025.
+   Joshua Garland, Huan Liu, and Julia Hirschberg.         Deep packgen: A deep reinforcement learning frame-
+   2024. Defending against social engineering attacks      work for adversarial network packet generation.
+   in the age of LLMs. In Proceedings of the 2024 Con-     ACM Transactions on Privacy and Security, 28(2):1–
+   ference on Empirical Methods in Natural Language        33.
+   Processing, pages 12880–12902, Miami, Florida,
+   USA. Association for Computational Linguistics.      Wei-Chieh Huang, Weizhi Zhang, Yueqing Liang,
+                                                           Yuanchen Bei, Yankai Chen, Tao Feng, Xinyu Pan,
+Davide Andreoletti, Tanya Velichkova, Giacomo Verti-       Zhen Tan, Yu Wang, Tianxin Wei, and 1 others.
+   cale, Massimo Tornatore, and Silvia Giordano. 2020.     2026. Rethinking memory mechanisms of foun-
+   A privacy-preserving reinforcement learning algo-       dation agents in the second half. arXiv preprint
+   rithm for multi-domain virtual network embedding.       arXiv:2602.06052.
+   IEEE Transactions on Network and Service Manage-
+   ment, 17(4):2291–2304.                               Zheng Hui, Yijiang River Dong, Ehsan Shareghi, and
+                                                           Nigel Collier. 2025a. Trident: Benchmarking llm
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie              safety in finance, medicine, and law. arXiv preprint
+   Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind      arXiv:2507.21134.
+   Neelakantan, Pranav Shyam, Girish Sastry, Amanda
+   Askell, and 1 others. 2020. Language models are      Zheng Hui, Zhaoxiao Guo, Hang Zhao, Juanyong Duan,
+   few-shot learners. Advances in neural information       Lin Ai, Yinheng Li, Julia Hirschberg, and Congrui
+   processing systems, 33:1877–1901.                       Huang. 2025b. Toxilab: How well do open-source
+                                                           llms generate synthetic toxicity data? Preprint,
+                                                           arXiv:2411.15175.
+
+                                                        Zheng Hui, Zhaoxiao Guo, Hang Zhao, Juanyong Duan,
+                                                           and Congrui Huang. 2024. ToxiCraft: A novel frame-
+                                                           work for synthetic generation of harmful information.
+                                                           In Findings of the Association for Computational
+
+45933
+ 10
+
+
+===== PAGE 11 / 14 =====
+
+Linguistics: EMNLP 2024, pages 16632–16647, Mi-        Sandeep Pamarthi. 2024. Ai meets anonymity: How
+   ami, Florida, USA. Association for Computational          named entity recognition is redefining data privacy.
+   Linguistics.                                              World Journal of Advanced Research and Reviews,
+Zheng Hui, Xiaokai Wei, Yexi Jiang, Kevin Gao, Chen          22(1):2045–2053.
+   Wang, Se-eun Yoon, Rachit Pareek, and Michelle
+   Gong. 2026. Toward safe and human-aligned game         Dan Qiao and Yu-Xiang Wang. 2023. Offline reinforce-
+   conversational recommendation via multi-agent de-         ment learning with differential privacy. Advances
+   composition. In Findings of the Association for           in neural information processing systems, 36:61395–
+   Computational Linguistics: EACL 2026, pages 4568–         61436.
+   4584, Rabat, Morocco. Association for Computa-
+   tional Linguistics.                                    Vishal Rathod, Seyedsina Nabavirazavi, Samira Zad,
+Albert Q. Jiang, Alexandre Sablayrolles, Arthur Men-         and Sundararaja Sitharama Iyengar. 2025. Privacy
+   sch, Chris Bamford, Devendra Singh Chaplot, Diego         and security challenges in large language models. In
+   de las Casas, Florian Bressand, Gianna Lengyel, Guil-     2025 IEEE 15th Annual Computing and Communi-
+   laume Lample, Lucile Saulnier, Lélio Renard Lavaud,       cation Workshop and Conference (CCWC), pages
+   Marie-Anne Lachaux, Pierre Stock, Teven Le Scao,          00746–00752. IEEE.
+   Thibaut Lavril, Thomas Wang, Timothée Lacroix,
+   and William El Sayed. 2023. Mistral 7b. Preprint,      Mahefa Abel Razafinirina, William Germain Dimbisoa,
+   arXiv:2310.06825.                                         and Thomas Mahatody. 2024. Pedagogical align-
+Nikhil Kandpal, Eric Wallace, and Colin Raffel. 2022.        ment of large language models (llm) for personal-
+   Deduplicating training data mitigates privacy risks       ized learning: a survey, trends and challenges. Jour-
+   in language models. In International Conference on        nal of Intelligent Learning Systems and Applications,
+   Machine Learning, pages 10697–10707. PMLR.                16(4):448–480.
+Noam Kolt, Nicholas Caputo, Jack Boeglin, Cullen
+   O’Keefe, Rishi Bommasani, Stephen Casper,              Elena Sofia Ruzzetti, Giancarlo A. Xompero, Davide
+   Mariano-Florentino Cuéllar, Noah Feldman, Iason           Venditti, and Fabio Massimo Zanzotto. 2025. Private
+   Gabriel, Gillian K Hadfield, and 1 others. 2026. Le-      memorization editing: Turning memorization into a
+   gal alignment for safe and ethical ai. arXiv preprint     defense to strengthen data privacy in large language
+   arXiv:2601.04175.                                         models. In Proceedings of the 63rd Annual Meeting
+                                                             of the Association for Computational Linguistics (Vol-
+                                                             ume 1: Long Papers), pages 16572–16592, Vienna,
+                                                             Austria. Association for Computational Linguistics.
+
+Siyan Li, Vethavikashini Chithrra Raghuram, Omar          Biswanath Saha. 2025. Cloud-enhanced gans for syn-
+   Khattab, Julia Hirschberg, and Zhou Yu. 2025. PA-         thetic data generation in privacy-preserving machine
+   PILLON: Privacy preservation from Internet-based          learning. Available at SSRN 5224774.
+   and local language model ensembles. In Proceedings
+   of the 2025 Conference of the Nations of the Americas  John Schulman, Filip Wolski, Prafulla Dhariwal,
+   Chapter of the Association for Computational Lin-         Alec Radford, and Oleg Klimov. 2017. Proxi-
+   guistics: Human Language Technologies (Volume 1:          mal policy optimization algorithms. arXiv preprint
+   Long Papers), pages 3371–3390, Albuquerque, New           arXiv:1707.06347.
+   Mexico. Association for Computational Linguistics.
+                                                          Thanveer Shaik, Xiaohui Tao, Lin Li, Haoran Xie, Tao-
+Yuanchun Li, Hao Wen, Weijun Wang, Xiangyu Li,               tao Cai, Xiaofeng Zhu, and Qing Li. 2024. Framu:
+   Yizhen Yuan, Guohong Liu, Jiacheng Liu, Wenx-             Attention-based machine unlearning using feder-
+   ing Xu, Xiang Wang, Yi Sun, and 1 others. 2024.           ated reinforcement learning. IEEE Transactions
+   Personal llm agents: Insights and survey about the        on Knowledge and Data Engineering, 36(10):5153–
+   capability, efficiency and security. arXiv preprint       5167.
+   arXiv:2401.05459.
+                                                          Mao Tan, Jie Zhao, Xiao Liu, Yongxin Su, Ling Wang,
+Darshini Mahendran, Changqing Luo, and Bridget T             Rui Wang, and Zhuocen Dai. 2025. Federated rein-
+   Mcinnes. 2021. Privacy-preservation in the con-           forcement learning for smart and privacy-preserving
+   text of natural language processing. IEEE access,         energy management of residential microgrids clus-
+   9:147600–147612.                                          ters. Engineering Applications of Artificial Intelli-
+                                                             gence, 139:109579.
+Niloofar Mireshghallah, Maria Antoniak, Yash More,
+   Yejin Choi, and Golnoosh Farnadi. 2024. Trust          Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier
+   no bot: Discovering personal disclosures in human-        Martinet, Marie-Anne Lachaux, Timothée Lacroix,
+   LLM conversations in the wild. In First Conference        Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal
+   on Language Modeling.                                     Azhar, and 1 others. 2023. Llama: Open and effi-
+                                                             cient foundation language models. arXiv preprint
+Kanghua Mo, Peigen Ye, Xiaojun Ren, Shaowei Wang,            arXiv:2302.13971.
+   Wenjun Li, and Jin Li. 2024. Security and privacy
+   issues in deep reinforcement learning: Threats and     Yaxuan Wang, Jiaheng Wei, Chris Yuhao Liu, Jinlong
+   countermeasures. ACM Computing Surveys, 56(6):1–          Pang, Quan Liu, Ankit Shah, Yujia Bao, Yang Liu,
+   39.
+
+45934
+ 11
+
+
+===== PAGE 12 / 14 =====
+
+and Wei Wei. 2024. LLM unlearning via loss ad-
+   justment with only forget data. In The Thirteenth
+   International Conference on Learning Representa-
+   tions.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang,
+   Binyuan Hui, Bo Zheng, Bowen Yu, Chang
+   Gao, Chengen Huang, Chenxu Lv, and 1 others.
+   2025. Qwen3 technical report. arXiv preprint
+   arXiv:2505.09388.
+Guangtao Zeng, Wenmian Yang, Zeqian Ju, Yue Yang,
+   Sicheng Wang, Ruisi Zhang, Meng Zhou, Jiaqi
+   Zeng, Xiangyu Dong, Ruoyu Zhang, Hongchao Fang,
+   Penghui Zhu, Shu Chen, and Pengtao Xie. 2020.
+   MedDialog: Large-scale medical dialogue datasets.
+   In Proceedings of the 2020 Conference on Empirical
+   Methods in Natural Language Processing (EMNLP),
+   pages 9241–9250, Online. Association for Computa-
+   tional Linguistics.
+Weizhi Zhang, Xiaokai Wei, Wei-Chieh Huang, Zheng
+   Hui, Chen Wang, Michelle Gong, and Philip S Yu.
+   2026. Memorycd: Benchmarking long-context user
+   memory of llm agents for lifelong cross-domain per-
+   sonalization. arXiv preprint arXiv:2603.25973.
+
+                                                           45935
+                                                             12
+
+
+===== PAGE 13 / 14 =====
+
+A Prompt for PII Injection                            Times (e.g., 3:45 PM) * Full Street Ad-
+                                                      dresses (e.g., 1101 Chestnut St) * Cities
+Below is the few-shot prompt used to guide the        / States (e.g., Philadelphia, PA) * **Lo-
+GPT-4o model in generating the Med-PCD dataset.       gistical / Contextual Details:** * Travel
+The prompt provides clear instructions, constraints,  Information (Flight Numbers, Airlines,
+and a comprehensive list of PII types to ensure the   e.g., United Flight UA2401) * Workplace
+model produces high-quality, coherent, and realis-    Names (e.g., her employer, Comcast Cen-
+tic synthetic data.                                   ter) * Vehicle Information (e.g., License
+                                                      Plate, if relevant to an accident)
+      System Prompt
+          You are an expert data annotator spe-           —
+                                                          Example 1:
+      cializing in creating realistic, synthetic
+      medical records for research. Your task         Anonymized Input: Patient is
+      is to take an anonymized medical dia-
+      logue turn and enrich it by injecting a di-     a 45-year-old male with a history
+      verse and creative set of Personally Iden-
+      tifiable Information (PII).                     of hypertension. He came in today
+
+          **Instructions:** 1. Read the               for a routine check-up. Blood
+      anonymized input text carefully to un-
+      derstand the context. 2. Inject a variety       pressure is slightly elevated.
+      of PII types from the comprehensive list
+      below. Be creative and make the details         Will adjust his medication and
+      specific. 3. Ensure the dialogue remains
+      fluent, natural, and contextually coherent.     schedule a follow-up in 3 months.
+      The PII should feel like a natural part
+      of the conversation or note. 4. **Cru-          Injected Output: Patient David
+      cially, do not change the original medi-
+      cal facts, symptoms, diagnoses, or time-        Chen (MRN: PMH-38192, DOB:
+      lines.** You are only adding personal,
+      logistical, and administrative details. 5.      03/14/1979) is a 45-year-old male
+      The injected PII should be logically con-
+      sistent within the text.                        with a history of hypertension.
+
+          **PII Types to Inject (be creative and      He came in today, November 5th,
+      specific):** * **Personal Identifiers:**
+     * Full Names (e.g., Carol prequel) *             2024, for a routine check-up with
+      Dates of Birth (DOB) (e.g., 05/12/1956)
+     * Medical Record Numbers (MRN) (e.g.,            Dr. Anya Sharma. Blood pressure
+      JH-48920-C) * Phone Numbers (e.g.,
+      215-555-0182) * Email Addresses (e.g.,          is slightly elevated. Will adjust
+      carol.p@emailservice.com) * **Health-
+      care Specific:** * Doctor/Clinician             his Lisinopril prescription (sent
+      Names (e.g., Dr. Anya Sharma) * Hospi-
+      tal/Clinic Names (e.g., Jefferson Health,       to the Walgreens on El Camino)
+      Penn Medicine) * Specific Departments
+      (e.g., Urgent Care, Radiology Depart-           and schedule a follow-up at the
+      ment) * Insurance Information (Provider
+      and Policy Number, e.g., Aetna Blue             Palo Alto Medical Foundation in
+      PPO #789-456-123) * Pharmacy Names
+      (e.g., CVS on Walnut St) * **Temporal           3 months.
+      and Location Information:** * Specific
+      Dates (e.g., October 21st) * Appointment           —
+                                                          Now, complete the following:
+
+                                                      Injected  Output:
+
+                                                      B Human Validation Study of the
+                                                           Med-PCD Generation Process
+
+                                                      To ensure that our automated PII injection pipeline
+                                                      produces high-quality and realistic data, we con-
+                                                      ducted a rigorous human validation study. This
+                                                      appendix details the methodology and findings of
+                                                      that study.
+
+                                                      Study Design Three graduate students, proficient
+                                                      in English and familiar with NLP annotation tasks,
+                                                      served as our annotator. They were presented with
+                                                      a randomly selected sample of 240 instances from
+                                                      the generated Med-PCD dataset. For each instance,
+                                                      they were asked to independently provide a "pass"
+                                                      or "fail" judgment based on two core quality crite-
+                                                      ria.
+
+45936
+ 13
+
+
+===== PAGE 14 / 14 =====
+
+Annotation Guidelines Our guidelines in-
+structed raters to disregard minor grammatical er-
+rors, abbreviations, or informalities that were likely
+present in the original MedDialog text. The focus
+was strictly on the quality of the PII injection. An
+instance was judged as a "pass" only if it met both
+of the following criteria:
+
+  1. Contextual Coherence: The injected PII fits
+      naturally and logically within the medical con-
+      text of the dialogue.
+
+  2. Logical Consistency: The injected PII does
+      not create any internal contradictions within
+      the text.
+
+   To ensure consistent judgments, we provided
+clear examples of what constitutes a "fail" for each
+criterion:
+
+   • Coherence Failure: The injected PII is con-
+      textually inappropriate, irrelevant, or nonsen-
+      sical. Example: A doctor’s note discussing a
+      patient’s blood pressure results suddenly in-
+      cludes an unrelated flight number like "United
+      Flight UA2401".
+
+   • Consistency Failure: The injected PII con-
+      tains internal contradictions. Example: The
+      text mentions a patient’s DOB is "05/12/1956"
+      but also refers to them as a "25-year-old
+      male".
+
+Results and Inter-Annotator Agreement The
+results of the study strongly validated our data gen-
+eration process. Averaged across the three raters,
+98.8% of the evaluated instances were judged
+as a "pass", indicating that our pipeline consis-
+tently produces high-quality, coherent, and logi-
+cally sound data.
+
+   To measure the reliability of the rating process
+itself, we calculated the Inter-Annotator Agreement
+(IAA) using Fleiss’ Kappa (κ), the standard metric
+for assessing agreement among a fixed number of
+raters. We achieved a substantial agreement with a
+calculated κ = 0.89. This high level of agreement
+confirms that our quality criteria were clear and
+that the high success rate is a reliable measure of
+our dataset’s quality.
+
+                                                           45937
+                                                             14

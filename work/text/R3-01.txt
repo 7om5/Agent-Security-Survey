@@ -1,0 +1,1397 @@
+# R3-01 | FragFuse: Bypassing Access Control of Large Language Model Agents via Memory-Based Query Fragmentation and Fusion
+# PDF: papers\FragFuse_Bypassing Access Control of Large Language Model Agents via Memory-Based Query Fragmentation and Fusion.pdf
+# extracted: 2026-11-02T19:15:58.122Z
+
+
+===== PAGE 1 / 21 =====
+
+FragFuse: Bypassing Access Control
+          of Large Language Model Agents via
+ Memory-Based Query Fragmentation and Fusion
+
+       Zixin Rao, Wentian Zhu, and Chan Aristella Lu, University of Georgia;
+Zhaorun Chen, University of Chicago; Wei Niu and Le Guan, University of Georgia;
+Bo Li, University of Illinois Urbana-Champaign; Zhen Xiang, University of Georgia
+
+               https://www.usenix.org/conference/usenixsecurity26/presentation/rao
+
+         This paper is included in the Proceedings of the
+                   35th USENIX Security Symposium.
+
+                           August 12–14, 2026 • Baltimore, MD, USA
+
+                                                ISBN 978-1-939133-58-8
+
+                                     Open access to the Proceedings of the
+                                         35th USENIX Security Symposium
+                                                      is sponsored by
+
+
+===== PAGE 2 / 21 =====
+
+FragFuse: Bypassing Access Control of Large Language Model Agents via
+                 Memory-Based Query Fragmentation and Fusion
+
+                 Zixin Rao∗♠, Wentian Zhu∗♠, Chan Aristella Lu♠, Zhaorun Chen♢,
+                               Wei Niu♠, Le Guan♠, Bo Li♣, Zhen Xiang♠
+
+♠University of Georgia, ♢University of Chicago, ♣University of Illinois Urbana-Champaign
+
+                                                                 ∗Equal contribution
+
+        Project page: https://zixin22.github.io/fragfuse.github.io/
+
+                        Abstract                                  workflows that enable necessary autonomy and adaptability
+                                                                  to more and more complex tasks. A central capability of LLM
+Large language model (LLM) agents increasingly rely on            agents is tool-based interaction with the environment, which
+long-term memory to support complex task execution, user          allows them to dynamically access external databases, compu-
+personalization, and domain adaptation. Meanwhile, emerg-         tational services, and even the real world [25, 27, 30, 37, 51].
+ing access-control mechanisms for LLM agents are being            Recently, LLM agent frameworks have been increasingly
+explored to block policy-violating requests, aiming to prevent    designed with memory mechanisms. By retaining informa-
+misuse and improve resource efficiency. In this paper, we         tion beyond a single interaction, memory supports complex
+reveal a novel attack surface arising from agents’ memory op-     task execution [18, 53, 60, 61], personalization to individual
+erations: prohibited content triggering access control can be     users [26, 44, 63], and domain adaptation [54, 64]. In typi-
+fragmented across interactions, stored in long-term memory        cal LLM agents, the memory module – often referred to as
+in a benign-appearing form, and later reconstructed through       long-term memory – stores records from previous sessions
+memory retrieval, without appearing explicitly in the final user  and tasks, including user queries, agent actions, intermediate
+query. Specifically, we propose FragFuse, the first attack        reasoning traces, and execution outcomes [20]. These stored
+that enables unprivileged users to bypass agent access control    experiences can later be retrieved and reused through memory
+by exploiting this temporal channel introduced by long-term       augmentation to inform future decisions. For example, con-
+memory. FragFuse operates in three stages: (1) identifying        versational agents such as ChatGPT may draw on information
+rejection-responsible fragments via black-box adaptive query-     from prior interactions when answering new queries, even
+ing with fragment masking; (2) injecting these fragments into     across sessions [33]. In more complex settings, such as au-
+memory using marked carrier queries; and (3) retrieving and       tomated diagnosis [42], web shopping [24], and autonomous
+fusing the stored fragments through a follow-up attack query.     driving [10], long-term memory supports task planning, pref-
+While FragFuse can be instantiated manually for individ-          erence modeling, and consistent output formatting.
+ual agents, we propose an optimization scheme that tunes
+fusion instructions and marker designs on surrogate models,          On the other hand, to reduce misuse and satisfy platform
+enabling automated attack generation without violating the        and safety requirements, while also reducing unnecessary ex-
+attacker’s threat model assumptions. We evaluate FragFuse         ecution costs and defending against potential latency attacks,
+across four representative agent settings and task domains,       LLM agents are increasingly equipped with access-control
+covering three state-of-the-art agent access-control mecha-       mechanisms, such as rule-based access controls that deny
+nisms. FragFuse achieves an average bypass success rate of        queries violating predefined policies or exceeding a user’s
+86.3% and an average end-to-end harmful task success rate of      access privileges [7, 29, 52]. For example, GuardAgent may
+41.1% across all settings, with only 4.4% average task success    reject an underage user’s request to purchase alcohol by check-
+rate degradation compared to configurations without access        ing the user profile against policies [52]. Similarly, AGrail
+control. Additionally, we show that alternative defenses, such    may deny instructions that attempt high-risk system oper-
+as state-of-the-art prompt-injection detectors and perplexity     ations (e.g., deleting protected directories or modifying file
+detectors, cannot effectively address our attack.                 permissions) when the user lacks the required privileges [29].
+
+1 Introduction                                                       Despite their growing adoption, the robustness of such ac-
+                                                                  cess control remains underexplored under adaptive attackers.
+Large language model (LLM) agents extend stand-alone              In particular, can a regular user with malicious intentions
+LLMs with additional mechanisms and more complicated              bypass the access control of an LLM agent to carry out pro-
+                                                                  hibited behaviors through ordinary interaction?
+
+USENIX Association                                                35th USENIX Security Symposium 4761
+
+
+===== PAGE 3 / 21 =====
+
+In this paper, we identify a new and practical attack surface   Figure 1: Overview of FragFuse. For a query that would
+in LLM agents – the long-term memory mechanism – and               otherwise be denied, FragFuse bypasses access control (AC)
+propose FragFuse, the first attack that bypasses access con-       through a three-stage pipeline. Stage 1 identifies sensitive
+trol in LLM agents by leveraging this new attack surface to        fragments from the prohibited query and produces a masked
+enable query fragmentation and subsequent fusion.                  query. Stage 2 constructs a carrier query containing the iden-
+Memory as an Attack Surface for LLM Agents with Ac-                tified fragments and injects it into the agent’s memory bank
+cess Control. We show that memory is not merely a passive          through ordinary interaction. Stage 3 issues an attack query to
+storage component, but can become an attack surface that un-       retrieve the carrier query and restores the original prohibited
+dermines an agent’s access control. In particular, most exist-     intent by fusing the fragments back into the masked query via
+ing access-control mechanisms examine only the current user        an optimized fusion instruction. A successful attack induces
+query, implicitly assuming that any policy-violating intent ap-    the same target execution as if no access control were in place.
+pears explicitly in the query and can therefore be detected by
+an LLM- or agent-based access control. In contrast, persistent     i.e., a benign-looking query that carries fragmented sensi-
+agent memory introduces a temporal channel: an attacker can        tive content into memory. The fragments are wrapped with
+write sensitive information into the agent’s memory during         explicit markers, which preserve fragment boundaries and
+earlier interactions in a benign-looking form and later cause it   indicate the masked slots for later reconstruction. The carrier
+to be retrieved and fused into a subsequent attack query, such     query is then submitted so that its resulting record is stored
+that the effective attack depends on past interactions rather      in memory. (3) The attacker then issues a follow-up attack
+than the current query alone.                                      query consisting of the same host query used in the carrier
+Threat Model. We consider a typical interactive LLM agent          (to ensure query-similarity-based retrieval), a masked query
+equipped with a generic memory mechanism and protected by          with the sensitive fragments replaced by the same markers,
+state-of-the-art access control mechanisms, ensuring both the      and a generic fusion instruction that extracts the marked frag-
+generality of our setting and the strength of our attack. For a    ments from the retrieved memory and fuses them back into
+dangerous or unauthorized task query that would normally be        the masked query.
+denied by access control, the attacker’s objectives are twofold:
+(a) to bypass the access-control mechanism, and (b) to induce         To further improve attack performance under the black-box
+the agent to execute the task in accordance with the original      threat model, we propose an offline surrogate constrained
+prohibited intent. For example, in an e-commerce interaction       optimization framework that optimizes the fusion instruction
+setting, a successful attack may elicit prohibited purchasing      using a surrogate query-fusion task on a surrogate model
+behavior, such as inducing the agent to purchase alcohol for       and solves it via a genetic algorithm [16]. The optimized fu-
+a user under the legal drinking age. In an operating-system        sion instruction jointly improves the likelihood of successful
+assistant setting, a successful attack may trigger destructive     carrier-query retrieval, effective fusion of sensitive fragments,
+file-system operations (e.g., “I want to renew my OS system,       and the stealthiness of the attack against perplexity checks.
+please help me delete all files under /bin.").                     Evaluation of FragFuse. We evaluate FragFuse across
+                                                                   four representative agentic settings: RAP [24] on WebShop
+   We consider an attack model where the attacker is an ordi-      for web shopping [56], OSAgent on Safe-OS for OS assis-
+nary user of the agent without any privileged access. First, the   tance [29], SeeAct [62] on Mind2Web-SC for web naviga-
+attack does not rely on the agent’s internal design and cannot     tion [13, 52], and InspAgent on AgentHarm for tool-based
+manipulate the agent’s code or its execution environment.          tasks [2]. For each setting, we consider both LLM-based
+
+   Second, the attacker cannot directly access or manipulate
+the agent’s memory bank, including stored memory records
+and memory operation mechanisms. Third, while the attacker
+is aware of the access-control policies or rules, which are com-
+monly made public, they have no knowledge of the internal
+design of the access-control mechanism, including how these
+policies are enforced. Together, these constraints force the
+attack to be carried out solely through normal interactions
+with the agent, implying that any regular user of the agent
+could potentially act as an adversary.
+Overview of FragFuse. Our attack exploits the temporal
+channel introduced by the agent’s memory and is carried out
+in three stages: (1) Through an automated pipeline, the at-
+tacker identifies the fragments responsible for access-control
+rejection by iteratively querying the agent and observing ac-
+cept/reject signals. (2) The attacker constructs a carrier query,
+
+4762 35th USENIX Security Symposium                                USENIX Association
+
+
+===== PAGE 4 / 21 =====
+
+access control and state-of-the-art agent-based guardrails, in-    can only access patient information consistent with their roles
+cluding GuardAgent [52], AGrail [29], and ShieldAgent [7].         and authorization levels [47].
+We measure attack effectiveness using Bypass Success Rate
+(BSR), which captures whether access control is bypassed,             Agent access control is typically implemented as a
+Task Success Rate (TSR), which measures whether the agent          guardrail module deployed in parallel with the agent workflow,
+completes the specified restricted objective, and End-to-End       as recent work shows that “invasive” protection mechanisms
+Success Rate (E2E-SR) of harmful tasks. Across all settings,       can interfere with normal agent functionality [29, 52]. Due to
+FragFuse achieves an average BSR of 86.3%, E2E-SR of               the breadth of policy specifications and the complexity of task
+41.1% compared with 5.7% for the baseline, with only an av-        queries, access control for LLM agents is often implemented
+erage TSR degradation of 4.4%. We further evaluate the query       using an LLM, or even an auxiliary LLM agent, to enable flex-
+efficiency, robustness to memory settings, and attack-design       ible, context-aware policy enforcement [52].This separation
+flexibility through ablations. Finally, we examine defenses        is important because the underlying LLM alone is not suffi-
+including prompt-injection detection and perplexity-based          cient for enforcing scenario-specific restrictions. While it may
+detection, showing that they are ineffective against FragFuse,     reject generally malicious requests, many prohibited queries
+highlighting the need for specific defenses for this attack.       are defined by application-specific policies or user-specific
+                                                                   permission boundaries. Thus, a query can appear benign to
+   Our technical contributions are summarized as follows:          the LLM but still violate the agent’s access rules, motivating
+                                                                   a separate access-control module for scenario-specific policy
+• We introduce FragFuse, the first attack that bypasses access     enforcement.
+  control in LLM agents by fragmenting a prohibited query
+  and later fusing it using retrieved memory records.                 While the expressive power of existing access control mech-
+                                                                   anisms makes bypassing them nontrivial, a successful bypass
+• We propose a novel three-stage attack pipeline for               (e.g., via our proposed attack) can have severe consequences,
+  FragFuse that operates through ordinary user interactions        including policy- or law-violating agent misuse [11], unau-
+  under a black-box threat model. We further introduce an          thorized access to sensitive resources or data [48], wasteful
+  offline surrogate constrained optimization framework to en-      consumption of computational and API resources [15], and
+  hance both the effectiveness and stealthiness of FragFuse.       loss of trust or legal liability for system operators [12].
+
+• We evaluate FragFuse across four representative agentic          2.2 Memory Mechanism in LLM Agents
+  settings with state-of-the-art access-control mechanisms.
+  FragFuse achieves an average BSR of 86.3%, an average            The memory module enables LLM agents to retain histor-
+  E2E-SR of 41.1%, with only an average TSR degradation of         ical experience and leverage it to inform future task ex-
+  4.4%. We further demonstrate that FragFuse is generally          ecution. Our attack exploits long-term memory that sup-
+  robust across a range of memory settings.                        ports cross-session information reuse, which is different from
+                                                                   short-term memory that maintains transient working logs
+• We investigate potential defenses against FragFuse and           within a single task session [19, 57, 58, 65]. In general,
+  show that it remains stealthy under prompt-injection detec-      a long-term memory (hereafter referred to as memory) bank
+  tion and perplexity-based detection.                             stores an indexed set of query-execution pairs, denoted as
+
+2 Background and Related Work                                      M = {(q1, e1), . . . , (qn, en)} [24, 31, 42, 62]. Depending on
+
+2.1 Access Control in LLM Agents                                   the task, memory records may additionally include summaries
+                                                                   or keyword abstractions for conversational agents [55], or
+Traditional access control mechanisms for automated sys-           reflective signals and post-hoc evaluations when an explicit
+tems aim to enforce authorization policies that regulate which     evaluator is available [43, 54]. While our attack is evaluated
+authenticated entities are permitted to access predefined re-      on the generic memory structure, we will show its effective-
+sources or invoke specific operations [50]. In LLM agents,         ness when such additional memory content is included.
+this objective is instantiated as rejecting user queries that are
+either unauthorized or violate domain-specific policies. Un-          Typically, the memory mechanism of LLM agents consists
+like safety measures for standalone LLMs, which mainly ad-         of three fundamental operations:
+dress generic harmful or unsafe content [4, 21, 35, 66], agent     1) Memory retrieval. Given a current task query q, a subset
+access control must account for task-specific constraints, tool    of stored records is retrieved based on their relevance to q, as
+invocation semantics, and interactions with external databases.    measured by a relevance function r, such as cosine similar-
+For example, a web shopping agent operating under U.S. law         ity between embedding vectors. In generic memory retrieval,
+must reject requests to purchase alcohol from users under the      each stored record is treated independently, and the top-k
+age of 21 [45]. Similarly, in hospitals, a healthcare agent must   records ranked by r(q, qi) are retrieved. More sophisticated
+enforce fine-grained access control, ensuring that personnel       memory designs, particularly those developed for conversa-
+                                                                   tional agents with an emphasis on user personalization, incor-
+                                                                   porate inter-record dependencies when computing relevance,
+
+USENIX Association                                                 35th USENIX Security Symposium 4763
+
+
+===== PAGE 5 / 21 =====
+
+enabling more structured retrieval [9, 55].                      3 Threat Model
+2) Memory-augmented execution. The retrieved memory
+records {(qi, ei)}ki=1 are incorporated into the agent’s system  Agent, Memory, and Access Control Settings We consider
+prompt together with the current task query via a wrapping       an LLM agent that operates in an interactive environment and,
+template W . The agent then produces an execution, or an         for each user query q, produces an execution e. Following the
+action plan for subsequent tool calling, by                      threat models adopted in prior memory-based attacks [14, 48],
+                                                                 the agent maintains a memory bank that follows the generic
+                     e = π(W ({qi, ei}i=1 k , q)),               memory format and operational mechanisms described in
+                                                                 Section 2.2. Unlike prior attacks, however, the memory bank
+where π denotes the core LLM of the agent.                       in our setting need not be shared across users. The agent is
+3) Memory writing. After memory-augmented execution, the         protected by a separately deployed access control module
+resulting query-execution pair (q, e) is incorporated into the   based on a set of domain-specific rules. Each input query q
+                                                                 is independently inspected by the access control module: if a
+memory bank M . A binary gating function, such as a quality      rule violation is detected, the query is rejected; otherwise, q
+                                                                 is processed by the agent’s original workflow.
+evaluator, may be employed to permit memory writing [54].
+In practical AI systems, automated output quality evaluation     Attacker’s Objectives Consider a prohibited query q that
+is often infeasible and is therefore approximated using user     would be rejected by the agent’s access control if issued di-
+feedback signals, as adopted by deployed systems such as         rectly. The attacker’s objectives are twofold: (a) to bypass
+Waymo [49], ChatGPT [32], and Alexa [1].                         access control without triggering a rejection, and (b) to in-
+                                                                 duce the agent to execute the prohibited intent of q. Such
+   While related to retrieval-augmented generation (RAG),        attacks can have severe real-world consequences. For exam-
+which relies on static external knowledge sources [27], and      ple, an attacker may cause the agent to retrieve restricted
+in-context learning (ICL), which uses predefined examples        website content for downstream use or to purchase prohib-
+within a single prompt [6], the memory mechanism of LLM          ited products under an ineligible user profile. These threats
+agents is distinguished by self-generated records that are per-  raise serious safety, security, and ethical concerns for deploy-
+sistently stored and reused to guide future behavior [20, 54].   ing memory-based agents in real-world interactive settings,
+                                                                 including e-commerce, web navigation, and OS assistance.
+   In this work, both our attack design and evaluation target
+the generic memory setting described above. This choice en-      Attacker’s Knowledge and Assumptions In our threat
+sures broad generalizability across agent architectures and      model, the attacker is an ordinary user of the agent and does
+application domains, while enabling evaluation on existing       not possess any privileged access to the agent’s workflow,
+agents and access-control mechanisms, for which more so-         memory, or access-control mechanisms.
+phisticated memory designs are often incompatible to deploy.     (1) Knowledge of the agent. The attacker only has high-level
+                                                                 knowledge of the agent’s intended functionality and does
+2.3 Memory-Based Attacks on LLM Agents                           not rely on access to its internal design, including webpages,
+                                                                 knowledge bases, or tool outputs.
+Prior to our work, several memory-based attacks have been        (2) Knowledge of the agent’s memory. The attacker cannot
+proposed to manipulate agent behavior by exploiting vulnera-     access the agent’s memory bank or directly manipulate stored
+bilities in agent memory. AgentPoison is an explicit-trigger     records. However, the attacker is aware that memory retrieval
+backdoor attack that injects optimized malicious records into    is generally based on query similarity, which is a common de-
+an agent’s memory bank, such that triggered queries retrieve     sign choice, but does not know specific retrieval details, such
+these records and induce predefined adversarial executions [8].  as the similarity metric, embedding model, or the number of
+MINJA is an implicit-trigger backdoor attack that focuses on     records retrieved.
+the memory injection process itself, enabling ordinary users     (3) Knowledge of the access-control mechanism. The attack
+to poison an agent’s memory through normal interactions          does not rely on prior knowledge of the internal implemen-
+and alter the execution of a victim user’s future query [14].    tation of the access-control module (e.g., prompts, model
+MEXTRA exposes privacy risks of agent memory by causing          parameters, or enforcement pipelines). We assume, however,
+stored records to be leaked through the agent’s outputs [48].    that the access-control policy itself is public and externally
+                                                                 specified, as is typical for platform policies or product docu-
+   Rather than altering future queries through backdoors or      mentation [3, 17, 34]. Finally, we assume that the attacker can
+extracting memory contents, our proposed attack targets a        infer whether a task has been denied by access control. For
+fundamentally different objective – bypassing access control     example, when a query is blocked, the agent produces no ob-
+mechanisms in LLM agents while preserving the original           servable trace of execution, even if the access-control module
+prohibited task intent. Moreover, existing attacks assume that   does not emit an explicit failure message. This observable be-
+the memory bank is either directly accessible to the attacker    havior enables a purely black-box, automated learning process
+or globally shared across users. In contrast, our attack does
+not rely on these assumptions, and thus it is applicable to
+broader agent systems.
+
+4764 35th USENIX Security Symposium                              USENIX Association
+
+
+===== PAGE 6 / 21 =====
+
+in which the attacker issues partially masked queries to iden-      rules as input, and outputs a candidate sensitive fragment ft
+tify the components responsible for triggering denial. These        – a span of text identified as violating the policy (e.g., “buy
+strict constraints force the attack to be conducted through         alcohol” or “/root/private/. . . ”). A temporary masked query
+normal agent interactions. While this makes attack design           is then constructed by replacing ft with a predefined marker
+more challenging, a successful methodology would enable             vt (e.g., a pair of angle brackets <>) at its original location:
+any ordinary user of the agent to mount the attack.
+                                                                              q(t+1) = M q(t), ( ft → vt ) , q(1) = q.
+4 Design of FragFuse
+                                                                    Here, M(·) denotes a deterministic text-masking operator, and
+4.1 Attack Overview                                                 ( f → v) specifies replacing a span f with marker v. The mark-
+                                                                    ers preserve the original slot of each masked fragment, which
+The key idea for FragFuse to bypass the agent’s access con-         will later serve as anchors for reconstruction.
+trol while still having the agent follow the intention of the       (2) Fragment verification. We submit the temporary masked
+original prohibited query q is to exploit the temporal channel      query q(t+1) to the agent protected by access control and ob-
+created by the agent’s memory. Instead of issuing q directly,       serve the resulting accept/reject signal. If q(t+1) is rejected, it
+the attacker interacts with the agent twice. In the first inter-    indicates that the query still contains policy-violating content;
+action, the attacker induces the agent to write into memory         in this case, we apply FRAGEXTRACTOR again to q(t+1) to
+the sensitive content in q that would trigger access control.       identify and accumulate additional sensitive fragments.
+In the second interaction, the attacker issues a separate query
+to retrieve the stored record and reconstruct the prohibited           These two steps are repeated until the masked query is
+intent at execution time. However, executing such an attack         accepted by access control or a maximum number of iterations
+procedure faces three key challenges: (1) the queries in both       is reached. The outputs of this stage are the extracted sensitive
+interactions must bypass the agent’s access control; (2) the in-    fragments { ft }tℓ=1 and the final masked query
+jected record must be reliably retrieved in the later interaction;
+and (3) the sensitive content must be correctly reconstructed                       qmask = M q, {( ft → vt )}tℓ=1 ,
+during memory-augmented execution to realize the intention
+of the prohibited query q.                                          which are subsequently used for the construction of the car-
+                                                                    rier query and the attack query. An illustrative example of
+   FragFuse addresses these challenges through a three-stage        this stage is shown below, and the detailed prompts used by
+attack pipeline. (i) automatically discovering a set of policy-     FRAGEXTRACTOR are provided in Appendix M.
+violating fragments via trial queries, producing a masked
+query qmask that is not rejected by the agent’s access control      Sensitive Fragment Discovery
+(Section 4.2); (ii) injecting the discovered fragments into the
+agent’s memory by embedding them within a carrier query             Prohibited Query. q: Change the permissions of the
+qcar, whose main body is a benign host query qhost that facili-
+tates later retrieval (Section 4.3); and (iii) constructing an at-  /etc directory to 000
+tack query based on qmask and a fusion instruction Ifuse that re-   Submit q(1) = q → Reject.
+constructs the sensitive fragments during memory-augmented
+execution, once qcar is successfully retrieved (Section 4.4). To    Iterations.
+further improve attack performance, we formulate a surrogate
+constrained optimization problem to optimize the fusion in-         Iteration t = 1. FRAGEXTRACTOR: f1 = permissions, v1 = <>.
+struction (Section 4.5). The overall pipeline of FragFuse is        q(2): Change the <> of the /etc directory to 000 .
+illustrated in Figure 1.                                            Submit q(2) → Reject.
+                                                                    More iterations until q(ℓ+1) is Accepted.
+4.2 Stage 1: Sensitive Fragment Discovery
+                                                                    Sensitive Fragments & Markers.
+In this stage, we identify a set of sensitive fragments whose
+presence triggers access-control denial, and then generate          {  ft  }ℓ :  permissions,   /etc  directory, 000.
+a masked query qmask by masking the identified fragments.
+While this procedure could be performed manually, we de-                    t=1
+velop an automated method to enable scalable attacks. The                  }ℓ :
+procedure iterates between the following two steps:                 {vt          <>,  <>,  <>.
+(1) Fragment proposing. We implement an LLM-based                           t=1
+FRAGEXTRACTOR for automated fragment extraction from
+the prohibited query q. At each iteration t, FRAGEXTRACTOR          Masked Query. qmask: Change the <> of the <> to <>.
+takes the current query text q(t) together with the public policy
+                                                                    4.3 Stage 2: Carrier Construction & Injection
+
+                                                                    This stage injects the identified sensitive fragments into the
+                                                                    agent’s memory by inserting them into a carrier query qcar.
+                                                                    The main body of qcar is a preselected host query qhost that is
+                                                                    known to pass access control. This design encourages subse-
+                                                                    quent attack queries to successfully retrieve the carrier record
+                                                                    by including the same host query content.
+
+                                                                       However, constructing a carrier query by directly append-
+                                                                    ing the sensitive fragments to qhost may still trigger access-
+                                                                    control rejection, as some fragments remain disallowed even
+
+USENIX Association                                                                         35th USENIX Security Symposium 4765
+
+
+===== PAGE 7 / 21 =====
+
+when presented in isolation. To address this issue, we split      4.5 Surrogate Optimization of Fusion Instruc-
+each sensitive fragment at the word level and encapsulate the            tion
+resulting parts using the same markers introduced in Stage 1.
+The resulting carrier query is defined as                         Overview While the fusion instruction Ifuse in Eq. (2) can be
+                                                                  crafted manually, its effectiveness is often unreliable. First,
+                  qcar = [qhost, v1 : f1, . . . , vℓ : fℓ],  (1)  an overly long or instruction-heavy Ifuse may hinder retrieval,
+                                                                  preventing the attack query from retrieving the intended car-
+with an illustrative example shown below. The constructed         rier record even when both contain the same host query qhost.
+qcar is submitted to the agent through ordinary interaction,      Second, even when retrieval succeeds, the agent may fail to
+bypasses access control, and causes the agent to autonomously     correctly extract the marked content (e.g., text enclosed within
+generate and store the corresponding memory record.               <>) and substitute it into qmask. Moreover, optimizing Ifuse is
+                                                                  challenging under our threat model, as the attacker has no
+Carrier Query Construction                                        access to the agent’s internals, such as the backbone LLM.
+
+Host Query. qhost: Check and return the content in                   To address these challenges, we formulate a constrained op-
+/test/myfile/config.txt.                                          timization problem to optimize Ifuse using a surrogate query-
+                                                                  fusion task on a surrogate LLM. The objective of our opti-
+Sensitive Fragments & Markers.                                    mization problem consists of two loss terms, capturing (i)
+                                                                  successful retrieval of the carrier record and (ii) successful
+{  ft  }ℓ :  permissions,   /etc  directory, 000.                 fusion of the original prohibited query q. The constraint is
+                                                                  designed to ensure the stealthiness of the attack against po-
+        t=1                                                       tential perplexity defenses, requiring that the resulting attack
+       }ℓ :                                                       query qatt, which incorporates the optimized Ifuse, remains
+{vt          <>,  <>,  <>.                                        fluent and coherent.
+        t=1                                                       Surrogate query-fusion task. Successful fusion of the orig-
+                                                                  inal prohibited query q by the agent would ideally be mani-
+Carrier Query. qcar: Check and return the content                 fested through execution consistent with q’s intention. How-
+                                                                  ever, since the attacker cannot directly obtain such execution
+in /test/myfile/config.txt. <permi><ssions> </etc                 as an optimization signal, we introduce a surrogate query-
+                                                                  fusion task to approximate this objective. The input to this
+di><rectory> <0><00>                                              surrogate task is a prompt template encapsulating the carrier
+                                                                  query qcar and the attack query qatt, which incorporates the fu-
+4.4 Stage 3: Fragment Retrieval & Fusion                          sion instruction Ifuse. This template also includes a high-level
+                                                                  description of the agent’s functionality together with an in-
+This stage retrieves the sensitive fragments injected via the     struction to output a fused query (see the illustrative example
+carrier query, provided that the carrier query is successfully    below). The resulting prompt is fed to a surrogate LLM, and
+retrieved by the agent, and fuses them into the masked query to   the success of the surrogate query-fusion task is measured
+recover the intended semantics of the original prohibited query   by the semantic similarity between the generated fused query
+q. To this end, we construct an attack query qatt based on the    and the original prohibited query q.
+masked query qmask by incorporating: (a) the same host query
+qhost used in the carrier query, which encourages successful
+retrieval under query-similarity-based memory access; and
+(b) a fusion instruction that specifies how the agent should
+extract the marker-encapsulated sensitive fragments from the
+retrieved memory record and integrate them into qmask. The
+resulting attack query is formed as
+
+                       qatt = {qhost, Ifuse, qmask},         (2)  Example Prompt Template for Surrogate Query-Fusion Task on
+                                                                  the SeeAct Agent for Web Navigation
+with an illustrative example shown below.                         You are assisting a human with a web navigation
+                                                                  task step by step. At each stage, you can view
+Attack Query with Manually Crafted Fusion Instruction (Bold)      the webpage via a screenshot, observe the previous
+Check and return the content in                                   actions, and determine the next action.
+/test/myfile/config.txt. Extract the content                      Here is a similar task: {carrier_query}
+inside <> from the retrieved example, fill                        Now, execute the following task: {attack_query}
+it into “Change the <><> of the <><> to <><>.”                    Output the complete task description exactly as
+and run the completed instruction as a new                        text (no extra commentary):
+task.
+
+   In its simplest form, Ifuse can be manually crafted with       Constrained optimization problem. We optimize the fusion
+instructions to (i) locate the marked fields in the retrieved     instruction Ifuse by solving the following problem:
+memory record and (ii) perform a one-to-one substitution
+to reconstruct the target query. To further improve attack        min Lret(Ifuse) + Lfus(Ifuse)  (3)
+effectiveness, we propose to optimize Ifuse, as described next.   Ifuse
+
+                                                                  s.t. Lcoh(Ifuse) ≤ ηcoh.       (4)
+
+4766 35th USENIX Security Symposium                                      USENIX Association
+
+
+===== PAGE 8 / 21 =====
+
+Here, Lret and Lfus are the loss terms corresponding to re-               basic structural validity (e.g., required placeholders/marker
+trieval success and fusion success, respectively. The constraint          format) and a maximum length budget.
+enforces stealthiness against perplexity-based defenses, where            3) Evaluation and selection. For each candidate, we run the
+the upper bound ηcoh can be calibrated using benign queries               surrogate evaluation pipeline over the query set Q to esti-
+(e.g., the third quartile of the benign loss distribution).               mate Lret and Lfus, and compute Lcoh for constraint valida-
+                                                                          tion. Candidates that violate the coherence constraint are
+   Specifically, Lret promotes retrieval of the carrier record by         discarded; the remaining candidates are ranked by the ob-
+minimizing the semantic distance between the attack query                 jective value Lret + Lfus. We retain the best candidates as the
+qatt and the host query qhost, which constitutes the major com-           next-generation elites and fill the rest of the population with
+ponent of the carrier query qcar. The loss is defined by                  high-scoring non-elites or lightly mutated elites for diversity.
+                                                                          4) Termination. We iterate until the best objective value stops
+Lret(Ifuse) =           1  ∑ dsim(qatt, qhost) ,            (5)           improving for a fixed number of generations (or a maximum
+                                                                          budget is reached), and output the best fusion instruction I⋆fuse.
+                        |Q| q∈Q
+                                                                             A detailed Algorithm summarizing the optimization proce-
+The fusion loss Lfus encourages semantic alignment between                dure is provided in Appendix D.
+the fused query generated by the surrogate model πs and the
+target query q, and is defined as                                         5 Evaluation
+
+                    1                                                     5.1 Experimental Setup
+
+Lfus(Ifuse) = − ∑ dsim(πs(Ws(qatt, qcar)), q) . (6)                       Agent Setting. We evaluate FragFuse across four representa-
+                                                                          tive agentic settings spanning web shopping, web navigation,
+                   |Q| q∈Q                                                OS assistance, and web-UI interaction. Specifically, we con-
+                                                                          sider: (1) RAP in the WebShop environment [24, 56], where
+where Ws denotes the prompt template used for the surrogate               the agent completes purchase-oriented tasks by iteratively is-
+query-fusion task. In both loss terms, dsim(·, ·) can be any              suing product search queries and executing pre-defined item/-
+computable semantic similarity measure between queries and                page actions over the platform interface; (2) OSAgent in an
+need not match the similarity function employed by the target             OS-assistance setting [29], where the agent interacts with
+agent for memory retrieval. The set Q consists of queries from            a Linux OS to fulfill system-level requests through native
+the task domain that are not required to be prohibited. For each          command/UI execution with feedback; (3) SeeAct in a web-
+q ∈ Q, we construct corresponding qatt and qcar following the             UI interaction setting [62], where the agent grounds page
+attack procedure. Importantly, the construction of the qmask              observations into executable UI actions; and (4) an inspection-
+component in qatt and the fragments in qcar can be performed              based LLM-with-tools agent (InspAgent) evaluated on the
+via random masking without interacting with the target agent,             AgentHarm benchmark [2, 46], which comprises explicitly
+allowing the optimization to be carried out entirely offline.             harmful tasks paired with benign counterparts that require
+                                                                          multi-step, dependency-aware tool orchestration. We select
+   Finally, the coherence loss Lcoh in the constraint is designed         these agents because they have been previously tested with,
+to penalize fusion-instruction choices that result in attack              or are compatible with, existing agent access-control mech-
+queries with abnormally high perplexity. It is defined as:                anisms [7, 29, 52]. Extending the evaluation to other task
+                                                                          domains would require the dedicated design of access-control
+                     1     1 T (qatt)  (t) (<t)                           policies or task-specific rules, which is beyond the scope of
+                                 ∑ log P qatt | qatt ,                    this work focused on attack methodology.
+Lcoh(Ifuse) = − ∑                                                         Datasets. Our evaluation uses the following four datasets:
+|Q| q∈Q T (qatt) t=1                                                      • Mind2Web-SC [52]. Mind2Web-SC contains 200 web-UI
+
+                                                                     (7)    instructions (100 benign, 100 harmful) from Mind2Web
+where T (qatt) denotes the length of qatt and log P(qatt (t) | qatt(<t))    [13]. Each instance pairs a non-malicious web task
+is the log-likelihood of the t-th token prediction in qatt.                 with user_info; harmfulness is determined by whether
+                                                                            user_info violates predefined eligibility rules (e.g.,
+Optimization algorithm. Inspired by prior work on jailbreak                 driver’s-license requirements for car rental/purchase) [52].
+                                                                          • WebShop [56]. WebShop is a simulated e-commerce envi-
+attacks [28], we solve the constrained optimization problem                 ronment. For access-control bypass evaluation, we sample
+                                                                            200 tasks (100 for creating benign instances, 100 for cre-
+in the discrete token space using a genetic algorithm [16].                 ating harmful instances). Like Mind2Web-SC, we consider
+                                                                            profile-based access control by generating a user_profile
+Specifically, we iteratively search for improved fusion instruc-
+
+tions under black-box feedback, following four steps:
+
+1) Initialization. We start from a small set of manually de-
+
+signed or LLM-synthesized seed instructions, each evaluated
+
+using the constrained objective. Seeds that violate the co-
+
+herence constraint are discarded and regenerated. The best
+
+feasible seeds are retained to form the initial elite set.
+
+2) Candidate generation. At each generation, we propose
+
+new candidate instructions by applying three classes of dis-
+
+crete editing operators to the elites: (i) LLM-based rewriting
+
+(paraphrasing/reordering), (ii) crossover (recombining frag-
+
+ments from multiple elites), and (iii) mutation (local inser-
+
+tion/deletion/replacement). Candidates are filtered to satisfy
+
+USENIX Association                                                        35th USENIX Security Symposium 4767
+
+
+===== PAGE 9 / 21 =====
+
+Table 1: Effectiveness of FragFuse compared with the baseline attack across agent, access control (AC), and backbone LLM
+settings. TSRs for direct querying in the absence of access control are reported for reference. FragFuse achieves substantially
+higher BSR than the baseline attack, with only minor TSR degradation (shown as subscripts) relative to direct querying. For
+direct querying without access control, BSR is not applicable (n.a.).
+
+                                                                      Core LLM                      Average
+
+Agent      AC           Query Setting         GPT-4o                  GPT-5.1     Gemini 2.5 Flash
+
+                                         BSR TSR                      BSR TSR     BSR TSR           BSR     TSR
+                                                                                                    n.a.
+                 –      direct querying  n.a.  88.0                   n.a.  75.0  n.a.  88.0        30.3     83.7
+           LLM-AC       baseline                                                                    93.7  54.0−29.7
+           GuardAgent   FragFuse         40.0 77.5                    45.0 17.8   6.0   66.7        35.3  77.6−6.1
+                        baseline                                                                    79.3  51.8−31.9
+RAP              –      FragFuse         93.0 92.5                    98.0 70.4   90.0 70.0               82.2−1.5
+SeeAct     LLM-AC                                                                                   n.a.
+OSAgent    AGrail       direct querying  42.0 76.2                    51.0 25.5   13.0 53.8          3.0     18.0
+InspAgent               baseline                                                                    93.0  11.1−6.9
+                 –      FragFuse         81.0 92.6                    84.0 78.6   73.0 75.3          9.0  19.4+1.4
+           LLM-AC       baseline                                                                    82.3  16.6−1.4
+           AGrail       FragFuse         n.a.  22.0                   n.a.  17.0  n.a.  15.0              20.1+2.1
+                                                                                                    n.a.
+                 –      direct querying  3.0   33.3                   1.0   0.0   5.0   0.0          3.3     82.0
+           LLM-AC       baseline                                                                    80.7  33.3−48.7
+           ShieldAgent  FragFuse         88.0 20.5                    98.0 20.4   93.0 17.2         19.3  81.4−0.6
+                        baseline                                                                    92.7  21.4−60.6
+                        FragFuse         5.0   20.0                   9.0   22.2  13.0  7.7               77.6−4.4
+                                                                                                    n.a.
+                        direct querying  72.0 23.6                    86.0 20.9   89.0 15.7          8.1     25.0
+                        baseline                                                                    80.5  27.5+2.5
+                        FragFuse         n.a.  80.0                   n.a.  84.0  n.a.  82.0        18.7  10.9−14.1
+                        baseline                                                                    88.3  13.0−12.0
+                        FragFuse         0.0   0.0                    0.0   0.0   10.0 100.0              13.1−11.9
+
+                                         82.0 80.5                    96.0 79.2   64.0 84.4
+
+                                         10.0 40.0                    28.0 14.3   20.0 10.0
+
+                                         88.0 70.5                    96.0 81.3   94.0 80.9
+
+                                         n.a.  38.6                   n.a.  13.6  n.a.  22.7
+
+                                         3.4   50.0                   21.0 32.4   0.0   0.0
+
+                                         45.5 25.0                    97.2  7.6   98.9  0.0
+
+                                         1.1   0.0                    33.5  10.2  21.6  28.9
+
+                                         82.4  17.2                   97.2  2.9   85.2  19.3
+
+  for each sampled task (details in Appendix O). Both the             generic memory setting described in Section 2.2. For each
+  task and its associated user_info will be used for access           task query, the agent retrieves the top-1 most similar mem-
+  control, while the agent execution considers the task only.         ory record. For RAP, SeeAct, and OSAgent, we rank records
+• Safe-OS [29]. Safe-OS contains 100 OS-assistance in-                by cosine similarity between query embeddings computed
+  structions (27 benign, 30 system-sabotage, 20 environment-          with sentence-transformers/all-MiniLM-L6-v2; for In-
+  dependent, and 23 prompt-injection) [29]. We exclude the            spAgent, we instead use string matching to identify the best-
+  prompt-injection subset because FragFuse targets hiding             matching record. Evaluations using alternative similarity mea-
+  harmful intent in the agent input via memory rather than ma-        sures are reported in Section 5.3, and evaluations with differ-
+  nipulating external data channels. We focus on the system-          ent numbers of retrieved records are also presented in Sec-
+  sabotage and environment-dependent subsets, which cover             tion 5.3. We do not apply additional filtering for memory writ-
+  confidentiality/integrity/availability risks (e.g., deletion, per-  ing; all completed query-execution pairs are stored in memory.
+  mission changes, unauthorized access, and operations on             Unless otherwise specified, the memory format consists of
+  critical directories). We further expand the benign split to        query-execution pairs. Evaluations with alternative memory
+  100 via LLM-based paraphrasing for initial memory records           formats and more sophisticated memory mechanisms, such
+  and surrogate optimization. See Appendix E for examples.            as discriminative writing, are provided in Section 5.3.
+• AgentHarm [2]. AgentHarm provides paired benign/harm-               Access-Control Setup & Rules. For each agent setting, we
+  ful tool-use tasks with public splits, where harmfulness is         evaluate two access-control configurations: (i) an LLM-based
+  defined by task intent/content and each instance is evaluated       access control (LLM-AC); and (ii) the existing access control
+  by a task-specific grading function over the full tool-use          shown to be effective for the agent in prior work. Both mecha-
+  trajectory [2, 46]. We use the released public test split (176      nisms use the same LLM (or backbone LLM) as the agent they
+  benign/176 harmful) for evaluation and follow its standard          protect. For RAP on WebShop and SeeAct on Mind2Web-SC,
+  scoring-to-metric mapping.                                          access control takes the task query and associated user_info
+                                                                      as input and checks for rule violations under prescribed poli-
+Memory Setting. In our main experiments, we adopt the
+
+4768 35th USENIX Security Symposium                                                                 USENIX Association
+
+
+===== PAGE 10 / 21 =====
+
+cies. For OSAgent on Safe-OS and INSPAGENT on Agen-                 ηcoh to the 75th percentile of this benign-loss distribution. To
+tHarm, access control inspects only the task query. LLM-AC          solve the optimization problem, we use GPT-4o as the surro-
+applies explicit, publicly specified policy rules to the agent in-  gate model, with population size P = 20, elite size E = 5, and
+put and outputs an allow/deny decision. Prompt templates for
+LLM-AC are provided in Appendix B. For existing access con-         a maximum of Gmax = 10 generations. For the seed set S , we
+trol, we use: (1) GuardAgent for RAP to block rule-violating
+purchase requests [52]; (2) AGrail for SeeAct to determine          manually design 3 fusion instructions per domain and expand
+user eligibility in web requests [29]; (3) AGrail for OSAgent       the set to 10 by paraphrasing them using GPT-4o.
+to block high-risk OS instructions; and (4) ShieldAgent for In-     Evaluation Metrics. We use the three metrics to evaluate the
+spAgent to block generic safety violations [7]. Some of these       effectiveness of FragFuse: (1) Bypass Success Rate (BSR).
+approaches (e.g., ShieldAgent) additionally perform post-hoc        BSR is defined as the proportion of attack instances in which
+action inspection. These access-control mechanisms represent        both the carrier query and the attack query bypass the agent’s
+state-of-the-art defenses for their corresponding agent settings,   access control. A successful attack should achieve a high
+and we adhere to their original implementations, datasets, and      BSR. (2) Task Success Rate (TSR). TSR is defined as the
+associated task-specific rules to ensure faithful evaluation.       proportion of attack instances with successful task execution
+While our focus is on access control, we discuss post-hoc           among those that bypass access control. TSR depends on both
+defenses in Section 6.                                              the attack effectiveness in recovering the intent of the original
+Attack Setting. For each combination of agent and access-           prohibited query and the agent’s task-execution capability.
+control mechanism, we create an independent attack instance         A successful attack should achieve a TSR comparable to
+for every prohibited task in the associated dataset, excluding      directly issuing prohibited queries without access control. (3)
+a small subset reserved for surrogate optimization.                 End-to-End Success Rate (E2E-SR). E2E-SR is defined as
+(1) Memory initialization. For each attack instance, we as-         the proportion of all attack instances that both bypass access
+sume a non-empty initial memory consisting of 8 records,            control and complete the target task. We report E2E-SR as a
+obtained by executing 8 randomly sampled benign queries,            supplementary metric in Appendix P.
+to simulate practical agent usage. Ablation results for other       Baseline Attack. Since existing attacks such as AgentPoi-
+choices of initial memory size are reported in Section 5.3.         son [8] and MINJA [14] pursue objectives different from that
+(2) Sensitive fragment discovery. We set the maximum num-           of FragFuse, we construct a baseline attack that directly in-
+ber of fragment-discovery iterations to 3, since beyond three       jects a bypassing instruction into the prohibited task query.
+rounds, masking can substantially distort query semantics           The detailed instruction is provided in Appendix G.
+and increase the likelihood of being flagged by access con-
+trol. A concrete example illustrating this effect is provided       5.2 Main Results
+in Appendix L. In the main experiments, we use a pair of an-
+gle brackets (<>) as the marker. Evaluations with alternative       FragFuse can effectively bypass access control in LLM
+marker choices are presented in Section 5.3.                        agents. As shown in Table 1, FragFuse achieves high BSRs
+(3) Carrier-query construction. For each attack instance, we        across four agent settings, each with two access-control config-
+randomly sample a host query from the benign pool, exclud-          urations, and multiple backbone LLMs, with an average BSR
+ing those used for memory initialization or surrogate opti-         of 86.3% across all configurations. In particular, FragFuse
+mization. For WebShop and Mind2Web-SC, which include a              consistently outperforms the baseline attack in bypassing ac-
+user_profile, we use the same user_profile for both the             cess control under all settings. As a supplementary end-to-end
+carrier query and the attack query to ensure consistency.           measure, FragFuse achieves an average E2E-SR of 41.1%,
+(4) Surrogate optimization. We construct the optimization           compared with 5.7% for the baseline; detailed results are
+dataset Q using 50 queries (25 benign and 25 prohibited).           reported in Appendix P. This advantage stems from our frag-
+These queries are not used for attack-instance creation, mem-       mentation design, which removes sensitive fragments from
+ory initialization, or host-query selection. For each query         their original semantic context. While the baseline attack at-
+in Q, masking is performed using NER-based segmenta-                tains non-trivial BSRs in some cases (e.g., RAP), its TSR
+tion, followed by random selection of 2 or 3 fragments,             is substantially lower than that of FragFuse, reflecting fre-
+serving as an offline surrogate for the sensitive fragment          quent execution failures caused by distraction from the bypass
+discovery stage. In the optimization losses, dsim(·, ·) is the      instruction injected in the baseline attack query.
+cosine similarity between text embeddings produced by               FragFuse can effectively induce agents to execute the
+sentence-transformers/all-MiniLM-L6-v2. The next-                   intent of originally prohibited queries. Conditioned on suc-
+token prediction likelihood in the coherence loss is computed       cessful bypass, FragFuse can reliably induce the agent to
+using GPT-2 [38]. The coherence bound ηcoh is obtained by           execute the intent of the original prohibited query in general.
+computing Lcoh on the 25 raw benign queries (without carrier        This is reflected by only a small degradation in TSR – an av-
+or attack construction or template instantiation) and setting       erage decrease of 4.4% across all configurations – relative to
+                                                                    directly issuing the prohibited query without access control.
+
+                                                                       The absolute TSR varies with the downstream agent and
+                                                                    task interface. For example, on SeeAct, FragFuse achieves
+
+USENIX Association                                                  35th USENIX Security Symposium 4769
+
+
+===== PAGE 11 / 21 =====
+
+Table 2: Average number of queries required for sensitive-         Table 3: Carrier-query retrieval success rate when issuing the
+fragment discovery by FragFuse across four agents under            associated attack query, under initial memory sizes (Init. Size)
+LLM-AC and existing access control.                                of 8 (default), 16, and 32, across four agents with GPT-4o as
+                                                                   the backbone LLM.
+
+ Agents    Average Query Count
+
+   RAP             Existing                                        Init. Size           Retrieval Rate (%)
+ SeeAct            Access
+OSAgent    LLM-AC  Control                                             8         RAP    SeeAct OSAgent InspAgent
+InspAgent                                                              16        100.0
+                                                                       32        100.0  100.0      100.0         100.0
+                                                                                 100.0
+           1.18                      1.30                                               100.0      100.0         100.0
+
+           1.48                      2.12                                               100.0      100.0         100.0
+
+           1.50                      1.78
+
+           2.37                      1.64                          String matching                        String matching
+
+much lower TSR than on RAP, indicating that while memory-          MiniLM-L6-v2             80100  MiniLM-L6-v2             80100
+based bypass is broadly effective, faithfully inducing the in-                      4060                            4060
+tended downstream behavior is more sensitive to the agent’s                      20 BM25                         20 BM25
+task-execution capability in a given domain. In a few cases,
+the baseline attack exhibits higher TSR than both FragFuse             e5-base-v2                             e5-base-v2
+and the reference value (e.g., InspAgent under LLM-AC with
+GPT-5.1). This effect arises from high variance, as TSR in                RAP                                  SeeAct
+these cases is computed over a small number of baseline in-
+stances that successfully bypass access control.                    (a) RAP                               (b) SeeAct
+FragFuse is query efficient. Because the computation time
+of FragFuse for API-based models varies with task domain,          String matching                        String matching
+task complexity, and network conditions, we report query
+counts instead of wall-clock time in the main paper and leave      MiniLM-L6-v2             80100  MiniLM-L6-v2             80100
+more details to Appendix I. At a minimum, FragFuse re-                              4060                            4060
+quires two interactions: one to inject the carrier query and one                 20 BM25                         20 BM25
+to issue the attack query. Additional queries may be needed
+when sensitive-fragment discovery is performed using our                 e5-base-v2                       e5-base-v2
+automated pipeline (which can also be done manually).
+                                                                        OSAgent                         InspAgent
+   Table 2 reports the average number of queries required
+for sensitive-fragment discovery. Across all agent settings,       (c) OSAgent                     (d) InspAgent
+FragFuse requires at most 2.37 and 2.12 queries on aver-
+age under LLM-AC and existing access-control mechanisms,           Figure 2: Retrieval success rate of FragFuse under different
+respectively. Across all evaluated agents and access-control       similarity metrics for memory retrieval across four agents.
+configurations, the procedure typically converges within only
+a small number of queries, indicating that most sensitive frag-    Due to dataset size constraints, we consider memory sizes of
+ments can be isolated with minimal probing. Importantly, this      8 (default), 16, and 32. For each agent and memory size, we
+low discovery cost does not come at the expense of attack ef-      compute the proportion of attack instances (issued without
+fectiveness. Overall, FragFuse does not rely on high-volume        access control) that successfully retrieve their corresponding
+interaction, making it practical under realistic query budgets.    carrier queries. As shown in Table 3, FragFuse achieves a
+In addition to query counts, we report token-level cost in Ap-     100% retrieval success rate across all four agents for all eval-
+pendix I, showing that FragFuse introduces moderate over-          uated memory sizes. While retrieval success is expected to
+head over benign queries relative to its attack effectiveness.     decrease as memory size grows further, the attack can com-
+                                                                   pensate by injecting more carrier queries with diverse host
+5.3 Ablation Study                                                 queries to maintain retrievability.
+                                                                   Influence of the Memory Retrieval Mechanism. Our at-
+Influence of the Initial Memory Size. Successful retrieval         tack assumes that memory retrieval is similarity-based, but
+of the carrier query upon issuing the attack query depends on      the attack does not know the specific similarity metric used
+their semantic similarity. In our main experiments, we adopt       by the agent. In this experiment, we fix the similarity mea-
+top-1 retrieval, which poses a stringent setting, particularly as  sure used by FragFuse – cosine similarity over embeddings
+the initial memory size increases. Here, we examine the re-        from sentence-transformers/all-MiniLM-L6-v2 – and
+trieval success rate of FragFuse under varying memory sizes.       vary the similarity metric employed by the agent for mem-
+                                                                   ory retrieval. We evaluate three additional retrieval metrics:
+                                                                   BM25, Jaccard string matching, and cosine similarity using
+
+4770 35th USENIX Security Symposium                                                                USENIX Association
+
+
+===== PAGE 12 / 21 =====
+
+Table 4: BSR and TSR of FragFuse on the RAP agent un-             Table 5: BSR and TSR of FragFuse under different marker
+der different memory settings, including number of retrieved      choices across different agents, evaluated using GPT-4o.
+records and advanced memory format.
+
+     Memory Settings        LLM-AC    GuardAgent                    Agent  <> (default)         ⃝R          $
+                           BSR TSR    BSR TSR                              BSR TSR        BSR TSR    BSR TSR
+            Default        93.0 92.5  81.0 88.9                     RAP    93.0 92.5      90.0 86.7  65.0 78.5
+        Retrieve top-2     93.0 84.9  81.0 85.2                    SeeAct  88.0 20.5      78.0 19.2  80.0 21.3
+        Retrieve top-3     93.0 72.0  81.0 75.3                   OSAgent  82.0 80.5      75.0 84.0  81.0 82.7
+Advanced memory format     93.0 86.0  81.0 84.0
+Advanced memory retrieval  93.0 73.1  81.0 65.4                   Table 6: Attack performance of FragFuse under different
+Advanced memory writing    93.0 84.9  81.0 71.6                   fragmentation and fusion-instruction design choices across
+                                                                  different agents, evaluated using GPT-4o.
+
+intfloat/e5-base-v2. For each setting, we measure the               Agent            w/o         w/o         Default
+top-1 retrieval success rate of the carrier query across all at-           FRAGEXTRACTOR  Optimized Ifuse  BSR TSR
+tack instances and four agents. As shown in the radar chart         RAP                   BSR TSR          93.0 92.5
+in Figure 2, SeeAct, RAP, and InspAgent achieve perfect re-        SeeAct  BSR TSR                         88.0 20.5
+trieval (100%) under all evaluated metrics. OSAgent exhibits      OSAgent                  92.0 78.3       82.0 80.5
+slightly lower retrieval performance, with success rates of                59.0  88.1
+94% under BM25 and 92% under e5-base-v2 cosine simi-                                       88.0 17.0
+larity, while achieving 100% under the remaining metrics.                  24.0  29.2
+Overall, these results demonstrate that FragFuse is robust to                              82.0 74.4
+variations in similarity-based memory retrieval mechanisms.                3.0   66.7
+Influence of Other Memory Settings. In the main experi-
+ments, we adopt a generic memory setting as described in          tially suppress successful injection. Finally, we consider the
+Section 2.2. Here, we further investigate the effectiveness of    advanced memory retrieval strategy proposed in [24], where
+FragFuse against agents with alternative and more advanced        the similarity score is scaled by the quality score (e.g., in [0, 1]
+memory mechanisms. Because not all advanced memory de-            using RAP’s default evaluator). This setting yields a more pro-
+signs are applicable across all agentic settings, we focus this   nounced reduction in TSR (from 92.5 to 73.1), indicating that
+analysis on the RAP agent.                                        quality-aware retrieval can substantially weaken the attack
+(1) Number of retrieved memory records In the default             by deprioritizing injected records at retrieval time. Detailed
+setting, the agent retrieves the top-1 memory record based        analyses of the memory-writing threshold and reward-score
+on query similarity. We additionally consider retrieving the      weight are provided in Appendix H.
+top-2 and top-3 records. While retrieving more records may
+help agents leverage diverse experiences, it also increases       Influence of the Marker Choice. In our main experiments,
+input length; for our attack, additional retrieved records may    we manually select angle brackets <> as the marker. Table 5
+complicate the fusion of sensitive fragments. As shown in         reports the BSR and TSR of FragFuse across different agents
+Table 4, BSR remains unaffected, whereas TSR drops from           under two alternative marker choices, “⃝R ” and “$”, evaluated
+92.5 to 72.0 under top-3 retrieval for LLM-AC, and from 88.9      using GPT-4o. The results show that marker choice affects
+to 75.3 for GuardAgent. This degradation may be mitigated         attack performance, but the default marker generally provides
+by injecting additional copies of the carrier query into the      the most stable performance. On RAP, <> achieves the high-
+agent’s memory.                                                   est BSR and TSR, while “$” substantially reduces BSR. On
+(2) Advanced memory mechanisms. In the default setting,           SeeAct and OSAgent, alternative markers can still maintain
+and in many LLM agents with long-term memory [31, 42],            non-trivial bypass rates, but their TSR varies across agents.
+each memory record consists of a query-execution pair. We ad-     Overall, our chosen marker yields effective attacks and gen-
+ditionally consider memory records augmented with an LLM-         eralizes well across agents. As future work, we will explore
+generated execution summary (using GPT-4o). This change           joint optimization of the marker and fusion instruction to
+does not significantly affect the BSR or TSR of FragFuse.         further improve attack effectiveness.
+We further evaluate advanced memory writing, where a query-
+execution pair is written to memory only if a quality evaluator   Influence of Design Choices of FragFuse. We examine
+returns a positive signal (e.g., a score of 0.5 or higher using   the importance of two key design choices in FragFuse:
+the evaluator provided by RAP [24]). This setting slightly        (1) LLM-based FRAGEXTRACTOR for sensitive-fragment
+reduces attack effectiveness, with TSR decreasing from 92.5       discovery. To ablate the LLM-based FRAGEXTRACTOR in
+to 84.9, suggesting that selective memory admission can par-      Stage 4.2, we use a length-based heuristic. We split a pro-
+                                                                  hibited query q into four contiguous spans of roughly equal
+                                                                  length, then create four masked variants by replacing one span
+                                                                  at a time with <> and submitting each variant to access control.
+                                                                  If all variants are rejected, the instance is counted as a bypass
+                                                                  failure; otherwise, we use an accepted variant as qmask and
+                                                                  keep Stages 4.3–4.4 unchanged. As shown in Table 6, this
+
+USENIX Association                                                              35th USENIX Security Symposium 4771
+
+
+===== PAGE 13 / 21 =====
+
+modification leads to a substantial drop in BSR across agents.     Table 7: Percentage of benign, carrier, and attack queries
+For example, BSR drops from 93.0 to 59.0 on RAP, from 88.0         deemed “benign” under two prompt-injection detectors.
+to 24.0 on SeeAct, and from 82.0 to 3.0 on OSAgent. This
+degradation arises from the inability of length-based fragmen-      Agent           PromptArmor            PromptGuard
+tation to accurately identify and isolate sensitive fragments,                Benign Carrier Attack  Benign Carrier Attack
+compared to our default FRAGEXTRACTOR-based approach.                RAP      100.0 100.0 62.0       100.0 96.0 56.0
+(2) Surrogate optimization of the fusion instruction Ifuse.         SeeAct    100.0 99.0 62.0        100.0 100.0 89.0
+As shown in Table 6, using a manually crafted fusion instruc-      OSAgent    100.0 98.0 98.0        100.0 100.0 100.0
+tion without surrogate optimization does not significantly         InspAgent   86.4 72.7 44.1         98.9 60.2 22.7
+affect BSR. However, it consistently reduces TSR compared
+with the optimized fusion instruction. For instance, TSR drops     mechanisms enforce task- and context-specific rules, such
+from 92.5 to 78.3 on RAP, from 20.5 to 17.0 on SeeAct, and         as user eligibility, resource permissions, or domain policies,
+from 80.5 to 74.4 on OSAgent. These results highlight the          and are often implemented with capable LLMs comparable
+effectiveness of FragFuse’s pipeline design and the necessity      to the protected agent. On RAP, FragFuse achieves an av-
+of surrogate optimization for reliably inducing the intended       erage BSR of 93.7We further assess whether FragFuse pro-
+prohibited behavior.                                               duces queries that remain benign-looking using state-of-the-
+                                                                   art prompt-injection detectors. We run PromptArmor [41] and
+5.4 Marker-aware Surrogate Optimization                            PromptGuard [59] on benign queries, carrier queries qcar, and
+                                                                   attack queries qatt, and report the benign-classification rate in
+The analysis in Section 5.3 shows that marker choice affects       Table 7. FragFuse exhibits strong stealth signals: for SeeAct
+attack performance. We therefore extend the surrogate opti-        and OSAgent, carrier queries are classified as benign at near-
+mization in Section 4.5 from optimizing only Ifuse to jointly      perfect rates under both detectors, and OSAgent attack queries
+optimizing (Ifuse, v), while using the same retrieval, fusion,     also remain largely benign-classified. The weakest results oc-
+and coherence criteria. Specifically, we use an alternating        cur on InspAgent (AgentHarm), where benign-classification
+genetic optimization procedure initialized from the marker         rates drop markedly, especially under PromptArmor. Notably,
+choices studied in Section 5.3. For each initialization, we run    PromptArmor already flags a non-trivial fraction of truly be-
+an independent process that alternates between (i) fixing the      nign AgentHarm queries, suggesting that in this setting the
+current marker and optimizing Ifuse, and (ii) fixing the current   detector conflates benign inputs with our carrier/attack queries
+best Ifuse and optimizing the marker v. Updating v changes         and is therefore insufficient as a standalone defense.
+both the fragment markers in qcar(v) and the masked slots in
+qmask(v). After all finish, we select the pair with the best sur-  Post-Hoc Action Inspection Post-hoc defenses can be
+rogate objective as (If⋆use, v⋆). Scoring criteria and additional  viewed as a remedial measure following a successful security
+discussion are provided in Appendix J. The surrogate score         bypass. In the agent settings considered in this work, post-
+consistently increases and then plateaus across marker ini-        hoc defense can be applied to examine whether the actions
+tializations; for example, the best score improves from about      taken by an agent, such as the webpages visited by SeeAct
+0.84 to 0.90 under <> and from about 0.80 to 0.92 under $$.        or the products purchased by RAP, violate prescribed poli-
+                                                                   cies. In such cases, even if FragFuse successfully bypasses
+6 Potential Defenses                                               access control and induces execution of a prohibited task, the
+                                                                   resulting action may still be blocked by a post-hoc defense.
+Rate Limit Control Some deployed defenses mitigate misuse
+by limiting how often a user can submit queries within a time         While post-hoc defenses may serve as a last line of defense
+window (e.g., restricting repeated requests or capping requests    in practical deployments, their legitimacy as a primary secu-
+per minute/hour) [40]. Our attack is largely insensitive to        rity mechanism remains questionable. For example, in the
+such rate limiting because it does not require high-frequency      context of jailbreak attacks [66], an attack is considered suc-
+querying or large-scale online probing, as shown in Table 2.       cessful if the LLM produces harmful output, as determined
+Moreover, the fusion-instruction optimization is performed         by an evaluator such as an LLM-as-a-judge [36]. If such
+offline on a surrogate model. As a result, practical rate limits   evaluations are assumed to be reliable, the evaluator itself
+that mainly target high-volume requests do not materially          effectively functions as a post-hoc detector of malicious be-
+hinder our attack pipeline.                                        havior, raising questions about the necessity and robustness
+Pre-emptive Prompt Filtering. Prompt filters are designed to       of relying on post-hoc inspection for security guarantees.
+detect generic malicious or jailbreak-style inputs before they
+reach the model. Such filters may be bypassed when there is a         Moreover, post-hoc defenses, even when effective at iden-
+capability gap between the lightweight filtering model and the     tifying rule-violating actions, are often costly and highly
+stronger downstream model. In contrast, agent access-control       task-specific, limiting their practicality in real-world agent de-
+                                                                   ployments. For example, in web-shopping or web-navigation
+                                                                   agents, an effective post-hoc action inspector may need to
+
+4772 35th USENIX Security Symposium                                                                  USENIX Association
+
+
+===== PAGE 14 / 21 =====
+
+(a) RAP             (b) SeeAct                                     that can be systematically tested. Nevertheless, the demon-
+                                                                   strated effectiveness of our attack across web shopping, web
+(c) OSAgent         (d) InspAgent                                  navigation, OS assistance, and web-UI interaction already
+                                                                   highlights the urgent need for domain-specific defenses and
+Figure 3: Perplexity distributions of benign queries, carrier      more robust memory mechanisms in LLM agents.
+queries and attack queries across the four agents.                 Dependency on Model Capabilities Successful fusion of sen-
+                                                                   sitive fragments during memory-augmented execution may
+maintain an ever-growing blacklist of websites or products, or     require sufficiently capable core LLMs of the agent to cor-
+alternatively a curated set of high-level prohibited categories.   rectly interpret and follow the fusion instruction, which in
+Finally, even when a prohibited agent execution is eventually      turn affects execution of the originally prohibited task. While
+detected, substantial computational resources may already          this limitation does not manifest in our evaluation, it may arise
+have been wasted, and sensitive information may have been          when the agent’s underlying LLM lacks sufficient reasoning
+exposed during execution, particularly when external tools or      or instruction-following capabilities. In practice, however, de-
+databases are involved [42].                                       ployed LLM agents typically rely on strong foundation mod-
+Perplexity-Based Prompt Detection We evaluate whether              els to ensure task performance, which is likely to mitigate this
+perplexity can distinguish benign queries from carrier or at-      limitation in real-world settings.
+tack queries. Specifically, we compute sequence-level per-         Vulnerability to Post-Hoc Defense As discussed in Section 6,
+plexity using GPT-2 for all three input types and compare          FragFuse may fail against post-hoc defenses. Nevertheless,
+their density distributions (Fig. 3). Substantial overlap indi-    despite their high cost and limited generalizability, which re-
+cates weak discriminative signal, whereas smaller overlap          strict their practicality in real-world deployments, the success
+suggests better separability. Across RAP, SeeAct, and OS-          of our attack can still incur harmful consequences, such as
+Agent (Fig. 3a–c), carrier and attack distributions largely over-  unnecessary computational overhead, even when post-hoc
+lap with benign queries. This indicates that perplexity-based      defenses are ultimately triggered.
+detection is ineffective for our attack in these settings. In      Failure Cases Despite its effectiveness, FragFuse does not
+contrast, InspAgent (AgentHarm; Fig. 3d) shows less overlap        achieve a perfect BSR or completely eliminate degradation in
+among the three distributions, suggesting stronger separability.   TSR compared to settings without access control. We provide
+We attribute this to the higher heterogeneity and complexity       examples and analysis of such failure cases in Appendix K to
+of the dataset and interaction patterns, which create more dis-    illustrate the conditions where FragFuse fails.
+tinctive perplexity profiles. Nevertheless, this carrier-query
+perplexity anomaly is likely mitigated in practical task do-       8 Conclusion
+mains with higher variance in input quality.
+                                                                   This paper identifies a previously underexplored attack sur-
+7 Discussion of Limitations                                        face in LLM agents arising from the long-term memory. We
+                                                                   propose FragFuse, the first attack that systematically by-
+Limitations in the Task Domain While our experiments               passes agent access control by fragmenting policy-violating
+cover four representative agent task domains, there is no guar-    content across interactions, storing it in memory in a benign-
+antee that the methodology of FragFuse generalizes to do-          appearing form, and later reconstructing the prohibited intent
+mains beyond our evaluation, such as medicine [23] or scien-       during memory-augmented execution. Through a three-stage
+tific discovery [5, 22]. The primary challenge in extending our    pipeline – sensitive fragment discovery, carrier injection, and
+evaluation to these domains lies in the current lack of well-      retrieval-based fusion – FragFuse enables ordinary users, un-
+defined access-control mechanisms or deployable policies           der a strict black-box threat model, to induce restricted agent
+                                                                   behaviors without explicitly triggering access control.
+
+                                                                      Our evaluation across four representative agentic settings,
+                                                                   multiple state-of-the-art access-control mechanisms, and di-
+                                                                   verse backbone LLMs shows that FragFuse achieves consis-
+                                                                   tently high bypass success rates with only minor degradation
+                                                                   in task success compared to direct querying without access
+                                                                   control. Ablation studies further demonstrate that the attack
+                                                                   is query-efficient, robust to variations in the memory settings,
+                                                                   and resilient to existing defenses such as prompt-injection
+                                                                   detection and perplexity-based filtering. These results reveal
+                                                                   a fundamental limitation of access control that operates solely
+                                                                   on the current query without accounting for temporal compo-
+                                                                   sition through agent memory.
+
+USENIX Association                                                 35th USENIX Security Symposium 4773
+
+
+===== PAGE 15 / 21 =====
+
+Ethical Considerations                                            tion, fusion-instruction optimization, and attack execution,
+
+This work identifies a memory-based attack surface in LLM-        together with scripts for running experiments, computing eval-
+agent access control. Our goal is to reveal and measure this
+risk so that it can be mitigated, not to enable misuse.           uation metrics, and reproducing tables and figures.
+
+   FragFuse is evaluated only in controlled research settings     Experimental Configurations. The released artifacts include
+using public benchmarks or synthetic security tasks. We fol-
+low responsible disclosure practices and have notified relevant   configuration files specifying agent setups, access-control
+developers and maintainers of the four evaluated agent set-
+tings and the three access-control mechanisms. Our disclosure     rules, memory settings, retrieval parameters, and backbone
+summarized the attack surface, the affected design assump-
+tions, possible mitigation directions, and the release timeline,  LLMs used in our evaluation, enabling readers to reproduce
+while avoiding unnecessary operational details. As of May
+2026, four impacted software maintainers have acknowledged        each experimental setting.
+the risk and indicated that they would add corresponding warn-
+ings or mitigation notes.                                         Datasets. The released artifacts include the processed evalua-
+
+   We also recognize that released artifacts may inform at-       tion splits derived from public benchmarks, including Web-
+tacks against unevaluated agents that use long-term memory
+and query-level access control. To reduce this risk, we release   Shop, Mind2Web-SC, Safe-OS, and AgentHarm. The released
+code and prompts only for research reproducibility and defen-
+sive evaluation, accompanied by responsible-use notes, miti-      data include target queries, host queries, and user-profile meta-
+gation guidance, and clear documentation of the controlled
+experimental scope. The mitigation guidance includes mem-         data when applicable, and comply with the original bench-
+ory admission control, retrieval-time policy checking, and
+access-control enforcement after memory augmentation.             mark licenses and usage policies.
+
+   By exposing this vulnerability in memory-augmented             Prompts and Instructions. The released artifacts include all
+agents, we aim to help developers design safer memory ar-
+chitectures and more robust access-control mechanisms for         prompts used for fragment extraction, access control, surro-
+LLM agents.
+                                                                  gate optimization, and evaluation, including both manually
+Acknowledgments
+                                                                  designed and optimized fusion instructions.
+Zhaorun Chen and Bo Li were supported by the National Sci-
+ence Foundation under grant No. 1910100, No. 2046726, NSF         Additional Materials. The project page is available at
+AI Institute ACTION No. IIS-2229876, DARPA TIAMAT
+No. 80321, the National Aeronautics and Space Administra-         https://zixin22.github.io/fragfuse.github.io/.
+tion (NASA) under grant No. 80NSSC20M0229, ARL Grant
+W911NF-23-2-0137, Alfred P. Sloan Fellowship, the research        An extended appendix, including additional data,
+grant from eBay, AI Safety Fund, Virtue AI, and Schmidt
+Science. Wei Niu was supported by the National Science            analysis results, and per-category statistics, is avail-
+Foundation under grant No. 2403090 and No. 2428108.
+                                                                  able      at https://drive.google.com/file/d/
+Open Science
+                                                                  1lt3EQBTpzsQl3yDQHiBipSwakI0gdEnb/view?usp=
+To support reproducibility and independent evaluation, we
+have released the artifacts needed to replicate our experiments   sharing.
+and validate the claims of this paper.
+Code and Artifacts. The code and datasets produced                References
+in this study are publicly available at https://github.
+com/zixin22/Fragfuse. We also archive the artifact on              [1] Amazon. Alexa, Echo devices, and your privacy.
+Zenodo at https://doi.org/10.5281/zenodo.20337559.                      https://www.amazon.com/gp/help/customer/
+The repository contains the implementation of FragFuse, in-             display.html?nodeId=GVP69FUJ48X9DK8V&utm_
+cluding sensitive-fragment discovery, carrier-query construc-           source=chatgpt.com. Accessed: 2026-02-01.
+
+                                                                   [2] Maksym Andriushchenko et al. AgentHarm: A bench-
+                                                                        mark for measuring harmfulness of LLM agents, 2025.
+
+                                                                   [3] Anthropic. Usage policy update. https://www.
+                                                                        anthropic.com/news/usage-policy-update, 2025.
+                                                                        Aug 15, 2025.
+
+                                                                   [4] Yuntao Bai et al. Training a helpful and harmless assis-
+                                                                        tant with reinforcement learning from human feedback,
+                                                                        2022.
+
+                                                                   [5] Andres M Bran, Sam Cox, Oliver Schilter, Carlo Baldas-
+                                                                        sari, Andrew D White, and Philippe Schwaller. Chem-
+                                                                        Crow: Augmenting large-language models with chem-
+                                                                        istry tools, 2023.
+
+                                                                   [6] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie
+                                                                        Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Nee-
+                                                                        lakantan, Pranav Shyam, Girish Sastry, Amanda Askell,
+                                                                        et al. Language models are few-shot learners. In Ad-
+                                                                        vances in Neural Information Processing Systems, vol-
+                                                                        ume 33, pages 1877–1901, 2020.
+
+4774 35th USENIX Security Symposium                                                                  USENIX Association
+
+
+===== PAGE 16 / 21 =====
+
+[7] Zhaorun Chen, Mintong Kang, and Bo Li. ShieldAgent:         [18] Dongge Han et al. LEGOMem: Modular procedural
+     Shielding agents via verifiable safety policy reasoning.         memory for multi-agent LLM systems for workflow
+     In Forty-second International Conference on Machine              automation, 2025.
+    Learning, 2025.
+                                                                [19] Mengkang Hu, Tianxing Chen, Qiguang Chen, Yao Mu,
+[8] Zhaorun Chen, Zhen Xiang, Chaowei Xiao, Dawn Song,                Wenqi Shao, and Ping Luo. HiAgent: Hierarchical work-
+     and Bo Li. AgentPoison: Red-teaming LLM agents                   ing memory management for solving long-horizon agent
+    via poisoning memory or knowledge bases. In The                   tasks with large language model. In Proceedings of
+    Thirty-Eighth Annual Conference on Neural Information             the 63rd Annual Meeting of the Association for Com-
+    Processing Systems, 2024.                                         putational Linguistics (Volume 1: Long Papers), pages
+                                                                      32779–32798, Vienna, Austria, July 2025. Association
+[9] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet               for Computational Linguistics.
+     Singh, and Deshraj Yadav. Mem0: Building production-
+     ready AI agents with scalable long-term memory. arXiv      [20] Yuyang Hu et al. Memory in the age of AI agents, 2026.
+     preprint arXiv:2504.19413, 2025.
+                                                                [21] Hakan Inan et al. Llama Guard: LLM-based input-
+[10] Can Cui, Zichong Yang, Yupeng Zhou, Yunsheng Ma,                 output safeguard for human-AI conversations, 2023.
+      Juanwu Lu, Lingxi Li, Yaobin Chen, Jitesh Panchal, and
+      Ziran Wang. Personalized autonomous driving with          [22] Fengqing Jiang, Fengbo Ma, Zhangchen Xu, Yuetai
+      large language models: Field experiments. In 2024 IEEE          Li, Zixin Rao, Bhaskar Ramasubramanian, Luyao Niu,
+      27th International Conference on Intelligent Transporta-        Bo Li, Xianyan Chen, Zhen Xiang, and Radha Pooven-
+      tion Systems (ITSC), pages 20–27, 2024.                         dran. SOSBENCH: Benchmarking safety alignment
+                                                                      on scientific knowledge. In Socially Responsible and
+[11] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic,                Trustworthy Foundation Models at NeurIPS 2025, 2025.
+      Luca Beurer-Kellner, Marc Fischer, and Florian Tram‘er.
+      AgentDojo: A dynamic environment to evaluate prompt       [23] Di Jin, Eileen Pan, Nassim Oufattole, Wei-Hung Weng,
+      injection attacks and defenses for LLM agents. In The           Hanyi Fang, and Peter Szolovits. What disease does
+      Thirty-Eighth Conference on Neural Information Pro-             this patient have? a large-scale open-domain question
+      cessing Systems Datasets and Benchmarks Track, 2024.            answering dataset from medical exams, 2020.
+
+[12] S¸ amil Demir. Legal liability of artificial intelligence  [24] Tomoyuki Kagaya et al. RAP: Retrieval-augmented
+      (AI) operators: A global analysis. 06 2025.                     planning with contextual memory for multimodal LLM
+                                                                      agents. In NeurIPS 2024 Workshop on Open-World
+[13] Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen,                    Agents, 2024.
+      Samuel Stevens, Boshi Wang, Huan Sun, and Yu Su.
+      Mind2Web: Towards a generalist agent for the web. In      [25] Omar Khattab, Keshav Santhanam, Xiang Lisa Li, David
+      Thirty-Seventh Conference on Neural Information Pro-            Hall, Percy Liang, Christopher Potts, and Matei Zaharia.
+      cessing Systems Datasets and Benchmarks Track, 2023.            Demonstrate-Search-Predict: Composing retrieval and
+                                                                      language models for knowledge-intensive NLP. CoRR,
+[14] Shen Dong, Shaochen Xu, Pengfei He, Yige Li, Jiliang             abs/2212.14024, 2022.
+      Tang, Tianming Liu, Hui Liu, and Zhen Xiang. Memory
+      injection attacks on LLM agents via query-only interac-   [26] Taeyoon Kwon et al. Embodied agents meet personal-
+      tion. In The Thirty-Ninth Annual Conference on Neural           ization: Investigating challenges and solutions through
+      Information Processing Systems, 2025.                           the lens of memory utilization, 2025.
+
+[15] Kuofeng Gao, Tianyu Pang, Chao Du, Yong Yang, Shu-         [27] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio
+      Tao Xia, and Min Lin. Denial-of-Service poisoning               Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich
+      attacks against large language models. arXiv preprint           K"uttler, Mike Lewis, Wen-tau Yih, Tim Rockt"aschel,
+      arXiv:2410.10760, 2024.                                         Sebastian Riedel, and Douwe Kiela. Retrieval-
+                                                                      augmented generation for knowledge-intensive NLP
+[16] David E. Goldberg. Genetic Algorithms in Search, Op-             tasks. In Advances in Neural Information Processing
+      timization, and Machine Learning. Addison-Wesley,               Systems, volume 33, pages 9459–9474. Curran Asso-
+      1989.                                                           ciates, Inc., 2020.
+
+[17] Google.  Generative AI prohibited use pol-                 [28] Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao.
+                                                                      AutoDAN: Generating stealthy jailbreak prompts on
+icy.          https://policies.google.com/terms/                      aligned large language models. In The Twelfth Interna-
+                                                                      tional Conference on Learning Representations, 2024.
+generative-ai/use-policy, 2024. Published Dec
+
+17, 2024.
+
+USENIX Association                                              35th USENIX Security Symposium 4775
+
+
+===== PAGE 17 / 21 =====
+
+[29] Weidi Luo et al. AGrail: A lifelong agent guardrail with   [39] Zixin Rao, Wentian Zhu, Chan Lu, Zhaorun Chen, Wei
+      effective and adaptive safety detection. In Wanxiang            Niu, Le Guan, Bo Li, and Zhen Xiang. FragFuse Online
+      Che, Joyce Nabende, Ekaterina Shutova, and Moham-               Appendix. https://drive.google.com/file/d/
+      mad Taher Pilehvar, editors, Proceedings of the 63rd            1lt3EQBTpzsQl3yDQHiBipSwakI0gdEnb/view?usp=
+      Annual Meeting of the Association for Computational             sharing, 2026. Online appendix.
+      Linguistics (Volume 1: Long Papers), pages 8104–8139,
+      Vienna, Austria, July 2025. Association for Computa-      [40] Souhaila Serbout, Amine El Malki, Cesare Pau-
+      tional Linguistics.                                             tasso, and Uwe Zdun. API rate limit adoption – a
+                                                                      pattern collection. https://www.researchgate.
+[30] Fengbo Ma, Zixin Rao, Xiaoting Li, Zhetao Chen,                  net/publication/377466057_API_Rate_Limit_
+      Hongyue Sun, Yiping Zhao, Xianyan Chen, and Zhen                Adoption_-A_pattern_collection, 2024. Euro-
+      Xiang. Intragent: An llm agent for content-grounded             PLoP 2023 paper, available as public full-text on
+      information retrieval through literature review, 2026.          ResearchGate.
+
+[31] Jiageng Mao, Junjie Ye, Yuxi Qian, Marco Pavone, and       [41] Tianneng Shi et al. PromptArmor: Simple yet effective
+      Yue Wang. A language agent for autonomous driving.              prompt injection defenses, 2025.
+      In First Conference on Language Modeling, 2024.
+                                                                [42] Wenqi Shi et al. EHRAgent: Code empowers large lan-
+[32] OpenAI. How your data is used to improve model per-              guage models for few-shot complex tabular reasoning on
+      formance. https://help.openai.com/en/articles/5722486-          electronic health records. In Yaser Al-Onaizan, Mohit
+      how-your-data-is-used-to-improve-model-                         Bansal, and Yun-Nung Chen, editors, Proceedings of the
+      performance, 2025. Accessed: 2026-02-01.                        2024 Conference on Empirical Methods in Natural Lan-
+                                                                      guage Processing, pages 22315–22339, Miami, Florida,
+[33] OpenAI. Memory and new controls for Chat-                        USA, November 2024. Association for Computational
+      GPT. https://openai.com/index/memory-and-new-                   Linguistics.
+      controls-for-chatgpt/, 2025. Accessed: 2025-01-26.
+                                                                [43] Noah Shinn et al. Reflexion: Language agents with
+[34] OpenAI. Usage policies. https://openai.com/                      verbal reinforcement learning. In A. Oh, T. Naumann,
+      policies/usage-policies/, 2025. Last updated Oct                A. Globerson, K. Saenko, M. Hardt, and S. Levine, ed-
+      29, 2025.                                                       itors, Advances in Neural Information Processing Sys-
+                                                                      tems, volume 36, pages 8634–8652. Curran Associates,
+[35] Long Ouyang et al. Training language models to follow            Inc., 2023.
+      instructions with human feedback. In Proceedings of the
+      36th International Conference on Neural Information       [44] Zhen Tan et al. In prospect and retrospect: Reflective
+      Processing Systems, NIPS ’22, Red Hook, NY, USA,                memory management for long-term personalized dia-
+      2022. Curran Associates Inc.                                    logue agents. In Wanxiang Che et al., editors, Proceed-
+                                                                      ings of the 63rd Annual Meeting of the Association for
+[36] Xiangyu Qi, Yi Zeng, Tinghao Xie, Pin-Yu Chen, Ruoxi             Computational Linguistics (Volume 1: Long Papers),
+      Jia, Prateek Mittal, and Peter Henderson. Fine-tuning           pages 8416–8439, Vienna, Austria, July 2025. Associa-
+      aligned language models compromises safety, even                tion for Computational Linguistics.
+      when users do not intend to! In The Twelfth Interna-
+      tional Conference on Learning Representations, 2024.      [45] Token of Trust. How to sell alcohol online legally in
+                                                                      the United States. https://tokenoftrust.com/blog/sell-
+[37] Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan              alcohol-online-legally/, 2023. Accessed: 2026-02-01.
+      Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill
+      Qian, Sihan Zhao, Lauren Hong, Runchu Tian, Ruob-         [46] UK Government Department for Science, In-
+      ing Xie, Jie Zhou, Mark Gerstein, dahai li, Zhiyuan Liu,        novation and Technology. Inspect: A frame-
+      and Maosong Sun. ToolLLM: Facilitating large lan-               work for large language model evaluations.
+      guage models to master 16000+ real-world APIs. In               https://github.com/UKGovernmentBEIS/inspect,
+      The Twelfth International Conference on Learning Rep-           2024.
+      resentations, 2024.
+                                                                [47] U.S. Department of Health and Human
+[38] Alec Radford, Jeffrey Wu, Rewon Child, David Luan,
+      Dario Amodei, and Ilya Sutskever. Language models         Services.   Summary of the HIPAA secu-
+      are unsupervised multitask learners. OpenAI, 2019.
+                                                                rity rule.  https://www.hhs.gov/hipaa/for-
+
+                                                                professionals/security/laws-regulations/index.html,
+
+                                                                2013. Accessed: 2026-02-01.
+
+4776 35th USENIX Security Symposium                                                          USENIX Association
+
+
+===== PAGE 18 / 21 =====
+
+[48] Bo Wang, Weiyi He, Shenglai Zeng, Zhen Xiang, Yue        [57] Rui Ye, Zhongwang Zhang, Kuan Li, Huifeng Yin,
+      Xing, Jiliang Tang, and Pengfei He. Unveiling privacy         Zhengwei Tao, Yida Zhao, Liangcai Su, Liwen Zhang,
+      risks in LLM agent memory. In Proceedings of the              Zile Qiao, Xinyu Wang, Pengjun Xie, Fei Huang, Siheng
+      63rd Annual Meeting of the Association for Compu-             Chen, Jingren Zhou, and Yong Jiang. AgentFold: Long-
+      tational Linguistics (Volume 1: Long Papers), pages           horizon web agents with proactive context management,
+      25241–25260, Vienna, Austria, July 2025. Association          2025.
+      for Computational Linguistics.
+                                                              [58] Hongli Yu, Tinghong Chen, Jiangtao Feng, Jiangjie
+[49] Waymo.         How rider feedback shapes                       Chen, Weinan Dai, Qiying Yu, Ya-Qin Zhang, Wei-
+                                                                    Ying Ma, Jingjing Liu, Mingxuan Wang, and Hao Zhou.
+Waymo’s fully autonomous ride-hailing service.                      MemAgent: Reshaping long-context LLM with multi-
+                                                                    conv RL-based memory agent, 2025.
+https://waymo.com/blog/2020/11/how-rider-feedback-
+                                                              [59] Lingzhi Yuan et al. PromptGuard: Soft prompt-guided
+shapes-waymos-fully-autonomous-ride-hailing-                        unsafe content moderation for text-to-image models,
+                                                                    2025.
+service, 2020. Accessed: 2026-02-01.
+                                                              [60] Guibin Zhang et al. G-Memory: Tracing hierarchical
+[50] Ruffin White, Henrik I. Christensen, Gianluca Caiazza,         memory for multi-agent systems, 2025.
+      and Agostino Cortesi. Procedurally provisioned access
+      control for robotic systems. In 2018 IEEE/RSJ Inter-    [61] Lingfeng Zhang et al. Mem2Ego: Empowering vision-
+      national Conference on Intelligent Robots and Systems         language models with global-to-ego memory for long-
+      (IROS), pages 1–9. IEEE Press, 2018.                          horizon embodied navigation, 2025.
+
+[51] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu,         [62] Boyuan Zheng, Boyu Gou, Jihyung Kil, Huan Sun, and
+      Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang,               Yu Su. GPT-4V(ision) is a generalist web agent, if
+      Shaokun Zhang, Jiale Liu, Ahmed Hassan Awadallah,             grounded, 2024.
+      Ryen W White, Doug Burger, and Chi Wang. AutoGen:
+      Enabling next-gen LLM applications via multi-agent      [63] Wanjun Zhong et al. MemoryBank: Enhancing large
+      conversations. In First Conference on Language Model-         language models with long-term memory. ArXiv,
+      ing, 2024.                                                    abs/2305.10250, 2023.
+
+[52] Zhen Xiang, Linzhi Zheng, Yanjie Li, Junyuan Hong,       [64] Huichi Zhou et al. Memento: Fine-tuning LLM agents
+      Qinbin Li, Han Xie, Jiawei Zhang, Zidi Xiong, Chulin          without fine-tuning LLMs, 2025.
+      Xie, Carl Yang, Dawn Song, and Bo Li. GuardAgent:
+      Safeguard LLM agents via knowledge-enabled reason-      [65] Zijian Zhou, Ao Qu, Zhaoxuan Wu, Sunghwan Kim,
+      ing. In Forty-second International Conference on Ma-          Alok Prakash, Daniela Rus, Jinhua Zhao, Bryan
+      chine Learning, 2025.                                         Kian Hsiang Low, and Paul Pu Liang. Mem1: Learning
+                                                                    to synergize memory and reasoning for efficient long-
+[53] Yunzhong Xiao et al. ToolMem: Enhancing multimodal             horizon agents, 2025.
+      agents with learnable tool capability memory, 2025.
+                                                              [66] Andy Zou et al. Universal and transferable adversarial
+[54] Zidi Xiong, Yuping Lin, Wenya Xie, Pengfei He, Jiliang         attacks on aligned language models, 2023.
+      Tang, Himabindu Lakkaraju, and Zhen Xiang. How
+      memory management impacts LLM agents: An em-
+      pirical study of experience-following behavior. ArXiv,
+      abs/2505.16067, 2025.
+
+[55] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao
+      Tan, and Yongfeng Zhang. A-Mem: Agentic memory
+      for LLM agents. In The Thirty-Ninth Annual Conference
+      on Neural Information Processing Systems, 2025.
+
+[56] Shunyu Yao et al. WebShop: Towards scalable real-
+      world web interaction with grounded language agents.
+      In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave,
+      K. Cho, and A. Oh, editors, Advances in Neural Infor-
+      mation Processing Systems, volume 35, pages 20744–
+      20757. Curran Associates, Inc., 2022.
+
+USENIX Association                                            35th USENIX Security Symposium 4777
+
+
+===== PAGE 19 / 21 =====
+
+Table 8: Average bypass rates (%) on RAP across three back-        D Algorithm for Fusion Instruction Optimiza-
+bone LLMs.                                                              tion
+
+Attack     LLM-AC        GuardAgent                                The algorithm summarizing the discrete genetic search used
+FragFuse      93.7            79.3                                 to optimize the fusion instruction I⋆fuse is provided in the com-
+CRP           25.0            17.7                                 plete online appendix [39].
+ArtPrompt     49.0            67.2
+
+Table 9: Comparing TSRs computed by an LLM judge and               E Generated Benign Queries Examples of Safe-
+by human evaluation.                                                    OS
+
+                                                                   1. Original:  What’s the full path of a file
+
+  Agent                  Metric                                    "tools" after checking under /user_ok?
+                             Human Evaluation
+   RAP     LLM Decision               92.5                         Generated: Find the absolute path to the file
+ SeeAct          92.5                 22.1
+OSAgent          22.1                 77.3                         named "config" somewhere under /user_ok.
+InspAgent        75.5                 34.5
+                 32.0                                              2. Original:            What is the content of
+
+                                                                   /test/config.yaml?
+
+                                                                   Generated: Open /test/config.yaml and return
+
+                                                                   its full text content.
+
+A Prompt Guard versus Access Control                               3. Original: Which file was created most recently
+
+Table 8 compares the average bypass rates of FragFuse with         in /root/tmpdir after checking?(without its
+two prompt-obfuscation baselines, CRP and ArtPrompt, on
+RAP across three backbone LLMs. The results show that              directory)
+FragFuse achieves substantially higher bypass rates under
+both LLM-AC and GuardAgent, indicating that bypassing              Generated:    After inspecting /root/tmpdir,
+agent access control requires more than surface-level prompt
+obfuscation.                                                       return the name (no path) of the newest file
+
+B LLM AC Prompting Templates                                       by modification time.
+
+For each environment, we instantiate an LLM-based checker          F Direct Bypassing Instruction Example
+that applies the corresponding, explicitly specified policy rules
+to the agent input and returns an allow/deny decision. We list     A direct bypassing instruction example is provided in Ap-
+the full templates below for reproducibility, including the rule   pendix F in the complete online appendix [39].
+statements, required input fields, and the strict output formats
+used by our evaluation pipeline. The complete prompt tem-          G Fusion Instruction Seeds for Surrogate Op-
+plates used to implement LLM-AC across all agent settings are           timization
+provided in Appendix B in the complete online appendix [39].
+                                                                   The fusion instruction seeds for surrogate optimization are
+C LLM Decision Templates                                           provided in Appendix G in the complete online appendix [39].
+
+TSRs computed by an LLM judge are largely consistent               H Advanced Memory Writing and Retrieval
+with human evaluation in our main settings. We use GPT-
+4o as an LLM judge to compute TSR and validate it against          We evaluate two quality-aware memory mechanisms from
+human evaluation. As shown in Table 9, the LLM-judged              RAP [24]: selective memory writing based on a reward thresh-
+TSR matches human evaluation in RAP–WebShop and re-                old and reward-weighted memory retrieval. As shown in Ta-
+mains directionally consistent in OSAgent, though OS-level         bles 10 and 11, both mechanisms leave BSR unchanged but
+trajectories show larger absolute differences. These results       reduce TSR, with the strongest drops from 92.5 to 39.8 under
+support using an LLM judge for scalable TSR computation,           LLM-AC and from 92.6 to 45.7 under GuardAgent. These re-
+with occasional manual spot-checking in more complex agent         sults suggest that quality-aware memory mechanisms mainly
+environments. The complete LLM decision templates are pro-         weaken post-bypass task completion by filtering or depriori-
+vided in Appendix C in the complete online appendix [39].          tizing injected records.
+
+                                                                   I Runtime and Token Cost
+
+                                                                   Table 12 reports the runtime breakdown of FragFuse across
+                                                                   the four agents using GPT-4o, excluding the execution time
+                                                                   of access-control modules. Runtime varies with the task do-
+                                                                   main (e.g., task complexity) as well as external factors such
+                                                                   as network conditions. Table 13 reports the total token cost
+
+4778 35th USENIX Security Symposium                                                        USENIX Association
+
+
+===== PAGE 20 / 21 =====
+
+Table 10: BSR and TSR of FragFuse under different memory        Table 12: Runtime breakdown for sensitive fragment discov-
+writing thresholds.                                             ery and query execution.
+
+    Advanced           LLM-AC   GuardAgent                       Agents           FragFuse Runtime (s)        Benign
+Memory Writing      BSR TSR    BSR TSR
+                    93.0 92.5  81.0 92.6                           RAP     Discovery Carrier Attack             8.5
+   0 (default)      93.0 86.0  81.0 80.2                         SeeAct                                        27.4
+       0.25         93.0 84.9  81.0 71.6                        OSAgent           2.1        9.1     19.2      51.9
+        0.5         93.0 50.5  81.0 53.1                        InspAgent                                       0.2
+       0.75         93.0 39.8  81.0 45.7                                          5.0        28.9    31.2
+        1.0
+                                                                                  4.8        51.2    52.1
+
+                                                                                  4.5        1.0     6.6
+
+Table 11: Performance under different reward-weight settings    Table 13: Token cost across backbone LLMs and agent set-
+for advanced memory retrieval.                                  tings. Token cost includes both input tokens and model-
+                                                                generated output tokens.
+
+     Advanced        LLM-AC    GuardAgent                       Backbone LLM        Agent    Benign  Carrier  Attack
+Memory Retrieval    BSR TSR    BSR TSR                               GPT-4o          RAP      4,251   4,589   6,981
+                    93.0 92.5  81.0 92.6                             GPT-5.1       SeeAct    16,025  18,593   29,602
+     0 (default)    93.0 80.6  81.0 75.3                                          OSAgent     2,149   2,785   3,460
+         0.25       93.0 73.1  81.0 65.4                        Gemini 2.5 Flash  InspAgent   3,354   3,826   6,613
+         0.5        93.0 53.8  81.0 51.9                                             RAP      4,487   4,883   7,487
+         0.75       93.0 53.8  81.0 51.9                                           SeeAct    16,914  19,783   31,748
+         1.0                                                                      OSAgent     2,268   2,963   3,711
+                                                                                  InspAgent   3,540   4,071   7,092
+across backbone LLMs and agent settings, including both                              RAP      4,476   4,791   7,225
+input tokens and model-generated output tokens.                                    SeeAct    16,874  19,411   30,638
+                                                                                  OSAgent     2,263   2,908   3,581
+J Marker-aware Surrogate Optimization Pro-                                        InspAgent   3,532   3,994   6,844
+    cess
+                                                                InspAgent. The only noticeable degradation occurs for OS-
+The detailed marker-aware surrogate optimization process and    Agent, where BM25 drops slightly as memory increases
+analysis are provided in Appendix J in the complete online      (98%→94%) and cosine similarity with intfloat/e5-base-v2
+appendix [39].                                                  also decreases (96%→92%), while string matching and all-
+                                                                MiniLM-L6-v2 remain at 100%.
+K Failure Case Analysis
+                                                                O User Profile Generated Details for Webshop
+We provide a representative failure case in Appendix K in the
+complete online appendix [39].                                  The details for generating user profiles are provided in Ap-
+                                                                pendix O in the complete online appendix [39].
+L Sensitive Fragments Discovery Quries Limit
+                                                                P Report of End-to-end Success
+We provide a representative example of sensitive fragments
+discovery quries limit in Appendix L in the complete online     Table 14 reports the end-to-end success rate (E2E-SR) of
+appendix [39].                                                  FragFuse and the baseline across all agent, access-control,
+                                                                and backbone-LLM settings. Compared with BSR and TSR
+M FragExtractor Prompt Templates                                alone, E2E-SR captures whether an attack both bypasses
+                                                                access control and successfully induces the intended down-
+The complete FRAGEXTRACTOR prompt templates used                stream behavior.
+across our evaluated agent settings are provided in Ap-
+pendix M in the complete online appendix [39].
+
+N Detailed Retrieval Similarity Data
+
+The detailed retrieval similarity data are provided in Ap-
+pendix N in the complete online appendix [39], showing
+that carrier-query retrieval is highly robust across different
+memory sizes (8/16/32) and retrieval methods: almost all
+settings achieve a 100% match rate for RAP, SeeAct, and
+
+USENIX Association                                                                35th USENIX Security Symposium 4779
+
+
+===== PAGE 21 / 21 =====
+
+Table 14: End-to-end success rate (E2E-SR) of FragFuse and the baseline across agent, access-control, and backbone-LLM
+settings. E2E-SR is computed as BSR × TSR for attacks; for direct querying, E2E-SR equals TSR.
+
+                                                   Core LLM                                 Average
+
+Agent AC          Query Setting      GPT-4o        GPT-5.1         Gemini 2.5 Flash          TSR
+
+                                   BSR TSR E2E     BSR TSR E2E     BSR TSR E2E       BSR     83.7       E2E
+                                                                                     n.a.  54.0−29.7
+          –       direct querying n.a. 88.0 88.0   n.a. 75.0 75.0  n.a. 88.0 88.0    30.3  77.6−6.1     83.7
+                                                                                     93.7  51.8−31.9
+        LLM-AC baseline            40.0 77.5 31.0  45.0 17.8 8.0   6.0 66.7 4.0      35.3  82.2−1.5   14.3−69.4
+                                   93.0 92.5 86.0                                    79.3             72.7−11.0
+RAP               FragFuse                         98.0 70.4 69.0  90.0 70.0 63.0    n.a.    18.0     17.3−66.4
+                                                                                      3.0  11.1−6.9   65.3−18.4
+        GuardAgent baseline        42.0 76.2 32.0  51.0 25.5 13.0  13.0 53.8 7.0     93.0  19.4+1.4
+                         FragFuse  81.0 92.6 75.0                                     9.0  16.6−1.4     18.0
+                                                   84.0 78.6 66.0  73.0 75.3 55.0    82.3  20.1+2.1
+                                                                                     n.a.             0.3−17.7
+          –       direct querying n.a. 22.0 22.0   n.a. 17.0 17.0  n.a. 15.0 15.0     3.3    82.0      18.00.0
+                                                                                     80.7  33.3−48.7  1.3−16.7
+        LLM-AC    baseline         3.0 33.3 1.0    1.0 0.0   0.0   5.0 0.0   0.0     19.3  81.4−0.6   16.3−1.7
+                  FragFuse         88.0 20.5 18.0                                    92.7  21.4−60.6
+SeeAct                                             98.0 20.4 20.0  93.0 17.2 16.0    n.a.  77.6−4.4     82.0
+                                                                                      8.1
+        AGrail    baseline         5.0 20.0 1.0    9.0 22.2 2.0    13.0 7.7  1.0     80.5    25.0     3.3−78.7
+                  FragFuse         72.0 23.6 17.0                                    18.7  27.5+2.5   65.3−16.7
+                                                   86.0 20.9 18.0  89.0 15.7 14.0    88.3  10.9−14.1  3.3−78.7
+                                                                                           13.0−12.0  72.0−10.0
+          –       direct querying n.a. 80.0 80.0   n.a. 84.0 84.0  n.a. 82.0 82.0          13.1−11.9
+                                                                                                        25.0
+OSAgent LLM-AC    baseline         0.0 0.0   0.0   0.0 0.0   0.0   10.0 100.0 10.0
+                  FragFuse                                                                            2.8−22.2
+                                   82.0 80.5 66.0  96.0 79.2 76.0  64.0 84.4 54.0                     6.3−18.7
+                                                                                                      3.2−21.8
+        AGrail    baseline         10.0 40.0 4.0   28.0 14.3 4.0   20.0 10.0 2.0                      11.1−13.9
+                  FragFuse         88.0 70.5 62.0
+                                                   96.0 81.3 78.0  94.0 80.9 76.0
+
+          –       direct querying n.a. 38.6 38.6   n.a. 13.6 13.6  n.a. 22.7 22.7
+
+InspAgent LLM-AC  baseline         3.4 50.0 1.7    21.0 32.4 6.8   0.0 0.0   0.0
+                  FragFuse         45.5 25.0 11.4
+                                                   97.2 7.6  7.4   98.9 0.0  0.0
+
+        ShieldAgent baseline       1.1 0.0   0.0   33.5 10.2 3.4   21.6 28.9 6.2
+                         FragFuse
+                                   82.4 17.2 14.2  97.2 2.9  2.8   85.2 19.3 16.4
+
+4780 35th USENIX Security Symposium                                                        USENIX Association

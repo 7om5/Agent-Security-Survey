@@ -1,0 +1,1347 @@
+# R1-15 | Autonomy Comes with Costs: Detecting Denial-of-Service Vulnerabilities Caused by Resource Abusing in LLM-based Agents
+# PDF: papers\Autonomy Comes with Costs_Detecting Denial-of-Service Vulnerabilities Caused by Resource Abusing in LLM-based Agents.pdf
+# extracted: 2026-11-02T19:40:01.263Z
+
+
+===== PAGE 1 / 21 =====
+
+Autonomy Comes with Costs:
+     Detecting Denial-of-Service Vulnerabilities
+Caused by Resource Abusing in LLM-based Agents
+
+     Jiaqi Luo, Jiarun Dai, Fengyu Liu, Songyang Peng, Youkun Shi, Tong Bu,
+          and Geng Hong, Fudan University; Xudong Pan, Fudan University
+          and Shanghai Innovation Institute; Yuan Zhang, Fudan University
+
+               https://www.usenix.org/conference/usenixsecurity26/presentation/luo
+
+         This paper is included in the Proceedings of the
+                   35th USENIX Security Symposium.
+
+                          August 12–14, 2026 • Baltimore, MD, USA
+
+                                                ISBN 978-1-939133-58-8
+
+                                     Open access to the Proceedings of the
+                                         35th USENIX Security Symposium
+                                                      is sponsored by
+
+
+===== PAGE 2 / 21 =====
+
+Autonomy Comes with Costs: Detecting Denial-of-Service Vulnerabilities
+             Caused by Resource Abusing in LLM-based Agents
+
+              Jiaqi Luo†, Jiarun Dai†, Fengyu Liu†, Songyang Peng†, Youkun Shi†,
+                        Tong Bu†, Geng Hong†, Xudong Pan†‡, Yuan Zhang†
+                        †Fudan University ‡Shanghai Innovation Institute
+
+                        Abstract                                 vulnerable to Denial-of-Service (DoS) caused by resource
+                                                                 exhaustion. To investigate the emerging resource manage-
+LLM-based agents have recently attracted significant atten-      ment practices in agents and their associated risks, we present
+tion. By leveraging the semantic understanding capabili-         the first study of resource management in LLM-based agents.
+ties of large language models (LLMs), these agents can au-       Our observations reveal three representative resource lifecycle
+tonomously perform complex tasks according to user requests,     patterns. First, during single-task execution, agents are often
+such as downloading files and summarizing content. How-          permitted to consume substantial resources to preserve auton-
+ever, the lack of comprehensive resource governance renders      omy in handling diverse operations. Although these resources
+them susceptible to abuse, potentially leading to resource       are released upon task completion, a single malicious prompt
+exhaustion and denial-of-service (DoS) conditions.               (e.g., loading of a large file) can immediately deplete them.
+                                                                 Second, while some developers impose limits on resources
+   In this work, we present the first systematic security study  consumed within a single turn, certain resources persist across
+of resource management in LLM-based agents. We identify          multiple turns to maintain conversational coherence. These
+three representative patterns of resource lifecycle manage-      resources may be cleared at the end of a session, making
+ment, each of which enables distinct avenues for DoS ex-         their lifecycle coincide with the chat session. An attacker can
+ploitation. Building on these insights, we propose AgentDoS,     repeatedly interact within the same session, progressively ac-
+a novel directed grey-box fuzzing framework designed to          cumulating retained data and eventually exhausting resources.
+detect DoS vulnerabilities arising from resource exhaustion.     Finally, some resources are never released once allocated.
+AgentDoS first analyzes the resource lifecycle within the agent  Attackers need only repeatedly interact with the agent to grad-
+and then leverages an LLM to generate functionality-specific     ually consume all resources and induce a DoS condition.
+seed prompts in natural language that drive the agent toward
+excessive resource consumption. We evaluated AgentDoS on            Currently, fuzzing techniques have been widely applied
+20 widely used open-source LLM-based agents and discov-          to detecting DoS vulnerabilities [34, 36, 37, 47, 81], valued
+ered 36 zero-day vulnerabilities affecting 16 agents, 15 of      for their high precision and ability to generate proofs of con-
+which have over 10,000 stars on GitHub. To date, 15 CVE          cept (PoCs) for vulnerability verification. Specifically, fuzzers
+IDs have been assigned for these vulnerabilities.                generate initial seeds that conform to the target application’s
+                                                                 input format and then mutate them (e.g., via bit-flip [1] strate-
+1 Introduction                                                   gies) until resource exhaustion is triggered. However, DoS in
+                                                                 agents requires semantically precise prompts that both acti-
+LLM-based agents have recently attracted significant atten-      vate specific functionality (e.g., a download command) and
+tion. Leveraging the powerful semantic understanding capabil-    induce heavy resource usage (e.g., retrieving a 50 GB file).
+ities of large language models (LLMs), these agents can inter-   Existing fuzzers cannot operate at this semantic level [49].
+pret natural language instructions and autonomously perform      While AgentFuzz [49] makes the first attempt to generate
+complex tasks, such as downloading files and summarizing         prompts with functional semantics, its focus is limited to
+content, in real-world scenarios [72, 74]. Mainstream plat-      taint-style vulnerabilities, remaining ineffective in driving
+forms, such as OpenAI GPTs and Coze, currently host a wide       excessive resource consumption. Moreover, prior work has
+variety of agents [10, 15], attracting millions of users [84].   not considered the resource lifecycle in agents, specifically,
+                                                                 whether resources must be exhausted within a single interac-
+   Unlike conventional software systems with well-defined        tion or accumulated over multiple turns within the same chat
+business logic, LLM-based agents autonomously execute com-       session, resulting in potential false negatives.
+plex, resource-intensive tasks from natural language instruc-
+tions. However, these characteristics also make them highly
+
+USENIX Association                                               35th USENIX Security Symposium 3991
+
+
+===== PAGE 3 / 21 =====
+
+To this end, we are motivated to develop a resource-              the agent’s system prompt and, together with the information
+lifecycle-based approach for detecting DoS vulnerabilities           extracted in the previous phase, leverages an LLM to generate
+in LLM-based agents. The basic idea is to first identify data-       functionality-specific seed prompts. Each seed is then exe-
+storing instructions and determine their corresponding re-           cuted and evaluated based on its semantic alignment with the
+source lifecycle, and then iteratively refine prompts and dis-       target functionality as well as the resources it consumes. Two
+patch prompts to the agent using lifecycle-aware strategies          mutators then refine high-quality seeds from complementary
+(e.g., issuing them in a new chat session or within the same         perspectives, i.e., functional semantics and resource-intensive
+session) until a DoS condition is triggered. However, realizing      behavior, and dispatch them with lifecycle-aware strategies.
+this detection approach is non-trivial, given the complexity of      Finally, AgentDoS monitors agent responsiveness to deter-
+agents. We summarize the key challenges as follows:                  mine whether a DoS vulnerability is triggered.
+
+• Challenge I: How to Identify the Lifecycle of Resources?              We evaluated AgentDoS on 20 widely used open-source
+  Agents often consume substantial resources, yet their man-         agent applications that provide web services, which are partic-
+  agement is rarely documented in detail, making it difficult        ularly susceptible to attacks due to their exposure and the po-
+  to determine whether a given resource is released after a          tential impact of exploitation. As a result, AgentDoS achieved
+  single chat or retained across multiple interactions as part       a resource lifecycle identification accuracy of 95.2% and
+  of the conversational context.                                     successfully uncovered 36 zero-day DoS vulnerabilities, 33
+                                                                     of which had not been detected by existing state-of-the-art
+• Challenge II: How to Generate Prompts that Effectively             approaches [49], achieving 100% precision and 94.7% re-
+  Trigger Resource Abuse? Triggering DoS vulnerabilities             call. These vulnerabilities affect 16 open-source agents, 15
+  in LLM-based agents requires semantically precise prompts          of which have received more than 10k stars on GitHub. We
+  that not only activate specific functionalities (e.g., issuing a   promptly reported all findings to the respective developers.
+  download command) but also induce substantial resource             To date, 15 of them have been assigned CVE IDs.
+  consumption (e.g., retrieving a 50 GB file). However, ex-
+  isting approaches fall short of generating such prompts,              We summarize the contributions of this work as follows:
+  making it difficult to expose DoS vulnerabilities in agents.
+                                                                     • To the best of our knowledge, we present the first system-
+   In this paper, we propose a directed grey-box fuzzing               atic security study of resource management in LLM-based
+(DGF) [33]-based approach, named AgentDoS. Our design                  agents, uncovering the root causes of resource exhaustion
+is motivated by several key insights that directly address the         vulnerabilities in agent system design and implementation.
+aforementioned challenges. First, the implementation logic of
+agents provides valuable cues for distinguishing different re-       • We design and implement a novel detection tool, AgentDoS,
+source lifecycles. Specifically, if a resource is allocated solely     which effectively identifies DoS vulnerabilities caused by
+for handling a single prompt and is neither referenced by other        resource abusing in real-world agent applications.
+variables nor retained in subsequent logic, its lifecycle is lim-
+ited to that individual interaction. In contrast, certain resources  • We evaluate AgentDoS on 20 widely used LLM-based agent
+may persist beyond a single turn. Second, agents rely on var-          applications, where it successfully discovers 36 zero-day
+ious components (e.g., tools) to process actions, and their            vulnerabilities. As of now, these vulnerabilities have been
+functionalities are often further detailed in the system prompt.       assigned 15 CVE IDs.
+The class and method names, together with the source code
+of these components and the system prompt, reveal both their         2 Problem Statement
+functional purpose and the semantics of resource-intensive
+operations. Moreover, high-quality prompts typically align           In this section, we first provide an overview of LLM-based
+with these semantics while simultaneously driving substan-           agents and introduce a taxonomy of resource lifecycles within
+tial resource consumption. Such information can therefore            agent systems (in §2.1). We then present a real-world DoS
+guide the generation of prompts that both activate specific          vulnerability caused by resource abuse and present why exist-
+functionalities and induce excessive resource usage.                 ing works are ineffective (in §2.2). Finally, we delve into the
+                                                                     root causes of resource-abusing vulnerabilities (in §2.3) and
+   Based on these insights, we design AgentDoS with two              introduce our threat model (in §2.4).
+main phases. In the first stage, AgentDoS employs static
+analysis to locate resource-consuming operations and deter-          2.1 Background
+mine their corresponding lifecycles according to the agent’s
+execution logic. It then conducts intra-procedural analysis          First, we outline the background of LLM-based agents and
+to exclude operations unaffected by user input or strictly           their resource management strategies.
+constrained, retaining only exploitable candidates. For each,        LLM-based Agent. The advancement of LLMs has acceler-
+AgentDoS extracts call chains and relevant code snippets for         ated the development of sophisticated LLM-based agents [3,
+downstream analysis. In the second phase, AgentDoS parses            11, 18, 72]. These agents leverage the natural language un-
+                                                                     derstanding capabilities of LLMs to interpret user prompts
+
+3992 35th USENIX Security Symposium                                  USENIX Association
+
+
+===== PAGE 4 / 21 =====
+
+help me download    Agent Application            Single-turn Chat                    ing a predefined interaction limit). For such resources, an
+          example.com/file                                                                    attacker can repeatedly issue interactions within the same
+                               Chat Session            2. Assemble System Prompt              session to progressively accumulate consumption until
+         1. User Prompt                                                                       exhaustion.
+                             … … Multi-turn Chats            You can use following tool …  3. Full-lifecycle resources refer to data that, once allocated,
+User 5. Response                                                                              are never released and remain accessible for the entire
+                                                       3. Chat LLM and Get Response           lifespan of the agent system. For this type of resource, an
+          Download Success!                                                                   attacker can exhaust resources through repeated interac-
+                                                              {“tool”: “download”,            tions across multiple sessions.
+                                                              “var": "example.com/file"}
+
+                             Long-lived Resources      4. Parse and Execute Actions
+
+                                                            download(“example.com/file”)
+
+                             Full-lifecycle Resources  Short-lived Resources
+
+Figure 1: Simplified workflow of LLM-based agents.
+
+and autonomously perform complex tasks that exceed the                                     2.2 Motivation Example
+capabilities of traditional LLMs, such as web browsing, by
+integrating a suite of components (e.g., external tools).                                  Then, we introduce the resource-abusing vulnerabilities
+                                                                                           caused by improper resource management and discuss why
+   Figure 1 illustrates a simplified workflow for a typical agent.                         existing techniques fail to detect them in LLM-based agents.
+(1) Initially, the user initiates a task request within a chat ses-
+sion, for instance, "help me download example.com/file." (2)                               Attacker     Assist me in completing the full  Chat 1000 times     Agent
+The agent then augments this prompt with a predefined system                                         download procedure for the resource
+prompt, which instructs the LLM on which components can                                                                                   Each time select a
+be invoked and provides a brief description of them. (3) The                                              located at example.com/file.    new chat session
+combined prompt is sent to the LLM. (4) The agent parses the
+LLM’s response to determine the planned action and executes                                1. Tool = ["Search": Search(), "Download": Download(),
+it using the relevant component (e.g., a download tool). (5)                                    "Calculate": Calculate()]
+Finally, the agent delivers the outcome of the executed action
+to the user. (6) The user may then continue in the same ses-                               2. SystemPrompt = "... You can use following tool:
+sion to process previous outputs (e.g., summarizing the file)                                   1. Download tool, the input of this tool is an url ..."
+or start a new session for a different task.
+Lifecycle of Resources in Agents. During execution, LLM-                                   3. CurrentChatSession = ChatSession()
+based agents frequently consume substantial system resources
+(e.g., memory, disk space). If these resources are not prop-                               4. @route.post("/chat") ① User input
+erly released after use, they can accumulate over time, lead-                              5. def chat(user_prompt):
+ing to redundant artifacts and eventual resource exhaustion.                               6. if CurrentChatSession.chat_times > 10:
+However, to the best of our knowledge, there is currently                                  7.        return "Chat Times Limited!"
+no systematic analysis of resource management strategies in                                8. response = CurrentChatSession.chat(user_prompt)
+agent systems. To bridge this gap, we take an initial step to-
+ward understanding how LLM-based agents manage system                                      9. Class ChatSession(): ② Chat LLM & Get response
+resources, with a particular focus on the timing of resource                               10. def chat(self, prompt):
+release. Specifically, we selected 20 representative agent appli-
+cations from popular open-source repositories on GitHub [14]                               11.       response= llm.invoke(SystemPrompt, prompt)
+and manually analyzed their source code and documentation
+(detailed in §6.2). Our investigation reveals that while many                                        # Update session context
+resources are promptly released after a single interaction, oth-
+ers persist beyond the scope of a single turn. In particular, we                           12.       self.memory.append((user_prompt, response))
+classify resource lifecycles in agents into three types based                              13.       self.chat_times += 1
+on their release timing:
+                                                                                                     # tool = Download()
+1. Short-lived resources are allocated during a single-turn in-
+   teraction and are subsequently released, either by garbage                              14.       tool = Tool[response["tool"]]
+   collection [13] or explicitly by the agent, once the inter-
+   action completes. For this type of resource, a malicious                                          # tool.run("http://example.com/file","/root/session1")
+   attacker must exhaust all resources within a single prompt.
+                                                                                           15.       tool.run(response["payload"], self.workspace)
+2. Long-lived resources refer to resources that persist across
+   multiple turns within the same chat session and are re-                                 16. Class Download(Tool): ③ Get & Invoke tool
+   leased only when the session terminates (e.g., upon reach-                              17. def run(url, workspace):
+                                                                                           18. file_name = url.split("/")[-1]
+
+                                                                                           19. response = requests.get(url, timeout = 30)
+
+                                                                                           20. with open(workspace + file_name, "wb") as f:
+                                                                                           21.       f.write(response.content) ④ Download & Write disk
+
+                                                                                                     # Downloaded files reside permanently on disk
+
+                                                                                           22. @route.post("/create")
+                                                                                           23. def create_new_session():
+                                                                                           24. CurrentChatSession = ChatSession()
+
+                                                                                                   # Clear previous session information through GC
+
+                                                                                           Figure 2: A real-world DoS vulnerability example from a
+                                                                                           popular open-source agent.
+
+                                                                                           A Real-World Example. Figure 2 illustrates a simplified code
+                                                                                           snippet of a zero-day vulnerability we discovered (CVE-2025-
+                                                                                           4**90, anonymized for ethical reasons) on a mainstream open-
+                                                                                           source agent platform. Specifically, this agent is designed
+                                                                                           to autonomously download arbitrary files for tasks such as
+                                                                                           literature reviews. However, due to improper management of
+                                                                                           downloaded resources, attackers can exploit this feature to
+
+USENIX Association                                                                                   35th USENIX Security Symposium 3993
+
+
+===== PAGE 5 / 21 =====
+
+launch DoS attacks by exhausting all disk space, rendering           interactions, causing redundant resources to accumulate
+the agent’s functionality unavailable.                               over time and eventually exhausting system resources.
+Exploitation of Resource Abusing Vulnerability. To ex-             • Lack of Resource Size Limits: A straightforward defense
+ploit this vulnerability, the attacker performs the following        against resource exhaustion is to restrict the amount of
+steps: ❶ The attacker issues a crafted prompt to the agent           resources an agent can consume. However, existing size
+via its single-chat web API (lines 4–5). ❷ The agent for-            limits are often incomplete. For instance, many agents pro-
+wards this prompt to the LLM (line 11), which plans the next         vide a download tool that allows the LLM to fetch arbitrary
+action by selecting a tool from the system prompt. ❸ The             files with configurable parameters such as timeout and file
+agent parses the LLM’s response and invokes the selected             size. An attacker can exploit this functionality by down-
+tool (lines 14–15). In this case, the Download tool with the         loading files that exceed the remaining disk space, directly
+parameter example.com/file. ❹ The tool retrieves the file            exhausting storage. Moreover, as shown in Figure 2, a 30-
+and stores it locally (lines 19–21). ❺ While the agent enforces      second timeout implicitly caps the size of a single down-
+per-session resource limits (e.g., a download timeout at line        load at approximately 300 MB. Yet, without proper checks
+23 and a restriction on the number of turns per session at lines     on overall resource availability, an attacker can repeatedly
+6–7), files generated in previous sessions persist on disk (lines    download smaller files across multiple sessions, bypassing
+23–24). An attacker can therefore repeatedly create new ses-         per-interaction limits and gradually consuming all available
+sions (lines 22–23) and replay the above steps, progressively        disk space. Conversely, overly strict limits can undermine
+accumulating files until system resources are exhausted.             the agent’s ability to autonomously complete tasks. For
+Limitations of Existing Detection Methods. Although DoS              example, during a literature review task, an agent may fail
+vulnerability detection has been extensively studied, we found       to download all necessary documents under restrictive re-
+that existing techniques are ineffective to identifying the          source constraints, preventing task completion.
+above vulnerability. First, most existing approaches [45, 64,
+69, 78] primarily target CPU exhaustion and thus cannot ad-        2.4 Threat Model
+dress memory and disk resource exhaustion in agents. Sec-
+ond, while a few studies have explored memory exhaus-              In our threat model, we assume that both the agents and their
+tion [36, 47, 48, 81] and memory leaks [34, 37, 65, 71], agent     developers are benign and that the agents’ execution envi-
+systems typically rely on customized frameworks rather than        ronments are not compromised. The adversary is a remote
+well-defined ecosystems (e.g., beans in Spring Boot) to man-       attacker who can interact with the target agent under nor-
+age resource lifecycles. As a result, existing work provides       mal usage conditions, such as by issuing prompts through a
+insufficient guidance for identifying resource lifecycles within   publicly accessible web interface. This interaction pattern is
+agents. More importantly, these approaches are unable to gen-      common in mainstream LLM-based agent systems [3, 11, 18].
+erate semantically valid prompts. Finally, the most relevant       The attack is executed by sending specially crafted malicious
+work is AgentFuzz [49], but it focuses exclusively on taint-       prompts to the agent. When the agent processes these prompts,
+style vulnerabilities and fails to induce excessive resource       it is induced to consume excessive system resources (e.g.,
+consumption. As shown in our evaluation (detailed in §6.4),        memory or disk), ultimately leading to a Denial-of-Service
+AgentFuzz can detect only 7.9% of the resource-abusing vul-        (DoS) condition.
+nerabilities identified in our benchmark.
+                                                                   3 Overall Ideas
+2.3 Problem Understanding
+                                                                   In this section, we first discuss the challenges of identify-
+To address this gap, we delve into the root causes of resource-    ing resource-abusing vulnerabilities in LLM-based agents
+abusing vulnerabilities. We found that the main reasons for        and present our key insights (in §3.1). We then provide an
+the resource abuse problem in the agent are twofold:               overview of our proposed framework and demonstrate its ap-
+                                                                   plication to the motivating example (in §3.2).
+• Mismanaged Resource Lifecycle: Agents typically retain
+  conversational context across multiple interactions to pre-      3.1 Challenges & Key Insights
+  serve coherence. Since they autonomously execute tasks
+  based on user input, developers cannot predict which inter-      As previously discussed, the resource lifecycle plays a critical
+  mediate resources may be required later. To avoid disrupting     role in shaping the attacker’s exploitation strategy. Specifi-
+  functionality, developers therefore tend to preserve most        cally, for resources released after a single turn, an attacker
+  intermediate data. For instance, as shown in Figure 2, files     must maximize consumption within a single prompt. Con-
+  downloaded during a chat session are retained indefinitely       versely, for resources that persist across multiple turns, an
+  and never deleted. This design flaw allows attackers to craft    attacker can incrementally increase consumption over succes-
+  prompts that trigger unnecessary allocations and repeated        sive interactions within a session to eventually cause exhaus-
+
+3994 35th USENIX Security Symposium                                USENIX Association
+
+
+===== PAGE 6 / 21 =====
+
+Operator Modeling                Dynamic Fuzzing                                   Agent Runtime
+                                                                                                 Environment
+                      Candidates      Seed Generation (§4.2.1)                   Seed Mutation
+                    Locate (§4.1.1)                                                  (§4.2.3)     Trace   Resource
+                                             Call                                               Recorder  Recorder
+                        Lifecycle          Chain                           Seed
+                   Identify (§4.1.2)
+    Agent                             System                         Seed
+Source Code          Exploitability   Prompt LLM Prompt
+                    Assess (§4.1.3)                                        Explorer Exploiter
+   Prompt
+  Input URL                                                                                     Instrumentation
+
+                                      Seed Scheduling (§4.2.2)             Seed Pool            Oracle Vulnerability
+
+                                        Resource
+                                       Consumed
+
+                                       Execution Feedback Selected
+                                          Trace Scheduling Seed
+
+                                      Figure 3: Architecture of AgentDoS.
+
+tion. However, exploiting such vulnerabilities presents two          high-level semantics required in natural language prompts.
+key challenges stemming from complex resource lifecycles             Although AgentFuzz [49] makes a first attempt to generate
+and the unique inputs of LLM-based agents.                           prompts with functional semantics, its scope is limited to taint-
+Challenge I: How to Identify the Lifecycle of Resources?             style vulnerabilities, and it remains ineffective in inducing
+During execution, LLM-based agents interact with various             substantial resource consumption.
+system resources, such as memory and disk storage. Unlike            Key Insight II: LLM-Assisted Resource-Consuming
+traditional web applications, which manage resource lifecy-          Prompt Generation. The key insight is that component class
+cles through well-defined frameworks, agents often rely on           and method names, together with the system prompt and sur-
+customized agent frameworks that are rarely documented in            rounding code, convey both functional intent and the seman-
+detail. As a result, it is difficult to determine whether a spe-     tics of resource-intensive operations. As shown in Figure 2,
+cific resource is released after a single chat (i.e., a short-lived  the component name "Download" and its description explic-
+resource), retained across multiple interactions and released        itly indicate its functionality, while the enclosing function
+only when the chat session ends (i.e., a long-lived resource),       suggests that exhausting disk resources requires download-
+or persisted even after the chat session is terminated (i.e., a      ing a large file. Moreover, the semantic similarity between
+full-lifecycle resource).                                            a prompt and the vulnerable component, combined with ob-
+Key Insight I: Agent Implementation Logic-Driven Life-               served runtime resource consumption, reflects the prompt’s
+cycle Determination. Considering that our resource lifecycle         potential to trigger DoS. We therefore leverage LLMs’ natu-
+classification in §2.1 is closely related to the agent’s business    ral language understanding to interpret these semantics and
+logic, we leverage the agent’s handling of single conversations      iteratively generate high-quality prompts that both activate
+and its chat session deletion logic to assist in determining re-     vulnerable components and maximize resource usage.
+source lifecycles. Specifically, if a resource is allocated only
+during a single conversation, is not referenced by other vari-       3.2 Approach Overview
+ables, and is explicitly released in subsequent logic, we clas-
+sify it as a short-lived resource. In contrast, certain resources    Drawing on the above insights, we propose AgentDoS, a novel
+may persist beyond a single conversation. By inspecting the          directed grey-box fuzzing approach for efficiently detecting
+deletion logic of chat sessions, we can determine whether            DoS vulnerabilities caused by resource abusing in LLM-based
+such resources are released when the session ends. If they are       agent. As illustrated in Figure 3, AgentDoS consists of two
+released, they are classified as long-lived resources; otherwise,    stages: operator modeling and dynamic fuzzing.
+we consider them to remain resident in the agent, constituting
+full-lifecycle resources.                                               In the first stage, we apply static analysis to identify
+Challenge II: How to Generate Prompts that Effectively               resource-consuming sink callsites and determine their re-
+Trigger Resource Abuse? To expose DoS vulnerabilities in             source lifecycles. We use intra-procedural taint analysis to
+agents, a prompt must encode precise semantic intent that            filter out operations that are not affected by user input or are
+both activates the vulnerable component (e.g., issuing a com-        subject to strict resource limits. For each remaining poten-
+mand such as “Download ...”) and simultaneously drives               tially vulnerable sink, we extract the associated call chains
+excessive resource consumption (e.g., requesting the down-           and enclose function code snippets to provide rich contextual
+load of a 50GB file). However, existing DoS detection ap-            information for downstream analysis.
+proaches [36, 71, 81] primarily rely on low-level mutations
+(e.g., bit flips [1]), which cannot capture or manipulate the           In the second stage, we parse the agent’s system prompt
+                                                                     and, together with the extracted call chains, use an LLM to
+                                                                     generate functionality-specific seed prompts. Each seed is ex-
+
+USENIX Association                                                         35th USENIX Security Symposium 3995
+
+
+===== PAGE 7 / 21 =====
+
+ecuted and stored in a seed pool, where it is evaluated on func-   4.1.1 Vulnerability Candidates Locating
+tionality relevance, resource consumption, and selection fre-
+quency. The top-scoring seed is selected for mutation, and two     AgentDoS primarily focuses on two types of resources: mem-
+complementary mutators iteratively refine it from functional       ory and disk. Regarding memory resources, motivated by
+and resource-intensive perspectives. Mutated prompts are dis-      prior work [48, 81], we focus on two key factors for exploit-
+patched according to the sink’s lifecycle: short-lived and full-   ing data storage to induce resource exhaustion. First, data
+lifecycle resources are fuzzed across sessions, whereas long-      structures used to store injected data can grow without bound,
+lived resources are fuzzed within the same session. AgentDoS       requiring container types (e.g., lists, dictionaries, sets) that
+continuously monitors the agent’s web interface to detect          hold references to user-controlled inputs. We thus consider
+DoS conditions. Upon detection, it outputs the final prompt as     Python’s built-in containers and their insertion operations
+the exploit (EXP) for short-lived resources, and the complete      as defined in the official documentation [20]. Second, previ-
+dialogue sequence for long-lived and full-lifecycle resources.     ous studies [7, 8, 23, 32] report that certain parsing operators,
+                                                                   such as BeautifulSoup [21], may cause excessive memory
+   Here, we illustrate how AgentDoS detects the vulnerability      consumption when handling deeply nested HTML structures.
+in the example shown in Figure 2. First, AgentDoS locates          Despite official guidelines [5,6] addressing these issues, many
+the disk write operation (line 21). By performing forward          developers overlook them, so we include such scenarios in our
+control-flow analysis from this sink callsite, it determines       analysis. For disk resources, we focus primarily on disk write
+that the written content is never deleted in subsequent logic.     operations, as they directly increase disk space consumption.
+Next, AgentDoS examines the logic for deleting the current         We list all predefined sinks in Table 5 of Appendix A.
+chat session (lines 22–24) and find that the written content
+also persists after session deletion. Therefore, we classify it       Subsequently, we leverage static analysis to locate all
+as a full-lifecycle resource. Further intra-procedural analy-      sink callsites. Notably, if the operator manipulates a class
+sis reveals that the written content is controllable through       member variable, we trace back to the location of its caller
+the function input and lacks size checks, indicating a po-         rather than the operator itself to obtain a more accurate con-
+tentially vulnerable operator. In the dynamic fuzzing stage,       text. For example, in the case shown in Figure 2, where
+AgentDoS extracts the system prompt and generates an ini-          self.memory.append is invoked at line 12, we attribute the
+tial seed. Since the resource is full-lifecycle, each prompt       sink callsite to its caller’s location at line 8, rather than to
+is dispatched through a new chat session. Based on execu-          the operator’s own location. As discussed in §3.1, class and
+tion feedback, AgentDoS determines whether the sink has            method names often convey semantic cues about functional-
+been triggered and selectively applies different mutators to       ity, and surrounding code snippets frequently reflect patterns
+iteratively refine the prompt, guiding it toward activating the    indicative of high resource usage, such as repetitive or large-
+vulnerable component and driving excessive resource con-           scale data operations. To capture these, we perform iterative
+sumption. This process is repeated iteratively until the agent     backward traversal from each sink, enumerating all possible
+eventually becomes unresponsive, at which point the vulnera-       call paths until no further callers exist in the call graph. Finally,
+bility is confirmed.                                               we extract the function containing the sink callsite as the as-
+                                                                   sociated code snippet for analysis. To mitigate the limitations
+4 AgentDoS Design                                                  of static analysis, particularly the difficulty of resolving im-
+                                                                   plicit calls, we adopt the rule set proposed by LLMSmith [50],
+In this section, we present the design of AgentDoS. It consists    which is designed to enhance the precision and completeness
+of two main modules. The Vulnerable Operator Modeling              of control flow graphs (CFGs) extraction in agents.
+module is responsible for identifying all resource-consuming
+operators, analyzing their lifecycles, and selecting those that    4.1.2 Resource Lifecycle Identifying
+are potentially vulnerable (in §4.1). The Dynamic Fuzzing
+module manages the seed generation, scheduling, and muta-          After locating the sink callsite, the next step is to determine the
+tion processes to detect these vulnerabilities (in §4.2).          lifecycle of the resource it manipulates. As outlined in §3.1,
+                                                                   we leverage the agent’s logic for handling single-turn conver-
+4.1 Vulnerable Operator Modeling                                   sations and deleting chat sessions to aid in resource lifecycle
+                                                                   classification. Specifically, we first manually identify the API
+In this phase, AgentDoS leverages static analysis to first locate  entry points responsible for processing single-turn chats and
+resource-consuming operators (in §4.1.1) and determine the         for deleting chat sessions, and then construct forward CFGs
+lifecycle of the resources they manipulate (in §4.1.2), and        starting from these entry points.
+finally assess the exploitability of these operators (in §4.1.3).
+                                                                      For memory resources, we analyze the scope of the vari-
+                                                                   able associated with the operator. If the variable is initialized
+                                                                   within the same function, i.e., its scope is limited to the cur-
+                                                                   rent function, we classify it as a short-lived resource, as it
+                                                                   will be automatically reclaimed by the GC once the function
+
+3996 35th USENIX Security Symposium                                USENIX Association
+
+
+===== PAGE 8 / 21 =====
+
+Table 1: List of vulnerable operator features.                                  servatively assume potential vulnerability if any user input
+                                                                                      can propagate into the operator, regardless of structural condi-
+Name                Description                                                       tions. For disk resources, we mark an operator as potentially
+                                                                                      exploitable if any function input can influence the data be-
+Operator      The name of the potentially vulnerable operator                         ing written to disk. To identify explicit bounds on resource
+Location      The source code location (file location and line number)                usage for size-expandable data, we conduct a backward anal-
+Type          The type of resource manipulated by the operator (Memory or Disk)       ysis from each operator to locate conditional checks on size-
+Lifecycle     The lifecycle of resource (Short-lived, Long-lived, or Full-lifecycle)  related variables. If these checks restrict the sink’s execution,
+Snippet       The code snippet associated with the operator                           we consider them as evidence of an enforced size limit.
+Call Chain    The call chain to the operator
+Controllable  Whether it is potentially influenced by user input (True or False)         Finally, in this stage, AgentDoS collects the information
+Constraints   Whether capacity limitations exist (True or False)                      summarized in Table 1. AgentDoS retain only those operators
+                                                                                      that are potentially controllable by the user and impose no
+scope ends. If the variable is referenced by a global variable,                       explicit constraints on data size (i.e., Controllable = True
+we further analyze the CFG of the chat session deletion pro-                          and Constraints = False).
+cess. Specifically, if the global variable is reassigned during
+session deletion, we classify the resource as long-lived, since                       4.2 Dynamic Fuzzing
+the reassignment removes the reference and enables GC to re-
+claim the memory. In contrast, if the variable is neither locally                     In this phase, AgentDoS first generates functionality-specific
+scoped nor reassigned during session deletion, we categorize                          initial seeds (in §4.2.1), then evaluates their quality based
+it as a full-lifecycle resource, as it may persist throughout the                     on execution feedback (in §4.2.2), and subsequently itera-
+entire agent lifecycle unless explicitly cleared.                                     tively mutates the high-quality seeds until a DoS condition is
+                                                                                      triggered (in §4.2.3).
+   For disk resources, once the operator location has been
+identified, we extract the file path being written to and ana-                        4.2.1 Seed Generation
+lyze its subsequent CFG. If a deletion instruction targeting
+this file path is found within the subsequent CFG, the resource                          PROMPT 1. Seed Generation Prompt.
+is classified as short-lived, since it is released immediately
+after the interaction. If no such deletion occurs within the                            To guide the agent in invoking the target component: First, infer
+subsequent CFG, we further analyze the chat-session deletion                            the component’s functionality from the class and function names
+logic. If the file is removed upon session termination, the                             in the call chain. Second, create a natural language prompt whose
+resource is classified as long-lived, as it persists throughout                         semantic intent aligns with that functionality.
+the session but is released when the session ends. If the disk                          @EXAMPLE:
+resource is never deleted, we categorize it as a full-lifecycle                         INPUT:
+resource, which persists beyond the entire agent lifecycle un-                          <call chain>: calculator→result.append()
+less explicitly cleaned up by the developer. Finally, due to the                        <system prompt>: You can use the following tools: 1. Cal-
+limitations of static analysis (e.g., dynamic path construction),                       culator: You can input a mathematical expression as a string
+we conduct manual dynamic validation for cases where the                                parameter, and the tool will return the computed result. 2. ...
+resource lifecycle cannot be determined statically.                                     OUTPUT:
+                                                                                        <prompt>: Please use the calculator to evaluate the following
+4.1.3 Exploitability Assessing                                                          expression: 3 * (4 + 5).
+
+To reduce the overhead of subsequent dynamic analysis, we                                As discussed in §3.1, the system prompt provides crucial
+perform a static exploitability assessment. This assessment                           context enabling LLMs to infer component semantics. How-
+consists of two key dimensions: (1) whether the operator can                          ever, statically extracting this prompt is challenging due to its
+be influenced by user input, and (2) whether the resource                             fragmented storage across multiple files and a lack of struc-
+usage is subject to explicit size constraints. To improve scala-                      tural markers. For example, in Langflow [17], the agent’s role
+bility, we employ intra-procedural taint analysis to filter out                       and component descriptions reside in separate modules and
+operators that are not exploitable.                                                   are dynamically combined just before the LLM call, compli-
+                                                                                      cating static reconstruction. To overcome this, we capture the
+   Specifically, for short-lived in-memory resources, we adopt                        system prompt dynamically at runtime by hooking the third-
+different heuristics based on the type of operator. For parser-                       party LLM invocation API (e.g., OpenAI API [2]). We trigger
+like operators (e.g., BeautifulSoup), if any function ar-                             a full query by sending a fixed input (i.e., "hi") and record the
+gument can be propagated into the operator, we consider                               API parameters, extracting the system role field that contains
+it potentially exploitable. For append-like operations (e.g.,                         the assembled system prompt. Since the system prompt does
+list.append), we assess whether they reside inside loops                              not change with input, it only needs to be extracted once at
+whose iteration count depends on user input [48]; if so, we                           the start of fuzzing for each agent.
+flag them as posing a potential resource-exhaustion risk. For
+long-lived and full-lifecycle in-memory resources, we con-
+
+USENIX Association                                                                    35th USENIX Security Symposium 3997
+
+
+===== PAGE 9 / 21 =====
+
+Subsequently, we provide the extracted call chains and            2) Resource Consumed Score. At this stage, we leverage
+system prompt to the LLM for seed prompt generation. Fol-            the resource usage incurred by the agent during prompt exe-
+lowing [49], we adopt a one-shot learning [67] strategy with         cution to evaluate the resource consumption semantics of a
+Chain-of-Thought (CoT) [70] reasoning to guide the LLM               prompt. Considering that different resource lifecycles lead to
+in producing seed prompts. Specifically, we first guide the          exhaustion through different mechanisms, we adopt tailored
+LLM through step-by-step reasoning and supply an example             evaluation strategies. For short-lived resources, exhaustion
+consisting of a call chain leading to a known sink, the cor-         typically occurs during prompt execution. Hence, we measure
+responding system prompt, a user prompt that successfully            the peak resource usage observed during the execution of the
+triggers the sink, and an explanation linking the prompt to the      agent. For long-lived and full-lifecycle resources, exhaustion
+call chain and contextual information. Through this process,         tends to result from persistent accumulation across multiple
+the LLM learns to infer semantic intent from new call chains         prompts. Therefore, we evaluate the residual resource con-
+and system prompts, and is able to generate functionality-           sumption after the completion of a single chat session, which
+specific seed prompts that are likely to activate vulnerable         reflects the degree to which resources are retained by the
+components. An example prompt is shown in PROMPT 1.                  agent beyond prompt execution.
+
+                                                                        The resource consumed score is calculated as follows:
+
+4.2.2 Seed Scheduling                                                Rs = (mm − mi) / mt ∗ 100 if short-lived resource (2)
+                                                                              (me − mi) / mt ∗ 100 otherwise
+Feedback Collection. As noted in §3.1, a successful DoS
+prompt must simultaneously encode component invocation               where mm denotes the maximum amount of resources con-
+and resource consumption semantics. Accordingly, we evalu-           sumed on the agent server during the execution of the user
+ate the quality of each seed from these two perspectives.            request, while mi represents the initial resource usage prior
+1) Functionality Score. Similar to [49], we evaluate the func-       to the chat. me captures the resource usage after the prompt
+tional semantics of seed prompts using both CFG distance             has been executed. mt refers to the total amount of system re-
+and LLM-based assessment. Specifically, we record the exe-           sources. For each operator that manipulates a specific type of
+cution trace and compute its CFG distance to the target sink.        resource, we track and record the usage of the corresponding
+Additionally, we adopt the LLM-as-a-Judge paradigm [85] to           resource type accordingly.
+assess the semantic similarity between the prompt and the in-        Seed Selection. This step selects high-quality seeds for
+tended functionality of the component. The LLM is provided           fuzzing the LLM-based agent. Generally, AgentDoS favors
+with the seed prompt, the execution trace, which contains rich       seeds that either reach targets more effectively or trigger
+semantic signals reflecting the tools invoked and actions taken      higher memory consumption. Furthermore, to avoid prema-
+by the agent, as well as the component’s system prompt and           ture convergence to suboptimal local solutions, we introduce
+call chain. It assigns scores from 0 to 5 across three dimen-        a penalty term that reduces the score of seeds that have been
+sions: clarity, conciseness, and functional consistency. The         selected frequently. The final score is computed as follows:
+sum of these scores serves as the seed’s semantic score, with
+higher values indicating stronger alignment with the target          Ss = αFs + βRs − N  (3)
+component. The scoring prompt is illustrated in PROMPT 2.
+Finally, the functionality score is computed as:                     where N is the number of times the seed has been selected
+                                                                     and α and β are hyperparameters that adjust the weights of
+Fs = x−k + Ls                        (1)                             these factors. We then select the highest-scoring seed for the
+                                                                     next round of mutation.
+where x is the shortest distance from the execution trace to the
+sink callsite, k is the hyper-parameter that adjusts the weight,     4.2.3 Seed Mutation
+and Ls denotes the semantic score assigned by the LLM.
+                                                                     A seed prompt may fail to invoke the target component or lack
+   PROMPT 2. Functionality Score Prompt.                             sufficient resource consumption semantics, thereby prevent-
+                                                                     ing the successful triggering of a DoS condition. To address
+  Your task is to score user prompts based on how well their se-     this limitation, we propose a reflexion-based mechanism [62]
+  mantic intent aligns with the target component.                    that iteratively mutates and refines prompts to narrow the
+  For each prompt, assess the following three aspects and assign a   semantic gap between the prompt and both the target compo-
+  score from 1 (poor) to 5 (excellent):                              nent’s functionality and its associated resource consumption
+  1.Clarity: Is the prompt presented in a straightforward and pre-   behaviors. This mechanism incorporates contextual feedback
+  cise manner, making it easy to understand?                         from previous executions, which is provided to the language
+  2.Conciseness: Is the prompt formulated succinctly, while avoid-   model in subsequent iterations. Such feedback enables the
+  ing unnecessary redundancy or irrelevant details?                  model to efficiently learn from prior failures and reinforce
+  3.Relevance: Is the semantic intent of the prompt closely related
+  to the intended component or function?
+
+3998 35th USENIX Security Symposium                                  USENIX Association
+
+
+===== PAGE 10 / 21 =====
+
+successful patterns, ultimately leading to the generation of              PROMPT 4. Exploiter Prompt.
+high-quality seed prompts. Building upon this idea, AgentDoS
+maintains an independent history for each seed, preserving a             You are a red team expert specializing in agent-based penetration
+dedicated memory of all mutation attempts associated with                testing. We provide you with a set of external resource links. You
+that seed. This memory records key information, including                may embed these links in your generated prompts to exhaust the
+the newly generated prompt, the corresponding reasoning pro-             agent’s resources during content parsing.
+cess, the execution trace, and the feedback score obtained               The resources include:
+from prior iterations. To further enhance the mutation process,          1. http://large_file<id>.html: A URL pointing to a 30GB HTML
+we introduce two specialized mutators:                                   file, where id ranges from 1 to 10.
+                                                                         2. http://deepnest.html: pointing to a deeply nested HTML file.
+Explorer. By default, we apply this mutator to iteratively               3. http://deepnest.xml: pointing to a deeply nested XML file.
+refine the selected prompt until it successfully reaches the
+target sink. Given that the primary goal of the exploration            5 Implementation
+phase is to guide the prompt toward invoking the intended
+component, we provide the LLM with seed memory enriched                We implemented a prototype of AgentDoS consisting of over
+with component-relevant semantics. This memory includes                1.5k lines of CodeQL code for static analysis and over 5.4k
+the associated call chain, system prompt, previously generated         lines of Python code for fuzzing and instrumentation.
+prompts, execution traces, and functionality scores. Similar
+to [49], the LLM is guided to refine its reasoning through                For static analysis, AgentDoS leverages CodeQL [28], in-
+structured, step-by-step inference. The LLM continues to               corporating the rules proposed by LLMSmith [50] to con-
+iteratively refine the prompt and update the seed memory,              struct a comprehensive call graph. Specifically, we employ
+progressively improving the quality of future mutations. An            the FunctionInvocation and BasicBlock APIs to generate
+example prompt of explorer is provided in PROMPT 3.                    the call graph, and utilize the TaintTracking API to per-
+                                                                       form intra-procedural taint analysis. The analysis results are
+   PROMPT 3. Explorer Prompt.                                          exported in CodeQL’s SARIF format [25], which are then
+                                                                       parsed by Python scripts for subsequent processing.
+  Your task is to iteratively refine user prompts by deeply analyzing
+  the agent’s behavior.                                                   For dynamic fuzzing, following prior work [40, 49, 68],
+  First, evaluate the seed prompt’s intent using its execution trace,  we evaluated AgentDoS on a subset of our benchmark, and
+  and infer the target component’s functionality from the call chain   adopted their hyperparameter settings as the default config-
+  and system prompt.                                                   uration. In our experiments, we used the following values:
+  Second, pinpoint which prompt segment caused the agent to            k = 1, α = 0.5, and β = 0.5. Consistent with [40, 49], these
+  invoke an incorrect component.                                       parameters are tunable and can be further explored in future
+  Third, use the history of generated prompts to inform your rea-      work. Additionally, we manually constructed a deeply nested
+  soning and avoid repeating previous errors.                          HTML file and a deeply nested XML file, each with approx-
+  Finally, revise the prompt to better align its semantics with the    imately 15M layers and a size of around 100 MB, ten large
+  intended call chain and system prompt.                               files of roughly 30 GB each, and one hundred smaller files of
+                                                                       approximately 100 MB each. These files were hosted on our
+Exploiter. If a selected seed prompt successfully triggers the         server, and their URLs were incorporated into the Exploiter’s
+target sink, AgentDoS transitions to the mutator phase, which          prompts. For each generated seed, prompts are dispatched
+is designed to further optimize the prompt’s resource con-             to the agent according to the resource lifecycle: short-lived
+sumption semantics. In this stage, the LLM is provided with a          and full-lifecycle resources are sent via a new dialogue API
+resource-oriented seed memory containing its corresponding             instance, whereas long-lived resources are delivered through a
+code snippet, previously generated prompts, and their associ-          persistent chat session API to maintain contextual continuity.
+ated resource consumption scores. Leveraging this contextual
+information, the LLM identifies patterns in prior prompts                 During instrumentation, we hook into the OpenAI API [2]
+that resulted in higher resource utilization and generates new         to capture input parameters and extract the agent’s system
+inputs that are more likely to exhaust system resources. In            prompt. We then leverage Python’s inspect module [16] to
+addition, certain operators rely on external network resources.        retrieve the agent’s stack frame, which allows us to calculate
+For example, agents frequently employ BeautifulSoup to                 the distance between the execution trace and the sink callsite.
+parse files downloaded from the Internet. To emulate such              In addition, the psutil module [24] is employed to contin-
+scenarios, we manually constructed three types of files, hosted        uously monitor system resource consumption in real time.
+them on a local server, and supplied the exploiter with URLs           For testing, all sink callsites are instrumented, and the agent’s
+pointing to these resources (see §5). The exploiter can embed          availability is continuously observed. If the agent becomes un-
+these URLs into mutated prompts, thereby inducing the agent            responsive during the execution of a sink callsite, AgentDoS
+to process the files and trigger operations that incur substantial     flags the case as a potential DoS vulnerability.
+resource overhead. Our prompt is shown in PROMPT 4.
+                                                                          For each agent under test, we only need to manually identify
+                                                                       the API entry points through specific web-framework decora-
+
+USENIX Association                                                     35th USENIX Security Symposium 3999
+
+
+===== PAGE 11 / 21 =====
+
+tors (e.g., @route.post) and locate the agent’s startup function                      Finally, we manually inspected each application to verify that
+from its README. We then insert the prepared instrumentation                          it operated as a web service, which is required under the threat
+code into the corresponding function. This process needs to                           model described in §2.4. Among the 20 selected agents, 17
+be performed only once per agent and typically requires less                          have received more than 10,000 GitHub stars, and many have
+than ten minutes.                                                                     already been adopted in academic research [49, 50, 55, 60, 73].
+                                                                                      These characteristics highlight both the reliability and the rep-
+6 Evaluation                                                                          resentativeness of our dataset for the purposes of this study.
+                                                                                      Environment. For evaluation, we adopted GPT-4.1 [29] as
+6.1 Experimental Setup                                                                the base model for both AgentDoS and the tested agents, with
+                                                                                      the temperature fixed at 0 to ensure deterministic outputs. All
+Research Questions. Our evaluation seeks to answer the                                agents were deployed in their default configurations within
+following research questions.                                                         Docker containers [12]. To emulate adverse deployment con-
+                                                                                      ditions, we provisioned hardware resources through Docker,
+• RQ1: What are the purposes for which agents retain re-                              assigning only the minimum required by each agent. When
+  sources after a single chat?                                                        such requirements were not explicitly specified, we defaulted
+                                                                                      to 4 GB RAM, 10 GB disk, and a 64-core Intel CPU, con-
+• RQ2: How effective and efficient is AgentDoS at detecting                           sistent with Dify’s [11] minimum specifications. Meanwhile,
+  DoS vulnerabilities in real-world agents?                                           AgentDoS was executed on a separate machine equipped with
+                                                                                      a 64-core Intel CPU and 256 GB RAM.
+• RQ3: How does AgentDoS perform in comparison to state-
+  of-the-art approaches?                                                              6.2 RQ1: Purposes Understanding
+
+• RQ4: What is the contribution of each component of                                  In this phase, we perform analysis to understand the purposes
+  AgentDoS to its overall performance?                                                for which agents retain resources after a single chat.
+                                                                                      Experiment Setup. We executed the Vulnerable Operator
+Dataset. Our final dataset comprises 20 open-source LLM-                              Modeling component of AgentDoS on each agent in our
+based agents, with detailed information provided in Table 2.                          dataset. For each agent, we manually identified the APIs re-
+These agents were curated from popular open-source reposi-                            sponsible for handling individual chats and for deleting chat
+tories (e.g., GitHub [14]) by following the selection protocol:                       sessions. Subsequently, we randomly sampled 5% of the sink
+1) We first queried repositories using keywords such as “LLM                          call sites from each resource-lifecycle stage, executed the ap-
+Agent” and “Autonomous Agents”, ranking the results in de-                            plications, and used Python’s weakref module [31] to monitor
+scending order of star count. 2) We then verified that each                           the lifecycles of the specified resources in order to evaluate
+candidate application was actively maintained during 2025                             the accuracy of lifecycle identification. Then, we selected
+to ensure the inclusion of current and supported projects. 3)                         the five most well-known agent applications and, leveraging
+                                                                                      their comprehensive documentation, manually analyzed the
+              Table 2: Details of our dataset.                                        purposes of resources retained after a single conversation (i.e.,
+                                                                                      long-lived and full-lifecycle resources).
+Applications  Stars 1 LoCs 1 CVEs / Vulns # Potential Vuln. Operators 2               Accuracy. Overall, the Vulnerable Operator Modeling compo-
+                                                                                      nent ultimately identified 2025 potential vulnerable operators
+                                     S          L    F                                across the 20 agents. Among them, short-lived, long-lived,
+                                                                                      and full-lifecycle resources accounted for 77.3%, 14.1%, and
+AutoGPT       176k 81.5k    7/7      26         0    4                                8.6%, respectively. After manual verification, the lifecycle
+                                                                                      identification accuracy was 95.2%; most errors stemmed from
+Dify          104k 140k     0/1      259        7    4                                limitations in Python’s static analysis (e.g., unresolved indi-
+                                                                                      rect calls).
+LangFlow      81.4k 96.6k   0/4      123        49   2                                Purposes Understanding. We then spent approximately 12
+                                                                                      man-hours analyzing the purposes of resources associated
+RagFlow       60.1k 75.1k   0/2      235        40   5                                with 148 callsites in the five most well-known applications.
+                                                                                      This process was facilitated by the rich documentation pro-
+Autogen       46.4k 88.5k   0/1      75         23   14                               vided by these agents, as well as contextual information such
+                                                                                      as call chains extracted during static analysis, which helped re-
+Quivr         38.1k 6.1k    0/0      11         1    2                                duce the required manual effort. Specifically, ❶ for long-lived
+                                                                                      resources, we identified three primary usage patterns: 27.4%
+LangChatchat 35.3k 16.1k    0/2      18         3    5                                store the context of the current chat session, including user in-
+
+Khoj          30.4k 35.8k   0/1      52         3    0
+
+Kotaemon      22.7k 29.1k   0/1      67         1    10
+
+GPT-Researcher 22.1k 12.5k  0/3      30         7    9
+
+Owl           17.2k 15.2k   0/0      25         0    6
+
+MaxKB         16.9k 42.8k   0/1      80         15   7
+
+DB-GPT        16.8k 150.0k  0/1      202        46   40
+
+SuperAGI      16.4k 27.7k   3/3      48         17   4
+
+DeerFlow      15.5k 8.0k    0/1      5          0    1
+
+Chuanhu       15.4k 10.0k   0/1      18         18   3
+
+AgentZero     10.6k 15.2k   0/1      21         13   9
+
+Bisheng       9.0k 144.3k   0/0      217        23   27
+
+AgentScope    7.5k 53.4k    5/6      24         17   9
+
+Taskweaver    5.8k 16.4k    0/0      30         3    12
+
+Total         /  /          15 / 36  1566       286  173
+
+1 We use CodeTabs [9] to calculate repository stars and lines of code (LoCs).
+2 The number of detected potential vulnerable operator callsites, categorized by the
+
+  lifecycle of the resource they manage: Short-lived (S), Long-lived (L), and Full-
+  lifecycle (F).
+
+4000 35th USENIX Security Symposium                                                   USENIX Association
+
+
+===== PAGE 12 / 21 =====
+
+puts, LLM responses, and outputs from executed actions (e.g.,       Table 3: Comparison between AgentDoS and AgentFuzz.
+the result of a calculator operation). These records are later
+provided to the LLM in subsequent chats to maintain context         Baselines TP FP FN Prec(%) Recall(%)
+consistency. 35.9% also store session-related state informa-
+tion, such as execution traces indicating which components          AgentFuzz  3   0  35  100%  7.9%
+the agent has invoked. However, unlike agent memory, this                                 100%  94.7%
+data is not sent to the LLM in subsequent chats; instead, it        AgentDoS   36  0  2
+serves as operational logs for developers. 36.7% are used for
+initializing the chat session, such as setting the system prompt    negatives of AgentDoS, due to the lack of public ground truth
+and configuring the available tools. ❷ For full-lifecycle re-       and the scarcity of disclosed target vulnerabilities, we fol-
+sources, we found that 37.9% were associated with tools such        lowed prior work [49,81,82] and randomly sampled 103 (5%)
+as Request, which download files as instructed by the LLM           sink callsites that AgentDoS did not flag as vulnerable. We
+for subsequent conversational analysis. However, these files        then manually examined the corresponding source code to as-
+are never deleted after download, remaining in the system           sess its exploitability. After a thorough analysis, we classified
+indefinitely. The remaining 62.1% were intended for oper-           these sink callsites into four categories:
+ational purposes by developers, such as logging execution
+processes after each run.                                              ❶ 95.15% of sinks were uncontrollable by the user, mean-
+                                                                    ing they cannot be exploited via input prompts. To en-
+6.3 RQ2: Performance of AgentDoS                                    sure soundness and efficiency, our exploitability assessment
+                                                                    adopts intra-procedural tracking with over-approximation;
+In this phase, we evaluated the effectiveness and efficiency of     thus, some non-exploitable sinks may still pass the assess-
+AgentDoS in detecting vulnerabilities across the dataset.           ment. ❷ 0.97% were rendered non-exploitable due to the
+Experiment Setup. We executed AgentDoS on each agent in             maximum context window length of the underlying LLM.
+our dataset. For every agent, we manually instrumented the          When the combined conversation history and user request
+code and designated the web API receiving input prompts             exceed this limit [29], the session cannot proceed, preventing
+as the entry point for AgentDoS. We imposed a 20-minute             exploitation of the sink callsite. ❸ 1.94% of the vulnerabil-
+time limit for testing each sink callsite. To further improve       ities are impractical to exploit in real-world settings due to
+efficiency, AgentDoS skips subsequent testing of a sink call-       input size limitations, which prevent the attack from complet-
+site if it has not been triggered within the past three minutes     ing within a feasible time frame. For example, in RAGFlow,
+or if recent resource usage remains below a specified thresh-       a sink simply stores LLM outputs. Given that the output
+old—namely, for short-lived resources, if the per-chat increase     size of an LLM under normal requests is limited (approxi-
+in resource consumption over three minutes is less than 20          mately 2 KB [38]), exploiting this sink would require over 24
+MB, and for other resource lifecycles, if the cumulative usage      hours of continuous operation—far exceeding our 20-minute
+increase during this period is below 20 MB.                         per-callsite testing window. ❹ 1.94% of them were truly vul-
+Effectiveness. Overall, AgentDoS discovered 36 zero-day vul-        nerable but were missed by AgentDoS. These vulnerabilities
+nerabilities (detailed in Table 2), with a precision rate of 100%.  require more sophisticated payloads to bypass existing safe-
+We promptly reported all confirmed issues to the respective         guards. For example, SuperAGI (16.4k stars on GitHub) al-
+developers. To date, 15 CVE identifiers have been assigned          lows users to download files into a specific working directory.
+(detailed in Appendix C).                                           By default, all files in this directory are deleted after each chat
+Efficiency. The fuzzing process consumed 119.08 CPU hours           session. However, if the filename is crafted as ../../xxx, a
+across the 20 agent applications, averaging 5.95 hours per          path traversal occurs, causing the concatenated storage path
+agent. The Seed Prompt Generation, Scheduling, and Muta-            to escape the working directory constraint. Downloaded con-
+tion phases accounted for 17.1%, 14.2%, and 68.6% of the            tent can persist on disk across sessions, eventually leading to
+total runtime, respectively. Among them, Seed Mutation was          resource exhaustion.
+the most time-consuming phase due to its extensive inter-
+actions with both the tested agent and the LLM, which sig-          6.4 RQ3: Comparison with AgentFuzz
+nificantly increased execution time. Regarding LLM usage,
+AgentDoS consumed an average of 9.32 million tokens per             To assess the effectiveness of our approach, we compare
+agent, with the estimated cost being 44.3$, based on GPT-4.1        AgentDoS with AgentFuzz [49], the only existing tool capa-
+token pricing as of August 2025 [30].                               ble of dynamically uncovering vulnerabilities in LLM-based
+False Positive/Negative Analysis. After manually reviewing          agents, on the entire dataset.
+each report, we confirmed that all 36 vulnerabilities were true     Baseline Setup. We followed the instructions in the open-
+positives. This exceptional precision is primarily attributed to    source repository of AgentFuzz [27] to set up the prototype
+the robustness of our bug oracle. Regarding the potential false     and conduct vulnerability detection. AgentFuzz locates sink
+                                                                    callsites and iteratively mutates prompts, issuing each in a
+                                                                    new chat session until the sink is reached. For a fair com-
+
+USENIX Association                                                             35th USENIX Security Symposium 4001
+
+
+===== PAGE 13 / 21 =====
+
+Table 4: Result of ablation study.                      • w/o Mutation: Both mutators were disabled, and vulnera-
+                                                                    bility detection relied exclusively on the initial seeds.
+Variants  TP FP FN Prec(%) Recall(%)
+                                                                  Module Contribution Analysis. Table 4 presents a detailed
+w/o Generation 31  0  7   100%                81.6%               comparison between AgentDoS and its three variants. The
+                          100%                65.7%               results are analyzed as follows.
+w/o Scheduling 25  0  13  100%                42.1%
+                          100%                94.7%                  Usefulness of Seed Generation. The w/o Generation variant
+w/o Mutation 16    0  22                                          missed 7 vulnerabilities, resulting in a recall rate drop to
+                                                                  81.6%. This decline indicates that the w/o Geneartion variant
+AgentDoS  36       0  2                                           is unable to generate functionality-specific seeds expressed in
+                                                                  natural language. Although the subsequent mutator attempts
+parison, we replaced the sink callsites with the potentially      to mutate the semantic content of the prompts, this variant still
+vulnerable operators identified by our approach and used our      fails to produce prompts that can reach the sink and trigger
+oracle to determine whether a vulnerability was triggered,        DoS behavior within a limited timeframe.
+while keeping all other components unchanged.
+Benchmark Setup. Given the absence of a public benchmark,            Usefulness of Seed Scheduling. The w/o Scheduling vari-
+we constructed one by aggregating all vulnerabilities detected    ant missed 9 vulnerabilities, resulting in a recall rate drop
+by both AgentDoS and AgentFuzz, along with two missing            to 65.7%. The missed vulnerabilities stem from the random
+vulnerabilities identified during false negative analysis. In     seed selection strategy used in the w/o Scheduling variant,
+total, the benchmark consists of 38 verified vulnerabilities.     which failed to prioritize high-quality seeds and instead re-
+Result Overview. Table 3 presents a detailed comparison           peatedly mutated low-potential ones. This inefficient mutation
+of the efficacy of AgentDoS and AgentFuzz across the entire       process wasted time, ultimately leading to timeouts. These
+dataset. Overall, AgentDoS exhibits significantly stronger per-   findings highlight the importance of our scheduling strategy
+formance, achieving a twelvefold improvement in recall and        in improving fuzzing efficiency.
+identifying twelve times more vulnerabilities compared to
+AgentFuzz. Specifically, when evaluated against the ground           Usefulness of Seed Mutation. Without the mutation mod-
+truth, AgentDoS successfully identifies 36 vulnerabilities. In    ule, w/o Mutation variant can only rely on simpler and lower-
+contrast, AgentFuzz detects only 3 vulnerabilities, all of        quality initial seeds to trigger vulnerabilities. In many cases,
+which are a subset of those discovered by AgentDoS. These         these initial seed prompts fail to even reach the vulnerable
+results underscore the superior capability of AgentDoS.           component, let alone trigger significant resource consumption.
+False Negatives in AgentFuzz. For the 35 false negatives,         This makes it difficult to uncover vulnerabilities that require
+AgentFuzz missed them primarily for two reasons. First, 5 of      a single prompt to exhaust resources. Moreover, for vulner-
+them were caused by the lack of resource lifecycle modeling:      abilities that depend on cumulative resource exhaustion, the
+AgentFuzz issues each prompt in a new chat session and there-     resource usage of a single prompt may be too minimal to
+fore cannot accumulate long-lived resources across interac-       cause substantial accumulation within a limited timeframe,
+tions. Second, the remaining 30 cases stem from the absence       making it challenging to induce DoS behavior.
+of an evaluation mechanism for the resource-consumption
+potential of prompts and the lack of semantic mutations that      7 Case Study
+induce high resource usage. As a result, although the gen-
+erated prompts reach the sink, they fail to make the agent        We showcase two real-world DoS vulnerabilities to highlight
+consume sufficient resources to trigger a DoS condition.          AgentDoS ’s practical effectiveness.
+                                                                  Case I: Short-lived Resource DoS Vulnerability in L** Agent
+6.5 RQ4: Ablation Study                                           Application. L** is a widely used agent application with over
+                                                                  80k GitHub stars [14] (name anonymized for ethical reasons).
+Experiment Setup. We conducted an ablation study to inves-        As shown in Figure 4 of Appendix B, the agent iterates over
+tigate the contribution of each key component of AgentDoS.        all LLM-generated URLs (line 4), fetches each (line 5), and
+Specifically, we designed three variants of AgentDoS, each        loads the retrieved content into memory (line 6), repeating
+disabling one core component while retaining the rest of the      the process even for identical content. Since all_docs is a
+system. We evaluated all variants on the same dataset and         local variable, its contents are freed by the GC at function
+assessed their effectiveness based on the number of vulnera-      termination and thus considered short-lived resources. How-
+bilities they were able to identify. The details are as follows:  ever, an attacker can repeatedly request the same large file
+                                                                  within a single chat (i.e., load website http://large_file.html
+• w/o Generation: The Seed Generation module was re-              1000 times). In this case, the agent repeatedly accesses the file
+  moved, and the predefined prompts provided by LLM-              until memory resources are exhausted, thereby triggering a
+  Smith [50] were directly used as initial seeds.                 DoS condition. We reported the issue to the developers, who
+                                                                  confirmed the vulnerability.
+• w/o Scheduling: The Seed Scheduling module was disabled,
+  and seeds were randomly sampled from the seed pool.
+
+4002 35th USENIX Security Symposium                               USENIX Association
+
+
+===== PAGE 14 / 21 =====
+
+Case II: Long-lived Resource DoS Vulnerability in L* Agent         applicable to memory or disk resource exhaustion in LLM-
+Application. L* is a popular agent application with over 35k       based agent systems. Although a few studies have explored
+GitHub stars [14]. As shown in Figure 5 of Appendix B, upon        memory exhaustion [36, 47, 48, 81] and memory leak is-
+each LLM interaction, the agent sends the latest k developer-      sues [34, 37, 65, 71], they generally do not involve the genera-
+defined records (default: 0) to preserve context (lines 3-4),      tion of semantically valid prompts, nor do they consider the
+executes the requested tool (line 5), in this example, DBSearch    lifecycles of resources managed by agents. As a result, these
+performing a select * from table query, and appends the            methods often suffer from high false negative rates when
+user input, LLM plan, and tool output to an in-memory buffer       applied in the context of agents.
+(self.history, line 6). The buffer is cleared when the ses-
+sion ends, so it is considered as a long-lived resource. An        9 Discussion
+attacker can repeat conversations in a chat session, eventu-
+ally causing history to consume too much memory, resulting         The Stealthiness of Resource Exhaustion Vulnerability
+in a DoS. Because chat history is not sent to the LLM by           Attacks in Agents. ❶ Lack of overtly malicious actions. Un-
+default, the model’s context limit is never reached, allowing      like RCE or SQL injection vulnerabilities, which typically
+unbounded growth. We disclosed the issue to the developers,        involve explicit malicious intent (e.g., executing system calls
+who confirmed the vulnerability.                                   or deleting databases), resource abuse often resembles benign
+                                                                   user requests and usually lacks overtly malicious actions (e.g.,
+8 Related Work                                                     merely downloading a file for summarization). Some security-
+                                                                   conscious developers explicitly instruct the agent, via its sys-
+Vulnerability Detection of LLM-based Agents. DoS vul-              tem prompt, to re-check any code before execution to intercept
+nerabilities caused by resource exhaustion represent a sig-        malicious intent. Consequently, existing attacks [50, 56] often
+nificant threat to the security and reliability of agent-based     require techniques such as prompt injection [51] to hijack the
+systems. However, to the best of our knowledge, no prior           LLM’s responses. However, triggering large-scale resource
+work has specifically examined resource exhaustion issues          exhaustion lacks such explicit malicious features and there-
+in LLM-based agents. The most closely related studies, such        fore can succeed without relying on such advanced techniques.
+as Corba [86] and Breaking Agents [80], focus on mislead-          ❷ Attack Re-delegation. An attacker can re-delegate the ma-
+ing agents into performing repetitive or irrelevant actions,       licious role to a benign user. Specifically, the attacker first
+rather than exposing or analyzing resource exhaustion vulner-      consumes a large portion of the agent’s resources, bringing
+abilities within agent implementations. Other existing works       usage just below the upper limit. When a benign user sub-
+primarily investigate security issues such as taint-style vulner-  sequently interacts with the agent, their legitimate resource
+abilities [49, 50, 56], prompt leakage [41, 57, 58], jailbreaking  consumption easily exceeds the limit, causing agent failures.
+[35, 61, 75, 77], and prompt injection [39, 51, 79]. All of them   From the maintainer’s perspective, the resulting DoS appears
+represent fundamentally different vulnerability patterns.          to be caused by the benign user, effectively obscuring the true
+DoS Vulnerability of LLM. Recent studies [38, 43, 76, 83]          source of the attack.
+have explored DoS attacks that increase inference latency in       Resource Management Challenge in Agents. Through in-
+LLMs, thereby reducing the availability of LLM services to         depth code analysis and active communication with develop-
+other users. These approaches typically generate adversarial       ers, we find that balancing security and availability remains a
+inputs, such as misspelled words or non-semantic prompts,          major challenge. Modern LLM-based agents increasingly em-
+that cause the model to produce excessively long outputs.          phasize the ability to autonomously perform complex tasks,
+However, such attacks mainly target resource consumption           which often involves generating and managing large inter-
+during LLM inference, whereas our work focuses on resource         mediate data in memory or on disk. For instance, an agent
+exhaustion within the agent implementation layer. Moreover,        performing a literature review may need to download nu-
+agents usually rely on LLMs hosted by third-party providers        merous papers to local storage. While resource limits can
+(e.g., OpenAI [22]), which implement robust resource man-          mitigate exhaustion, they may also hinder task completion
+agement and isolation mechanisms. Consequently, attacks            by preventing necessary downloads. In addition, unlike tradi-
+that exploit LLM-level resource consumption are unlikely to        tional software systems with fixed business logic, LLM-based
+significantly impact the availability of agents for other users.   agents autonomously decide which contextual information to
+DoS Vulnerability Detection in Traditional Applications.           use in subsequent tasks. As a result, developers find it difficult
+DoS attacks resulting from unbounded resource consump-             to predict which allocated resources will no longer be needed
+tion have attracted considerable attention in recent years [66].   and therefore tend to preserve as much context as possible,
+However, most existing work primarily targets CPU resource         thereby increasing the risk of resource abuse.
+exhaustion, such as Regular Expression Denial of Service           Mitigation. After communicating with developers, we found
+(ReDoS) [46, 52, 63, 64, 69] and algorithmic complexity (AC)       that developers typically adopt mitigation strategies such as
+vulnerabilities [44, 45, 53, 54, 59, 78], which are not directly   stricter input validation, size limitations, timeout mechanisms,
+
+USENIX Association                                                 35th USENIX Security Symposium 4003
+
+
+===== PAGE 15 / 21 =====
+
+and resource quotas to address resource-exhaustion vulner-       ing author. Xudong Pan is supported by the Chenguang Pro-
+abilities. For example, for the vulnerability we identified in   gram of Shanghai Education Development Foundation and
+AutoGPT, which allowed users to download arbitrary files         Shanghai Municipal Education Commission. Yuan Zhang was
+and led to disk resource exhaustion, the project now enforces    supported in part by the Shanghai Pilot Program for Basic
+a per-download file size limit of 100 MB, a 1 GB limit per       Research - FuDan University 21TQ1400100 (21TQ012).
+execution directory, and automatic deletion of the execution
+directory after task completion [19]. These mitigations are ef-  Ethical Considerations
+fective in addressing resource-exhaustion vulnerabilities. Ad-
+ditionally, we identify several potential defense mechanisms.    Vulnerability Disclosure. We promptly reported all vulnera-
+First, resource limits should be set according to the intended   bilities discovered and have strictly adhered to the disclosure
+use cases and operational context, complemented by dedu-         timeline established by the relevant CVE Numbering Author-
+plication mechanisms to restrict the volume of retained data     ities (CNA). Throughout the process, we maintained active
+and control overall resource consumption. Second, systems        and responsible communication with the developers of the
+should continuously monitor resource usage and, upon de-         affected projects and provided assistance in the remediation
+tecting abnormal patterns, issue alerts or temporarily suspend   of the identified vulnerabilities. Although some issues were
+storage operations, thereby enabling timely administrative       still undergoing mitigation at the time of paper submission,
+intervention and ensuring service availability.                  we intentionally omitted all sensitive or identifying details
+Limitations. As noted in §2.4, AgentDoS requires source          related to the vulnerabilities. Additionally, all vulnerabilities
+code access and therefore cannot be directly applied in black-   and affected applications have been fully anonymized. Con-
+box commercial agents (e.g. OpenAI’s GPTs, or agents on          sequently, the publication of this paper does not pose any risk
+platforms like Coze). Nevertheless, the underlying resource-     to end users or real-world systems.
+consumption-guided fuzzing methodology can be adapted            Stakeholders. The primary stakeholders in this research in-
+for black-box testing when feedback on resource usage is         clude developers and end-users of LLM-based agents. ❶ For
+available, for example, through response latency or other side-  users, a resource exhaustion attack can severely degrade their
+channel signals.                                                 interaction experience with the system. Such attacks may
+                                                                 cause significant response delays, unresponsiveness, or even
+10 Conclusion                                                    complete service unavailability, preventing users from access-
+                                                                 ing the intended functionalities. In addition, ongoing tasks
+In this work, we present the first systematic security study     may be interrupted, leading to data loss or incomplete oper-
+of resource management in LLM-based agents. We identify          ations. ❷ For developers, resource exhaustion attacks pose
+three representative patterns of resource lifecycle manage-      both operational and financial risks. When attackers consume
+ment, each enabling distinct avenues for DoS exploitation. To    excessive storage resources, legitimate requests can no longer
+address this threat, we propose AgentDoS, a directed grey-box    be processed, leading to service outages and potential rev-
+fuzzing framework, and evaluate it on 20 real-world agent        enue loss. Developers must then spend additional effort on
+applications. Our results show that AgentDoS uncovered 36        system recovery, vulnerability mitigation, and resource isola-
+high-risk zero-day vulnerabilities affecting 16 applications,    tion, which increases maintenance costs. Moreover, repeated
+15 of which have over 10,000 stars on GitHub. To date, 15 of     availability incidents can harm the developer’s or organisa-
+these vulnerabilities have already been assigned CVE identi-     tion’s reputation and may expose them to compliance or legal
+fiers. We believe that AgentDoS not only advances the security   scrutiny if critical services are affected. In this work, we aim
+analysis of LLM-based agents but also offers actionable in-      to assist researchers and developers in identifying and miti-
+sights for practitioners seeking to mitigate the growing risks   gating resource exhaustion vulnerabilities in these systems,
+posed by agent vulnerabilities.                                  thereby enhancing their robustness and security. This work
+                                                                 contributes to the broader goal of building more reliable and
+Acknowledgement                                                  resilient agent-based applications.
+                                                                 Potential Impact. Throughout the entire experimental pro-
+We would like to thank the anonymous reviewers for their         cess, we adhered to the principles of Beneficence and Respect
+insightful comments that helped improve the quality of the       for Law and Public Interest as outlined in the Belmont Report.
+paper. This work was supported in part by the National Key       All agent systems used in our experiments were open-source
+Research and Development Program of China under grant            projects, which were downloaded and deployed within a fully
+No. 2024YFF0618800, the National Natural Science Founda-         local testing environment. At no point did our activities inter-
+tion of China (U2436207, 62172105, 62402116, 62402114),          act with, or exert any influence on, real-world systems or user
+and the research funding of Shanghai Municipal Education         data. Consequently, this research does not pose any tangible
+Commission (24KXZNA08). Jiarun Dai is the correspond-            harm or violations of human rights.
+                                                                 Dual Use. On the beneficial side, developers can use
+
+4004 35th USENIX Security Symposium                              USENIX Association
+
+
+===== PAGE 16 / 21 =====
+
+AgentDoS to assess whether their agent applications contain       the AgentDoS prototype will be conditionally available [26]
+DoS vulnerabilities, thereby significantly improving the se-      only to qualified researchers who complete the formal request
+curity of agent systems. We also acknowledge the risk that        and review process.
+malicious actors could misuse AgentDoS to bypass existing
+defense mechanisms and introduce new security threats. How-       References
+ever, because AgentDoS requires access to agent source code,
+its potential for misuse against closed-source commercial          [1] American Fuzzy Lop. https://github.com/googl
+agent services is limited. Nevertheless, we take steps to mini-         e/AFL/.
+mize the risk of misuse: AgentDoS will be made conditionally
+available only to researchers who submit a formal request,         [2] API Platform OpenAI. https://openai.com/api/.
+provide evidence of their qualifications, and are approved
+through our review process. This controlled access model           [3] Autogpt on Github. https://github.com/Signifi
+aims to prevent misuse while promoting legitimate research              cant-Gravitas/AutoGPT.
+in the academic field of agent security.
+Mitigations. Our communication with developers reveals             [4] Baseline and Datasets of AgentDoS. https://zeno
+that existing mitigation strategies primarily rely on input val-        do.org/records/18242998.
+idation, size constraints, timeout mechanisms, and resource
+quota limitations. These approaches have demonstrated prac-        [5] BeautifulSoup Document. https://tedboy.github.
+tical effectiveness in preventing adversaries from exhausting           io/bs4_doc/11_parsing_parts_of_doc.html.
+the computational resources of agent servers and represent
+broadly applicable defense mechanisms. Meanwhile, we con-          [6] BeautifulSoup Document. https://www.crummy.com
+tinue to collaborate with developers to explore more advanced           /software/BeautifulSoup/bs4/doc/.
+mitigation strategies.
+Articulating Decision. In alignment with the Beneficence           [7] BeautifulSoup Mmemory Issue. https://stackove
+principle outlined in The Menlo Report and the ethical con-             rflow.com/questions/11284643/.
+siderations discussed in existing work [42], we believe that
+our work makes a positive ethical contribution. Specifically,      [8] BeautifulSoup Mmemory Issue. https://stackove
+the AgentDoS framework is designed to assist the research               rflow.com/questions/18851498/.
+community in strengthening the robustness and security of ex-
+isting LLM-based agents, thereby promoting the development         [9] CodeTabs. https://codetabs.com/.
+of more trustworthy, resilient, and ethically grounded agent-
+based systems. All identified vulnerabilities were responsibly    [10] Coze. https://www.coze.com/.
+reported, and we have strictly followed the disclosure time-
+lines established by the relevant CNAs. To prevent potential      [11] Dify on Github. https://github.com/langgenius/
+misuse, all sensitive or identifying details have been inten-           dify.
+tionally omitted, and both the vulnerabilities and affected
+applications have been fully anonymized. Furthermore, all         [12] Docker. https://www.docker.com/.
+experiments were conducted in isolated local environments,
+without any interaction or impact on real-world systems or        [13] Garbage Collector interface. https://docs.python.
+user data. We therefore affirm that this research and its publi-        org/3/library/gc.html.
+cation pose no risk to end users or operational systems.
+                                                                  [14] Github. https://github.com/.
+Open Science
+                                                                  [15] GPT Store. https://openai.com/index/introdu
+To promote transparency and reproducibility, and in align-              cing-the-gpt-store/.
+ment with the principles of open science, we will make our
+research artifacts publicly accessible. Certain materials will    [16] Inspect library of Python. https://docs.python.or
+be conditionally available only to researchers who submit a             g/3.13/library/inspect.html.
+formal request, provide evidence of their qualifications, and
+obtain approval through our review process. Specifically, (1)     [17] Langflow. https://github.com/langflow-ai/la
+the set of 20 agent applications employed in our experiments            ngflow/.
+and (2) the baseline implementations prepared for compara-
+tive evaluation will be released as open-access resources [4].    [18] Manus. https://manus.im/.
+In contrast, (3) for ethical considerations, the source code of
+                                                                  [19] Mitigation of AutoGPT. https://github.com/S
+                                                                        ignificant-Gravitas/AutoGPT/commit/57a06f
+                                                                        70883ce6be18738c6ae8bb41085c71e266/.
+
+                                                                  [20] Office Python Document. https://docs.python.or
+                                                                        g/3/.
+
+USENIX Association                                                35th USENIX Security Symposium 4005
+
+
+===== PAGE 17 / 21 =====
+
+[21] Official Website of BeautifulSoup. https://www.cr                Unveil memory exhaustion dos vulnerabilities in proto-
+      ummy.com/software/BeautifulSoup/.                               col implementations. In Proceedings of the ACM Web
+                                                                      Conference 2024, pages 1668–1679, 2024.
+[22] OpenAI. https://openai.com/.
+                                                                [37] Gang Fan, Rongxin Wu, Qingkai Shi, Xiao Xiao, Jin-
+[23] Parsel Memory Issue. https://github.com/scrap                    guo Zhou, and Charles Zhang. Smoke: scalable path-
+      y/parsel/issues/210/.                                           sensitive memory leak detection for millions of lines of
+                                                                      code. In 2019 IEEE/ACM 41st International Conference
+[24] Psutil library of Python. https://github.com/gia                 on Software Engineering (ICSE), pages 72–82. IEEE,
+      mpaolo/psutil/.                                                 2019.
+
+[25] SARIF of CodeQL. https://docs.github.com/en                [38] Kuofeng Gao, Tianyu Pang, Chao Du, Yong Yang, Shu-
+      /code-security/codeql-cli/using-the-advance                     Tao Xia, and Min Lin. Denial-of-service poisoning
+      d-functionality-of-the-codeql-cli/sarif-out                     attacks against large language models. arXiv preprint
+      put#about-sarif-output.                                         arXiv:2410.10760, 2024.
+
+[26] Source of AgentDoS. https://zenodo.org/recor               [39] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra,
+      ds/18091114.                                                    Christoph Endres, Thorsten Holz, and Mario Fritz. Not
+                                                                      what you’ve signed up for: Compromising real-world
+[27] Source of AgentFuzz. https://zenodo.org/recor                    llm-integrated applications with indirect prompt injec-
+      ds/15590097.                                                    tion. In Proceedings of the 16th ACM Workshop on
+                                                                      Artificial Intelligence and Security, pages 79–90, 2023.
+[28] The Official Website of CodeQL in Github. https:
+      //codeql.github.com/.                                     [40] Xiangyu Guo, Akshay Kawlay, Eric Liu, and David Lie.
+                                                                      EvoCrawl: Exploring Web application code and state us-
+[29] The Official Website of GPT-4.1. https://platform                ing evolutionary search. In The Network and Distributed
+      .openai.com/docs/models/gpt-4.1/.                               System Security Symposium (NDSS), San Diego, Cali-
+                                                                      fornia, February 2025.
+[30] The Price of GPT-4.1. https://openai.com/api/p
+      ricing/.                                                  [41] Bo Hui, Haolin Yuan, Neil Gong, Philippe Burlina, and
+                                                                      Yinzhi Cao. Pleak: Prompt leaking attacks against large
+[31] Weakref library of Python. https://docs.python.                  language model applications. In Proceedings of the
+      org/3/library/weakref.html/.                                    2024 on ACM SIGSAC Conference on Computer and
+                                                                      Communications Security, pages 3600–3614, 2024.
+[32] Xmltodic Memory Issue. https://stackoverflow.
+      com/questions/63656058/.                                  [42] Tadayoshi Kohno, Yasemin Acar, and Wulf Loh. Ethi-
+                                                                      cal frameworks and computer security trolley problems:
+[33] Marcel Böhme, Van-Thuan Pham, Manh-Dung Nguyen,                  Foundations for conversations. In 32nd USENIX Se-
+      and Abhik Roychoudhury. Directed greybox fuzzing. In            curity Symposium (USENIX Security 23), pages 5145–
+      Proc. ACM SIGSAC Conference on Computer and Com-                5162, 2023.
+      munications Security (CCS), pages 2329–2344, Dallas
+      Texas, USA, October 2017.                                 [43] Abhinav Kumar, Jaechul Roh, Ali Naseh, Marzena
+                                                                      Karpinska, Mohit Iyyer, Amir Houmansadr, and Eugene
+[34] Sicong Cao, Xiaobing Sun, Lili Bo, Rongxin Wu, Bin Li,           Bagdasarian. Overthink: Slowdown attacks on reason-
+      and Chuanqi Tao. Mvd: memory-related vulnerability              ing llms. arXiv e-prints, pages arXiv–2502, 2025.
+      detection based on flow-sensitive graph neural networks.
+      In Proceedings of the 44th international conference on    [44] Caroline Lemieux, Rohan Padhye, Koushik Sen, and
+      software engineering, pages 1456–1468, 2022.                    Dawn Song. Perffuzz: Automatically generating patho-
+                                                                      logical inputs. In Proceedings of the 27th ACM SIG-
+[35] Patrick Chao, Edoardo Debenedetti, Alexander Robey,              SOFT international symposium on software testing and
+      Maksym Andriushchenko, Francesco Croce, Vikash Se-              analysis, pages 254–265, 2018.
+      hwag, Edgar Dobriban, Nicolas Flammarion, George J
+      Pappas, Florian Tramer, et al. Jailbreakbench: An open    [45] Penghui Li, Yinxi Liu, and Wei Meng. Understanding
+      robustness benchmark for jailbreaking large language            and detecting performance bugs in markdown compilers.
+      models. arXiv preprint arXiv:2404.01318, 2024.                  In 2021 36th IEEE/ACM International Conference on
+                                                                      Automated Software Engineering (ASE), pages 892–904.
+[36] Zhengjie Du, Yuekang Li, Yaowen Zheng, Xiaohan                   IEEE, 2021.
+      Zhang, Cen Zhang, Yi Liu, Sheikh Mahbub Habib,
+      Xinghua Li, Linzhang Wang, Yang Liu, et al. Medusa:
+
+4006 35th USENIX Security Symposium                             USENIX Association
+
+
+===== PAGE 18 / 21 =====
+
+[46] Yeting Li, Zixuan Chen, Jialun Cao, Zhiwu Xu,                [55] Yin Minn Pa Pa, Shunsuke Tanizaki, Tetsui Kou, Michel
+      Qiancheng Peng, Haiming Chen, Liyuan Chen, and                    Van Eeten, Katsunari Yoshioka, and Tsutomu Mat-
+      Shing-Chi Cheung. {ReDoSHunter}: A combined static                sumoto. An attacker’s dream? exploring the capabilities
+      and dynamic approach for regular expression {DoS} de-             of chatgpt for developing malware. In Proceedings of
+      tection. In 30th USENIX Security Symposium (USENIX                the 16th cyber security experimentation and test work-
+      Security 21), pages 3847–3864, 2021.                              shop, pages 10–18, 2023.
+
+[47] Keke Lian, Lei Zhang, Guangliang Yang, Shuo Mao,             [56] Rodrigo Pedro, Miguel E Coimbra, Daniel Castro, Paulo
+      Xinjie Wang, Yuan Zhang, and Min Yang. Component                  Carreira, and Nuno Santos. Prompt-to-sql injections in
+      security ten years later: An empirical study of cross-            llm-integrated web applications: Risks and defenses. In
+      layer threats in real-world mobile applications. Proceed-         2025 IEEE/ACM 47th International Conference on Soft-
+      ings of the ACM on Software Engineering, 1(FSE):70–               ware Engineering (ICSE), pages 76–88. IEEE Computer
+      91, 2024.                                                         Society, 2024.
+
+[48] Keke Lian, Lei Zhang, Haoran Zhao, Yinzhi Cao,               [57] Yu Peng, Lijie Zhang, Peizhuo Lv, and Kai Chen. Re-
+      Yongheng Liu, Fute Sun, Yuan Zhang, and Min Yang.                 peatleakage: Leak prompts from repeating as large lan-
+      Careless Retention and Management: Understanding                  guage model is a good repeater. In Proceedings of the
+      and detecting data retention denial-of-service vulnerabil-        AAAI Conference on Artificial Intelligence, volume 39,
+      ities in java web containers. In Proc. USENIX Security            pages 26335–26343, 2025.
+      Symposium (USENIX), Seattle, WA, USA, August 2025.
+                                                                  [58] Fábio Perez and Ian Ribeiro. Ignore previous prompt:
+[49] Fengyu Liu, Yuan Zhang, Jiaqi Luo, Jiarun Dai, Tian                Attack techniques for language models. arXiv preprint
+      Chen, Letian Yuan, Zhengmin Yu, Youkun Shi, Ke Li,                arXiv:2211.09527, 2022.
+      Chengyuan Zhou, et al. Make Agent Defeat Agent:
+      Automatic detection of taint-style vulnerabilities in llm-  [59] Theofilos Petsios, Jason Zhao, Angelos D Keromytis,
+      based agents. In Proc. USENIX Security Symposium                  and Suman Jana. Slowfuzz: Automated domain-
+      (USENIX), Seattle, WA, USA, August 2025.                          independent detection of algorithmic complexity vul-
+                                                                        nerabilities. In Proceedings of the 2017 ACM SIGSAC
+[50] Tong Liu, Zizhuang Deng, Guozhu Meng, Yuekang Li,                  conference on computer and communications security,
+      and Kai Chen. Demystifying rce vulnerabilities in llm-            pages 2155–2168, 2017.
+      integrated apps. In Proceedings of the 2024 on ACM
+      SIGSAC Conference on Computer and Communications            [60] Yuxiao Qu, Tianjun Zhang, Naman Garg, and Aviral
+      Security, pages 1716–1730, 2024.                                  Kumar. Recursive introspection: Teaching language
+                                                                        model agents how to self-improve. Advances in Neu-
+[51] Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Zihao                ral Information Processing Systems, 37:55249–55285,
+      Wang, Xiaofeng Wang, Tianwei Zhang, Yepang Liu,                   2024.
+      Haoyu Wang, Yan Zheng, et al. Prompt injection at-
+      tack against llm-integrated applications. arXiv preprint    [61] Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen,
+      arXiv:2306.05499, 2023.                                           and Yang Zhang. " do anything now": Characterizing
+                                                                        and evaluating in-the-wild jailbreak prompts on large
+[52] Yinxi Liu, Mingxue Zhang, and Wei Meng. Revealer:                  language models. In Proceedings of the 2024 on ACM
+      Detecting and exploiting regular expression denial-of-            SIGSAC Conference on Computer and Communications
+      service vulnerabilities. In 2021 IEEE Symposium on Se-            Security, pages 1671–1685, 2024.
+      curity and Privacy (SP), pages 1468–1484. IEEE, 2021.
+                                                                  [62] Noah Shinn, Federico Cassano, Ashwin Gopinath,
+[53] Wei Meng, Chenxiong Qian, Shuang Hao, Kevin Bor-                   Karthik Narasimhan, and Shunyu Yao. Reflexion:
+      golte, Giovanni Vigna, Christopher Kruegel, and Wenke             Language agents with verbal reinforcement learning.
+      Lee. Rampart: Protecting web applications from                    Advances in Neural Information Processing Systems,
+      {CPU-Exhaustion}{Denial-of-Service} attacks. In 27th              36:8634–8652, 2023.
+      USENIX Security Symposium (USENIX Security 18),
+      pages 393–410, 2018.                                        [63] Cristian-Alexandru Staicu and Michael Pradel. Freez-
+                                                                        ing the web: a study of {ReDoS} vulnerabilities in
+[54] Yannic Noller, Rody Kersten, and Corina S Pa˘sa˘reanu.             JavaScript-based} web servers. In 27th USENIX secu-
+      Badger: complexity analysis with fuzzing and symbolic             rity symposium (USENIX Security 18), pages 361–376,
+      execution. In Proceedings of the 27th ACM SIGSOFT in-             2018.
+      ternational symposium on software testing and analysis,
+      pages 322–332, 2018.
+
+USENIX Association                                                35th USENIX Security Symposium 4007
+
+
+===== PAGE 19 / 21 =====
+
+[64] Weihao Su, Hong Huang, Rongchen Li, Haiming Chen,               Zhang, Jianshan He, Hongyang Zhang, et al. Demonstra-
+      and Tingjian Ge. Towards an effective method of                tion of db-gpt: Next generation data interaction system
+      {ReDoS} detection for non-backtracking engines. In             empowered by large language models. arXiv preprint
+      33rd USENIX Security Symposium (USENIX Security                arXiv:2404.10209, 2024.
+      24), pages 271–288, 2024.
+                                                               [74] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+[65] Keita Suzuki, Takafumi Kubota, and Kenji Kono. De-              Shafran, Karthik Narasimhan, and Yuan Cao. React:
+      tecting struct member-related memory leaks using error         Synergizing reasoning and acting in language models.
+      code analysis in linux kernel. In 2020 IEEE Interna-           In International Conference on Learning Representa-
+      tional Symposium on Software Reliability Engineering           tions (ICLR), 2023.
+      Workshops (ISSREW), pages 329–335. IEEE, 2020.
+                                                               [75] Jiahao Yu, Xingwei Lin, Zheng Yu, and Xinyu Xing.
+[66] Nikhil Tripathi and Neminath Hubballi. Application              {LLM-Fuzzer}: Scaling assessment of large language
+      layer denial-of-service attacks and defense mechanisms:        model jailbreaks. In 33rd USENIX Security Symposium
+      A survey. ACM Computing Surveys (CSUR), 54(4):1–33,            (USENIX Security 24), pages 4657–4674, 2024.
+      2021.
+                                                               [76] Junzhe Yu, Yi Liu, Huijia Sun, Ling Shi, and Yuqi Chen.
+[67] Oriol Vinyals, Charles Blundell, Timothy Lillicrap, ko-         Breaking the loop: Detecting and mitigating denial-of-
+      ray kavukcuoglu, and Daan Wierstra. Matching net-              service vulnerabilities in large language models. arXiv
+      works for one shot learning. In Advances in Neural             preprint arXiv:2503.00416, 2025.
+      Information Processing Systems (NeurlIPS), volume 29,
+      December 2016.                                           [77] Zhiyuan Yu, Xiaogeng Liu, Shunning Liang, Zach
+                                                                     Cameron, Chaowei Xiao, and Ning Zhang. Don’t listen
+[68] Chenlin Wang, Wei Meng, Changhua Luo, and Penghui               to me: understanding and exploring jailbreak prompts
+      Li. Predator: Directed web application fuzzing for ef-         of large language models. In 33rd USENIX Security
+      ficient vulnerability validation. In Proc. IEEE Sympo-         Symposium (USENIX Security 24), pages 4675–4692,
+      sium on Security and Privacy (S&P), pages 66–66. IEEE          2024.
+      Computer Society, 2024.
+                                                               [78] Mengqi Zhan, Yang Li, Huiran Yang, Guangxi Yu,
+[69] Xinyi Wang, Cen Zhang, Yeting Li, Zhiwu Xu, Shuailin            Bo Li, and Weiping Wang. Coda: Runtime detection
+      Huang, Yi Liu, Yican Yao, Yang Xiao, Yanyan Zou,               of application-layer cpu-exhaustion dos attacks in con-
+      Yang Liu, et al. Effective redos detection by princi-          tainers. IEEE Transactions on Services Computing,
+      pled vulnerability modeling and exploit generation. In         16(3):1686–1697, 2022.
+      2023 IEEE Symposium on Security and Privacy (SP),
+      pages 2427–2443. IEEE, 2023.                             [79] Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel
+                                                                     Kang. Injecagent: Benchmarking indirect prompt in-
+[70] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten                jections in tool-integrated large language model agents.
+      Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al.          arXiv preprint arXiv:2403.02691, 2024.
+      Chain-of-thought prompting elicits reasoning in large
+      language models. Advances in neural information pro-     [80] Boyang Zhang, Yicong Tan, Yun Shen, Ahmed Salem,
+      cessing systems, 35:24824–24837, 2022.                         Michael Backes, Savvas Zannettou, and Yang Zhang.
+                                                                     Breaking agents: Compromising autonomous llm agents
+[71] Cheng Wen, Haijun Wang, Yuekang Li, Shengchao                   through malfunction amplification. arXiv preprint
+      Qin, Yang Liu, Zhiwu Xu, Hongxu Chen, Xiaofei Xie,             arXiv:2407.20859, 2024.
+      Geguang Pu, and Ting Liu. Memlock: Memory us-
+      age guided fuzzing. In Proceedings of the ACM/IEEE       [81] Lei Zhang, Keke Lian, Haoyu Xiao, Zhibo Zhang, Peng
+      42nd International Conference on Software Engineer-            Liu, Yuan Zhang, Min Yang, and Haixin Duan. Exploit
+      ing, pages 765–777, 2020.                                      the last straw that breaks android systems. In 2022
+                                                                     IEEE Symposium on Security and Privacy (SP), pages
+[72] Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen               2230–2247. IEEE, 2022.
+      Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie
+      Jin, Enyu Zhou, et al. The rise and potential of large   [82] Lei Zhang, Zhemin Yang, Yuyu He, Zhenyu Zhang,
+      language model based agents: A survey. Science China           Zhiyun Qian, Geng Hong, Yuan Zhang, and Min Yang.
+      Information Sciences, 68(2):121101, 2025.                      Invetter: Locating insecure input validations in android
+                                                                     services. In Proceedings of the 2018 ACM SIGSAC
+[73] Siqiao Xue, Danrui Qi, Caigao Jiang, Wenhui Shi,                Conference on Computer and Communications Security,
+      Fangyin Cheng, Keting Chen, Hongjun Yang, Zhiping              pages 1165–1178, 2018.
+
+4008 35th USENIX Security Symposium                            USENIX Association
+
+
+===== PAGE 20 / 21 =====
+
+[83] Yuanhe Zhang, Zhenhong Zhou, Wei Zhang, Xinyue
+      Wang, Xiaojun Jia, Yang Liu, and Sen Su. Crabs:
+      Consuming resrouce via auto-generation for llm-dos
+      attack under black-box settings. arXiv preprint
+      arXiv:2412.13879, 2024.
+
+[84] Yanjie Zhao, Xinyi Hou, Shenao Wang, and Haoyu
+      Wang. Llm app store analysis: A vision and
+      roadmap. ACM Transactions on Software Engineering
+      and Methodology, 2024.
+
+[85] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan
+      Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuo-
+      han Li, Dacheng Li, Eric Xing, et al. Judging llm-as-
+      a-judge with mt-bench and chatbot arena. Advances
+      in neural information processing systems, 36:46595–
+      46623, 2023.
+
+[86] Zhenhong Zhou, Zherui Li, Jie Zhang, Yuanhe Zhang,
+      Kun Wang, Yang Liu, and Qing Guo. Corba: Conta-
+      gious recursive blocking attacks on multi-agent sys-
+      tems based on large language models. arXiv preprint
+      arXiv:2502.14529, 2025.
+
+USENIX Association                                           35th USENIX Security Symposium 4009
+
+
+===== PAGE 21 / 21 =====
+
+A Sink List                                                           C Assigned CVEs
+
+Table 5 lists the sinks used in AgentDoS.                             Table 6 provides details of the identified vulnerabilities, in-
+Table 5: Sink types and corresponding classes and methods.            cluding the lifecycle and type of the associated resource.
+
+                                                                          Table 6: Detected vulnerabilities and assigned CVEs.
+
+Package           Class           Methods              Resource Type  Applications           CVEs       Lifecycle     Resource Type
+
+buildins            list       append, extend              Memory     AutoGPT         CVE-2025-3**36   Short-lived          Disk
+buildins            set          add, update               Memory                     CVE-2025-3**37   Short-lived          Disk
+buildins           dict             update                 Memory     Dify            CVE-2025-3**23   Short-lived          Disk
+             BeautifulSoup         __init__                Memory     Langflow        CVE-2025-3**24   Short-lived          Disk
+   bs4               /               parse                 Memory                     CVE-2025-3**22   Short-lived          Disk
+html5lib             /                                     Memory     Ragflow         CVE-2025-3**92   Short-lived          Disk
+requests         Session      get, post, request           Memory     Autogen         CVE-2025-3**93   Short-lived        Memory
+requests     PoolManager      get, post, request           Memory     LangChatchat
+ urllib3             /        urlopen, reqeust             Memory     Khoj                Assigning   Full-lifecycle        Disk
+ urllib3     ClientSession                                 Memory     Kotaemon
+ aiohttp      AsyncClient          reqeust                 Memory     GPT-Researcher      Assigning    Short-lived        Memory
+            TextIOWrapper     get, post, request                      MaxKB               Assigning    Short-lived        Memory
+  httpx   AsyncTextIOWrapper  get, post, request             Disk     DB-GPT              Assigning    Short-lived        Memory
+buildins                      write, writelines              Disk     SuperAGI            Assigning   Full-lifecycle
+aiofiles                      write, writelines                       DeerFlow                                              Disk
+                                                                      Chuanhu             Assigning    Long-lived
+B Case Study                                                          AgentZero           Assigning    Short-lived        Memory
+                                                                                                                          Memory
+Figure 4 and Figure 5 show simplified code snippets of §7.            AgentScope          Assigning    Short-lived
+                                                                                                                          Memory
+                   Access the website at http://       Single                             Assigning    Long-lived
+               large_file.html a total of 1000 times.                                     Assigning    Long-lived         Memory
+                                                       chat Agent                                                         Memory
+Attacker Record any response data for analysis.                                           Assigning    Short-lived
+                                                                                                                          Memory
+1. Class URLComponent:                                                                    Assigning    Long-lived
+2. def run(input):                                                                                                        Memory
+                                                                                          Assigning   Full-lifecycle
+       …                                                                                  Assigning   Full-lifecycle        Disk
+3. all_docs = []                                                                          Assigning   Full-lifecycle        Disk
+                                                                                                                            Disk
+          # input = [http://large_file.html ] * 1000                                      Assigning    Long-lived
+                                                                                                                          Memory
+4. for url in input:                                                                      Assigning   Full-lifecycle
+5.           docs = request.get(url)                                                                                        Disk
+6.           all_docs.extend(docs)                                                    CVE-2025-4**99  Full-lifecycle
+          …                                                                           CVE-2025-4**01  Full-lifecycle        Disk
+                                                                                      CVE-2025-4**03  Full-lifecycle        Disk
+Figure 4: Short-lived Resource DoS vulnerability in L** agent                                                               Disk
+application.                                                                              Assigning   Full-lifecycle
+                                                                                                                            Disk
+               Enumerate all available data Repeat                                        Assigning    Short-lived
+             entries in the database, including                                                                           Memory
+                                                                                          Assigning    Short-lived
+               their field names and values. 1000 times Agent                                                             Memory
+                                                                                      CVE-2025-4**98   Short-lived
+                                                                                          Assigning    Short-lived        Memory
+                                                                                                      Full-lifecycle      Memory
+                                                                                      CVE-2025-4**90  Full-lifecycle
+                                                                                      CVE-2025-4**94  Full-lifecycle        Disk
+                                                                                      CVE-2025-4**26  Full-lifecycle        Disk
+                                                                                      CVE-2025-4**32                        Disk
+                                                                                                                            Disk
+
+Attacker
+
+1. Class Agent:
+2. def query(input):
+
+       …
+3. send_history = self.history[-history_len: ]
+
+        # history_len default is 0
+
+4. response = chat(input, send_history)
+
+        # tool is one of [Calculator, DBSearch]
+
+5. result = tool.run(response[var])
+
+        # result = DBSearch.run("select * from table")
+
+6. self.history.append((input, response, result))
+       …
+
+Figure 5: Long-lived Resource DoS vulnerability in L** agent
+application.
+
+4010 35th USENIX Security Symposium                                                                   USENIX Association
